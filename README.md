@@ -15,6 +15,10 @@ What it does:
   everything. Small link thumbnails are kept.
 - **No signup nag** — hides the logged-out "Join the most real place on the
   internet" promo card.
+- **Rebuild mode** *(experimental, v3)* — optionally goes further than skinning: on
+  subreddit / front-page listings it discards new Reddit's DOM and renders old
+  Reddit's **real** frontend (its actual archived HTML + CSS) from Reddit's JSON
+  API. See [Experimental: Rebuild mode](#experimental-rebuild-mode).
 
 > Earlier versions of this extension *redirected* to `old.reddit.com`. That has
 > been removed — this is now purely the in-place skin. If you want the genuine
@@ -116,7 +120,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-2.1.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.0.0.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -136,6 +140,36 @@ npm run build                                   # web-ext build -> web-ext-artif
 
 The **same zip** also uploads to the free [Edge Add-ons](https://partner.microsoft.com/dashboard/microsoftedge/)
 store if you ever want an Edge listing.
+
+---
+
+## Experimental: Rebuild mode
+
+Turn on **Rebuild frontend** (toolbar/options toggle) and, on a subreddit or
+front-page **listing**, the extension stops *skinning* new Reddit and instead
+**rebuilds old Reddit's real frontend**: it fetches the listing from Reddit's JSON
+API and renders old Reddit's actual `#siteTable` of `.thing.link` items — ranks,
+vote arrows, thumbnails, taglines, comment counts, sort tabs, next/prev paging —
+styled by old Reddit's genuine archived stylesheet (`vendor/oldreddit.css`, the
+2019 desktop CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
+
+**How the data works:** a content script does a same-origin
+`fetch('…/.json', {credentials:'include'})` that rides your logged-in session.
+
+**Honest limitations (please read):**
+
+- **Logged-in only.** Reddit shut off *unauthenticated* `.json` in 2026, so
+  logged-out visitors get `403`. On any non-200 the extension **falls back** to
+  letting normal Reddit render — it never leaves the page blank.
+- **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
+  need an OAuth write token). The arrows/buttons render for looks but are inert.
+- **Listings only, for now.** Comment threads, user pages, search, and modtools
+  fall through to normal Reddit. Comments are the next milestone.
+- **Fragile & unsupported.** The cookie `.json` path has no SLA; Reddit could close
+  it. Media embeds/galleries, awards, and live updates aren't reproduced. Treat
+  this as a proof-of-concept.
+
+With Rebuild off (default), the extension is just the CSS skin described above.
 
 ---
 
@@ -185,11 +219,15 @@ buttons, and hide-classes with no reload.
 
 | File | Purpose |
 |------|---------|
-| `manifest.json` | MV3 manifest (Firefox), registers the content script |
+| `manifest.json` | MV3 manifest (Firefox + Chrome), registers the content scripts |
 | `oldreddit-skin-css.js` | The old-Reddit skin stylesheet (as a string) |
 | `restyle.js` | Content script: injects the skin, compact-feed expando, promo hide |
-| `common.js` | Shared on/off pref (read by the content script + settings UI) |
-| `settings.js` | Wires the on/off toggle to storage |
+| `rebuild.js` | Content script: rebuilds old Reddit's real frontend from the JSON API (Rebuild mode) |
+| `vendor/oldreddit.css` | Old Reddit's real archived 2019 stylesheet (source) |
+| `vendor/oldreddit.bundled.css` | The above with asset URLs rewritten — the file injected at runtime |
+| `scripts/build-css.mjs` | Rebuilds `oldreddit.bundled.css` from the source |
+| `common.js` | Shared prefs + listing-route parser (content scripts + settings UI) |
+| `settings.js` | Wires the toggles to storage |
 | `popup.html` / `options.html` / `settings.css` | Toolbar popup and options UI |
 | `icons/icon.svg` | Source vector icon |
 | `icons/icon-{16,32,48,128}.png` | Extension icons (PNG — required by Chrome) |

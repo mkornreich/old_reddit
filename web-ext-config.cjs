@@ -14,6 +14,9 @@ module.exports = {
     // Never bundle secrets or local scripts into the packaged/signed extension.
     "creds.sh",
     "*.sh",
+    "scripts",
+    "dist",
+    "vendor/oldreddit.css",
     ".amo-env",
     ".env",
   ],

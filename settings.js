@@ -1,22 +1,26 @@
 "use strict";
 
-// Wires the single on/off toggle (shared markup in popup.html and options.html)
-// to storage. The content script (restyle.js) reacts to the `enabled` change via
-// storage.onChanged, so toggling takes effect live without a reload.
+// Wires the toggles (shared markup in popup.html and options.html) to storage.
+// The content scripts react to changes via storage.onChanged, so toggling takes
+// effect live (rebuild mode reloads the page to hand it over/back).
 
 (function () {
   const { getPrefs, setPrefs } = globalThis.ORR;
 
   const enabledEl = document.getElementById("enabled");
+  const rebuildEl = document.getElementById("rebuild");
   const statusEl = document.getElementById("status");
 
   function render(p) {
     enabledEl.checked = p.enabled;
-    document.body.classList.toggle("is-off", !p.enabled);
+    if (rebuildEl) rebuildEl.checked = p.rebuild;
+    document.body.classList.toggle("is-off", !p.enabled && !p.rebuild);
     if (statusEl) {
-      statusEl.textContent = p.enabled
-        ? "Old Reddit skin is ON"
-        : "Off — Reddit looks normal";
+      statusEl.textContent = p.rebuild
+        ? "Rebuild mode ON (experimental)"
+        : p.enabled
+          ? "Old Reddit skin is ON"
+          : "Off — Reddit looks normal";
     }
   }
 
@@ -26,6 +30,7 @@
   }
 
   enabledEl.addEventListener("change", () => update({ enabled: enabledEl.checked }));
+  if (rebuildEl) rebuildEl.addEventListener("change", () => update({ rebuild: rebuildEl.checked }));
 
   getPrefs().then(render);
 })();

@@ -1,27 +1,52 @@
 "use strict";
 
-// Shared prefs module. Loaded by the settings UI (settings.js) and by the
-// content script (restyle.js). The extension is now a pure CSS skin — a single
-// on/off preference, no redirect / declarativeNetRequest anymore.
+// Shared prefs + route parsing. Loaded by the settings UI (settings.js) and by
+// the content scripts (restyle.js skinner, rebuild.js frontend-rebuilder).
+//
+// Two features, layered:
+//   enabled  — the CSS "skin" (restyle.js) repaints new Reddit in place.
+//   rebuild  — experimental: on listing routes, rebuild.js throws away new
+//              Reddit's DOM and renders old Reddit's real frontend from the JSON
+//              API. On routes rebuild doesn't handle, the skin still applies.
 
 (function () {
   const api = typeof browser !== "undefined" ? browser : chrome;
 
-  const DEFAULTS = Object.freeze({ enabled: true });
+  const DEFAULTS = Object.freeze({ enabled: true, rebuild: false });
+
+  const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
+  const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
 
   async function getPrefs() {
-    const stored = await api.storage.local.get({ enabled: undefined, mode: undefined });
+    const stored = await api.storage.local.get({
+      enabled: undefined,
+      rebuild: undefined,
+      mode: undefined, // legacy (pre-2.0)
+    });
     let enabled = stored.enabled;
-    if (enabled === undefined) {
-      // Migrate from the pre-2.0 tri-state `mode` ("redirect"/"skin"/"off").
-      enabled = stored.mode === "off" ? false : true;
-    }
-    return { enabled: enabled !== false };
+    if (enabled === undefined) enabled = stored.mode === "off" ? false : true;
+    return { enabled: enabled !== false, rebuild: stored.rebuild === true };
   }
 
   async function setPrefs(patch) {
     await api.storage.local.set(patch);
   }
 
-  globalThis.ORR = { api, DEFAULTS, getPrefs, setPrefs };
+  // Returns a route descriptor for listing pages the rebuilder supports, else null.
+  // Accepts a URL, a {pathname}, or a pathname string.
+  function isListingRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+
+    if (segs.length === 0) return { scope: "front", sub: null, sort: "hot", basePath: "" };
+    if (segs.length === 1 && SORTS_FRONT.includes(segs[0]))
+      return { scope: "front", sub: null, sort: segs[0], basePath: "/" + segs[0] };
+    if (segs[0] === "r" && segs.length === 2)
+      return { scope: "sub", sub: segs[1], sort: "hot", basePath: "/r/" + segs[1] };
+    if (segs[0] === "r" && segs.length === 3 && SORTS_SUB.includes(segs[2]))
+      return { scope: "sub", sub: segs[1], sort: segs[2], basePath: "/r/" + segs[1] + "/" + segs[2] };
+    return null; // comments, user pages, search, wiki, etc. — not rebuilt
+  }
+
+  globalThis.ORR = { api, DEFAULTS, SORTS_SUB, SORTS_FRONT, getPrefs, setPrefs, isListingRoute };
 })();

@@ -267,19 +267,22 @@
   }
 
   async function sync() {
-    let enabled = true;
+    let prefs;
     try {
-      enabled = (await globalThis.ORR.getPrefs()).enabled;
+      prefs = await globalThis.ORR.getPrefs();
     } catch (e) {
-      enabled = true; // fail safe: skin on
+      prefs = { enabled: true, rebuild: false };
     }
-    if (enabled) enable();
+    // When the rebuilder owns this listing route, the skin must step aside so it
+    // doesn't paint over the rebuilt old-reddit DOM.
+    const rebuildOwns = prefs.rebuild && !!globalThis.ORR.isListingRoute(location);
+    if (prefs.enabled && !rebuildOwns) enable();
     else disable();
   }
 
   try {
     api.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && (changes.enabled || changes.mode)) sync();
+      if (area === "local" && (changes.enabled || changes.rebuild || changes.mode)) sync();
     });
   } catch (e) {
     /* ignore */
