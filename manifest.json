@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Old Reddit Skin",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "Repaints new Reddit in place to look like old Reddit: classic styling, a compact feed (media hidden behind a [+] expando), and no logged-out signup promo.",
   "browser_specific_settings": {
     "gecko": {
@@ -11,9 +11,10 @@
     }
   },
   "icons": {
-    "48": "icons/icon.svg",
-    "96": "icons/icon.svg",
-    "128": "icons/icon.svg"
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   },
   "permissions": [
     "storage"
@@ -41,9 +42,10 @@
     "default_title": "Old Reddit Skin",
     "default_popup": "popup.html",
     "default_icon": {
-      "48": "icons/icon.svg",
-      "96": "icons/icon.svg",
-      "128": "icons/icon.svg"
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
     }
   },
   "options_ui": {

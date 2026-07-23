@@ -1,8 +1,9 @@
-# Old Reddit Skin (Firefox)
+# Old Reddit Skin
 
-A small, dependency-free Firefox extension that **repaints new Reddit in place to
-look like old Reddit** — no redirect, just CSS (plus a little JS to reach the parts
-CSS can't). It stays on `www.reddit.com` / `sh.reddit.com` and restyles the page.
+A small, dependency-free browser extension — **Firefox and Chrome / Chromium
+(Edge, Brave, Opera)** — that **repaints new Reddit in place to look like old
+Reddit** — no redirect, just CSS (plus a little JS to reach the parts CSS can't). It
+stays on `www.reddit.com` / `sh.reddit.com` and restyles the page.
 
 What it does:
 
@@ -82,6 +83,38 @@ resulting `.xpi` as in Option 1.
 
 ---
 
+## Install on Chrome (and Edge / Brave / Opera)
+
+There's no Chrome Web Store listing yet, so install it **unpacked** from a clone of
+this repo. Chrome, Edge, Brave, and Opera are all Chromium-based, so the **same
+folder** loads in every one of them — no separate build.
+
+1. Clone or download this repo to a folder you'll **keep in place** (Chrome
+   remembers the path; if you move or delete the folder, the extension breaks on
+   next launch).
+2. Open the extensions page by typing one of these in the address bar (these
+   can't be clickable links):
+   - Chrome: `chrome://extensions`
+   - Edge: `edge://extensions`
+   - Brave: `brave://extensions`
+   - Opera: `opera://extensions`
+3. Turn on **Developer mode** (toggle top-right on Chrome/Brave/Opera; left sidebar on Edge).
+4. Click **Load unpacked** and select the **repo folder** (the one containing
+   `manifest.json` — the folder itself, not a file).
+5. Open `https://www.reddit.com/r/pics` — it should be restyled. Pin the toolbar
+   button via the puzzle-piece 🧩 icon to toggle the skin, or use **Details →
+   Extension options**.
+
+> **Heads-up:** unpacked extensions run in Developer mode. A browser update or
+> profile reload can auto-disable a dev-mode extension — just re-enable it at
+> `chrome://extensions` if that happens.
+>
+> **Polished option:** publishing to the Chrome Web Store ($5 one-time developer
+> fee) gives one-click installs that survive updates and need no Developer mode.
+> Edge, Brave, and Opera can all install from the Chrome Web Store too.
+
+---
+
 ## Develop
 
 ```bash
@@ -134,7 +167,8 @@ buttons, and hide-classes with no reload.
 | `common.js` | Shared on/off pref (read by the content script + settings UI) |
 | `settings.js` | Wires the on/off toggle to storage |
 | `popup.html` / `options.html` / `settings.css` | Toolbar popup and options UI |
-| `icons/icon.svg` | Extension icon |
+| `icons/icon.svg` | Source vector icon |
+| `icons/icon-{16,32,48,128}.png` | Extension icons (PNG — required by Chrome) |
 
 No build step and no third-party runtime dependencies.
 
