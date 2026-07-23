@@ -334,9 +334,88 @@
     return { className: "comments-page", inner, sub, linkId };
   }
 
+  // ---------- user profile builders (testable) -------------------------
+
+  const USER_TABS = ["overview", "submitted", "comments", "gilded"];
+
+  function userTabmenuHtml(route) {
+    const lis = USER_TABS.map((name) => {
+      const href = "/user/" + route.name + (name === "overview" ? "/" : "/" + name + "/");
+      const sel = route.section === name ? " selected" : "";
+      return `<li class="${sel}"><a class="choice" href="${href}">${name}</a></li>`;
+    }).join("");
+    return `<ul class="tabmenu">${lis}</ul>`;
+  }
+
+  // A comment as shown on a user page: with "on <post> in r/<sub>" context.
+  function buildUserComment(d, opts) {
+    opts = opts || {};
+    const pts = d.score_hidden ? "score hidden" : `${esc(d.score)} point${d.score === 1 ? "" : "s"}`;
+    const bodyHtml = d.body_html ? d.body_html : d.body ? `<div class="md"><p>${esc(d.body)}</p></div>` : "";
+    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
+    const linkPermalink = d.permalink || d.link_permalink || "";
+    const sub = d.subreddit || "";
+    return (
+      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}">` +
+      `<div class="midcol unvoted"><div class="arrow up login-required" role="button"></div>` +
+      `<div class="score unvoted">${esc(d.score)}</div><div class="arrow down login-required" role="button"></div></div>` +
+      `<div class="entry unvoted">` +
+      `<p class="tagline"><a href="/user/${esc(d.author)}" class="author">${esc(d.author)}</a> ` +
+      `<span class="score unvoted">${pts}</span> <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time> ` +
+      `on <a href="${esc(linkPermalink)}" class="bylink">${esc(d.link_title || "a post")}</a> ` +
+      `in <a href="/r/${esc(sub)}/" class="subreddit">r/${esc(sub)}</a></p>` +
+      `<div class="usertext-body">${bodyHtml}</div>` +
+      `<ul class="flat-list buttons"><li class="first"><a href="${esc(linkPermalink)}" class="bylink">permalink</a></li></ul>` +
+      `</div><div class="clearleft"></div></div>`
+    );
+  }
+
+  function buildUserPage(route, json, opts) {
+    opts = opts || {};
+    const listing = (json && json.data) || {};
+    const children = listing.children || [];
+    const startRank = (opts.startCount || 0) + 1;
+    const items = children
+      .map((c, i) => {
+        if (c.kind === "t3") return buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub: true, nowMs: opts.nowMs });
+        if (c.kind === "t1") return buildUserComment(c.data, { nowMs: opts.nowMs });
+        return "";
+      })
+      .join("");
+    const count = (startRank - 1) + children.length;
+    const inner =
+      `<div id="header" role="banner"><div id="header-bottom-left">` +
+      `<span class="pagename redditname"><a href="/user/${esc(route.name)}/">${esc(route.name)}</a></span>` +
+      userTabmenuHtml(route) +
+      `</div></div>` +
+      `<div class="side"></div>` +
+      `<a name="content"></a>` +
+      `<div class="content" role="main">` +
+      `<div id="siteTable" class="sitetable">` +
+      (items || '<div class="thing">Nothing here.</div>') +
+      `</div>` +
+      navButtonsHtml({ basePath: route.basePath }, listing, count, null) +
+      `</div>`;
+    return { className: "profile-page", inner };
+  }
+
+  function buildUserSidebar(about) {
+    const d = (about && about.data) || {};
+    const name = d.name || "";
+    const cake = d.created_utc ? new Date(d.created_utc * 1000).toISOString().slice(0, 10) : "";
+    let html = '<div class="spacer"><div class="titlebox">';
+    html += `<h1 class="redditname"><a class="hover" href="/user/${esc(name)}/">u/${esc(name)}</a></h1>`;
+    html += `<div class="karma"><span class="number">${formatNumber(d.link_karma)}</span> post karma</div>`;
+    html += `<div class="karma comment-karma"><span class="number">${formatNumber(d.comment_karma)}</span> comment karma</div>`;
+    if (cake) html += `<div class="bottom">cake day <span class="date">${esc(cake)}</span></div>`;
+    html += "</div></div>";
+    return html;
+  }
+
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
+    userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -547,9 +626,67 @@
     loadSidebar({ scope: "sub", sub: body.sub || cr.sub });
   }
 
+  async function loadUser(url, firstLoad) {
+    const ur = ORR.isUserRoute(url);
+    if (!ur) return;
+    const params = { after: url.searchParams.get("after"), count: url.searchParams.get("count") };
+    hideGuard();
+    let watchdog = null;
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
+    let json;
+    try {
+      const q = new URLSearchParams({ raw_json: "1", limit: "25" });
+      if (params.after) {
+        q.set("after", params.after);
+        q.set("count", params.count || "25");
+      }
+      const jsonUrl = location.origin + ur.basePath + "/.json?" + q.toString();
+      const res = await fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } });
+      if (!res.ok) {
+        const e = new Error("HTTP " + res.status);
+        e.status = res.status;
+        throw e;
+      }
+      json = await res.json();
+    } catch (err) {
+      if (watchdog) clearTimeout(watchdog);
+      if (firstLoad) {
+        active = false;
+        unhideGuard();
+      } else {
+        renderError(err.status || 0);
+        unhideGuard();
+      }
+      return;
+    }
+    if (watchdog) clearTimeout(watchdog);
+    await ensureCss();
+    const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    replaceBody(buildUserPage(ur, json, { startCount }), "u/" + ur.name + " — old reddit");
+    active = true;
+    unhideGuard();
+    loadUserSidebar(ur.name);
+  }
+
+  async function loadUserSidebar(name) {
+    try {
+      const res = await fetch(location.origin + "/user/" + encodeURIComponent(name) + "/about.json?raw_json=1", {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) return;
+      const about = await res.json();
+      const side = document.querySelector(".side");
+      if (side && about && about.data) side.innerHTML = buildUserSidebar(about);
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   function loadPage(url, firstLoad) {
     if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
     if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
+    if (ORR.isUserRoute(url)) return loadUser(url, firstLoad);
   }
 
   // Expand a "load more comments" stub via the morechildren API, re-nesting the
@@ -625,8 +762,8 @@
           return;
         }
         if (url.origin !== location.origin) return; // external link → normal nav
-        // Only intercept routes we rebuild (listings + comments); let user/search/etc navigate normally.
-        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url)) return;
+        // Only intercept routes we rebuild; let search/wiki/etc navigate normally.
+        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url)) return;
         e.preventDefault();
         e.stopPropagation();
         history.pushState(null, "", url.pathname + url.search);
@@ -639,7 +776,7 @@
     window.addEventListener("popstate", () => {
       if (!active) return;
       const url = new URL(location.href);
-      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url)) loadPage(url, false);
+      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url)) loadPage(url, false);
     });
   }
 
@@ -652,7 +789,7 @@
     }
     if (!prefs.rebuild) return; // rebuild mode off → restyle.js handles the page
     const url = new URL(location.href);
-    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url)) return; // other routes → restyle.js skins
+    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url)) return; // else restyle.js skins
     wireNav();
     loadPage(url, true);
   }

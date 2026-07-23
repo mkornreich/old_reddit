@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Old Reddit Skin",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "description": "Repaints new Reddit in place to look like old Reddit: classic styling, a compact feed (media hidden behind a [+] expando), and no logged-out signup promo.",
   "browser_specific_settings": {
     "gecko": {

@@ -60,5 +60,28 @@
     return null;
   }
 
-  globalThis.ORR = { api, DEFAULTS, SORTS_SUB, SORTS_FRONT, getPrefs, setPrefs, isListingRoute, isCommentsRoute };
+  const USER_SECTIONS = ["overview", "submitted", "comments", "gilded", "upvoted", "downvoted", "hidden", "saved"];
+
+  // Returns a user-profile route descriptor, else null.
+  //   /user/{name}[/{section}]/  (or the /u/ alias)
+  function isUserRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+    if ((segs[0] === "user" || segs[0] === "u") && segs[1]) {
+      let section = segs[2] || "overview";
+      if (!USER_SECTIONS.includes(section)) section = "overview";
+      return {
+        scope: "user",
+        name: segs[1],
+        section,
+        basePath: "/user/" + segs[1] + (section === "overview" ? "" : "/" + section),
+      };
+    }
+    return null;
+  }
+
+  globalThis.ORR = {
+    api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
+    getPrefs, setPrefs, isListingRoute, isCommentsRoute, isUserRoute,
+  };
 })();

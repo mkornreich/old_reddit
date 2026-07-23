@@ -277,7 +277,9 @@
     // doesn't paint over the rebuilt old-reddit DOM.
     const rebuildOwns =
       prefs.rebuild &&
-      (!!globalThis.ORR.isListingRoute(location) || !!globalThis.ORR.isCommentsRoute(location));
+      (!!globalThis.ORR.isListingRoute(location) ||
+        !!globalThis.ORR.isCommentsRoute(location) ||
+        !!globalThis.ORR.isUserRoute(location));
     if (prefs.enabled && !rebuildOwns) enable();
     else disable();
   }
