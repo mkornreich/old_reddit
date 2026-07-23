@@ -120,7 +120,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.0.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.1.0.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -149,9 +149,11 @@ Turn on **Rebuild frontend** (toolbar/options toggle) and, on a subreddit or
 front-page **listing**, the extension stops *skinning* new Reddit and instead
 **rebuilds old Reddit's real frontend**: it fetches the listing from Reddit's JSON
 API and renders old Reddit's actual `#siteTable` of `.thing.link` items — ranks,
-vote arrows, thumbnails, taglines, comment counts, sort tabs, next/prev paging —
-styled by old Reddit's genuine archived stylesheet (`vendor/oldreddit.css`, the
-2019 desktop CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
+vote arrows, thumbnails, taglines, comment counts, sort tabs, next/prev paging, the
+**time filter** (`top`/`controversial`: past hour → all time), and the **subreddit
+sidebar** (description + rules, from `/about.json` + `/about/rules.json`) — styled by
+old Reddit's genuine archived stylesheet (`vendor/oldreddit.css`, the 2019 desktop
+CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
 
 **How the data works:** a content script does a same-origin
 `fetch('…/.json', {credentials:'include'})` that rides your logged-in session.

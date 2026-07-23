@@ -117,20 +117,40 @@
     return `<ul class="tabmenu">${lis}</ul>`;
   }
 
-  function navButtonsHtml(route, listing, count) {
+  function navButtonsHtml(route, listing, count, t) {
+    const tq = t ? "&t=" + t : "";
     const parts = [];
     if (listing.before) {
       parts.push(
-        `<a href="${route.basePath}/?count=${count}&before=${esc(listing.before)}" rel="prev nofollow">&lsaquo; prev</a>`
+        `<a href="${route.basePath}/?count=${count}&before=${esc(listing.before)}${tq}" rel="prev nofollow">&lsaquo; prev</a>`
       );
     }
     if (listing.after) {
       parts.push(
-        `<a href="${route.basePath}/?count=${count}&after=${esc(listing.after)}" rel="next nofollow">next &rsaquo;</a>`
+        `<a href="${route.basePath}/?count=${count}&after=${esc(listing.after)}${tq}" rel="next nofollow">next &rsaquo;</a>`
       );
     }
     if (!parts.length) return "";
     return `<div class="nav-buttons"><span class="nextprev">view more: ${parts.join(" ")}</span></div>`;
+  }
+
+  // The old-reddit "links from:" time filter, shown on top/controversial listings.
+  const TIMES = [
+    ["hour", "past hour"],
+    ["day", "past 24 hours"],
+    ["week", "past week"],
+    ["month", "past month"],
+    ["year", "past year"],
+    ["all", "all time"],
+  ];
+
+  function timeMenuHtml(route, currentT) {
+    const t = currentT || "day"; // reddit's default for top/controversial
+    const links = TIMES.map(([val, label]) => {
+      const sel = val === t;
+      return `<a href="${route.basePath}/?t=${val}"${sel ? ' style="font-weight:bold;text-decoration:underline"' : ""}>${label}</a>`;
+    }).join(' <span class="separator">&middot;</span> ');
+    return `<div class="menuarea" style="padding:5px 5px 5px 10px;font-size:small">links from: ${links}</div>`;
   }
 
   // Build the full old-reddit page body (className + innerHTML) for a listing.
@@ -159,16 +179,60 @@
       `<div class="side"></div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
+      (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t) : "") +
       `<div id="siteTable" class="sitetable linklisting">` +
       (items || `<div class="thing">Nothing here.</div>`) +
       `</div>` +
-      navButtonsHtml(route, listing, count) +
+      navButtonsHtml(route, listing, count, opts.t) +
       `</div>`;
 
     return { className: `listing-page ${route.sort}-page`, inner };
   }
 
-  globalThis.ORR_REBUILD = { esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, buildBody };
+  function formatNumber(n) {
+    if (n == null || isNaN(n)) return "0";
+    try {
+      return Number(n).toLocaleString("en-US");
+    } catch (e) {
+      return String(n);
+    }
+  }
+
+  // Build old reddit's right sidebar (.side) from /about.json + /about/rules.json.
+  // description_html / rule description_html are Reddit's own sanitized markdown
+  // HTML (fetched with raw_json=1) and are inserted as-is, like old reddit did.
+  function buildSidebar(about, rules) {
+    const d = (about && about.data) || {};
+    const dn = d.display_name || "";
+    const name = d.display_name_prefixed || (dn ? "r/" + dn : "");
+
+    let html = '<div class="spacer"><div class="titlebox">';
+    html += `<h1 class="redditname"><a class="hover" href="/r/${esc(dn)}/">${esc(name)}</a></h1>`;
+    html += `<div class="subscribers"><span class="number">${formatNumber(d.subscribers)}</span> <span class="word">readers</span></div>`;
+    const online = d.active_user_count != null ? d.active_user_count : d.accounts_active;
+    if (online != null)
+      html += `<div class="users-online"><span class="number">${formatNumber(online)}</span> <span class="word">users here now</span></div>`;
+    if (d.description_html) html += `<div class="usertext-body"><div class="md">${d.description_html}</div></div>`;
+    else if (d.public_description)
+      html += `<div class="usertext-body"><div class="md"><p>${esc(d.public_description)}</p></div></div>`;
+    html += "</div></div>";
+
+    const list = (rules && rules.rules) || [];
+    if (list.length) {
+      html += '<div class="spacer"><div class="sidecontentbox"><div class="title"><h1>Rules</h1></div>';
+      html += '<div class="content"><ol class="rules-list" style="padding-left:0;list-style:none">';
+      list.forEach((r, i) => {
+        html += `<li class="rule" style="margin:0 0 8px 0"><b>${i + 1}. ${esc(r.short_name || "")}</b>`;
+        if (r.description_html) html += `<div class="md">${r.description_html}</div>`;
+        else if (r.description) html += `<div class="rule-desc">${esc(r.description)}</div>`;
+        html += "</li>";
+      });
+      html += "</ol></div></div></div>";
+    }
+    return html;
+  }
+
+  globalThis.ORR_REBUILD = { esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody, formatNumber, buildSidebar };
 
   // ---------- runtime driver -------------------------------------------
 
@@ -237,7 +301,7 @@
 
   function renderInto(route, json, params) {
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
-    const body = buildBody(route, json, { startCount });
+    const body = buildBody(route, json, { startCount, t: params.t });
     const fresh = document.createElement("body");
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
@@ -250,6 +314,44 @@
     } catch (e) {
       /* ignore */
     }
+    loadSidebar(route); // async, fills .side when about/rules arrive
+  }
+
+  const aboutCache = new Map(); // sub (lowercase) -> { v, t }
+  const ABOUT_TTL = 300000; // 5 min
+
+  async function fetchAboutRules(sub) {
+    const key = sub.toLowerCase();
+    const hit = aboutCache.get(key);
+    if (hit && Date.now() - hit.t < ABOUT_TTL) return hit.v;
+    const base = location.origin + "/r/" + encodeURIComponent(sub);
+    const get = (u) =>
+      fetch(u, { credentials: "include", headers: { Accept: "application/json" } })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+    const [about, rules] = await Promise.all([
+      get(base + "/about.json?raw_json=1"),
+      get(base + "/about/rules.json?raw_json=1"),
+    ]);
+    const v = { about, rules };
+    aboutCache.set(key, { v, t: Date.now() });
+    return v;
+  }
+
+  async function loadSidebar(route) {
+    if (!route || route.scope !== "sub") return;
+    const sub = route.sub;
+    // No single sidebar for aggregate/multireddit listings.
+    if (!sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
+    let v;
+    try {
+      v = await fetchAboutRules(sub);
+    } catch (e) {
+      return;
+    }
+    if (!v || !v.about || !v.about.data) return;
+    const side = document.querySelector(".side");
+    if (side) side.innerHTML = buildSidebar(v.about, v.rules);
   }
 
   function renderError(status) {
