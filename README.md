@@ -120,7 +120,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.5.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.5.1.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -172,9 +172,10 @@ CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
   Reddit's comments page (nested tree, "sorted by" menu, "load more" via
   morechildren); `/user/{name}` renders the profile (overview/submitted/comments
   tabs + karma sidebar); `/search` renders results with sort/time filters. Every
-  page carries the real old-Reddit **header** — your username, karma, mail badge,
-  the subreddit bar, and a working **search box** (from `/api/me.json`). Modtools,
-  wiki, and settings still fall through to normal Reddit.
+  page carries the real old-Reddit **header** (username, karma, mail badge, the
+  subreddit bar — from `/api/me.json`) and old Reddit's **search box** at the top of
+  the sidebar, right where it belongs. Modtools, wiki, and settings still fall
+  through to normal Reddit.
 - **Fragile & unsupported.** The cookie `.json` path has no SLA; Reddit could close
   it. Media embeds/galleries, awards, and live updates aren't reproduced. Treat
   this as a proof-of-concept.

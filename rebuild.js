@@ -218,7 +218,7 @@
 
     const inner =
       buildHeader({ tabmenu: tabmenuHtml(route), pageName, pageHref: headerLink, me: opts.me, route }) +
-      `<div class="side"></div>` +
+      `<div class="side">${sideSearchHtml(route)}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t) : "") +
@@ -360,7 +360,7 @@
         me: opts.me,
         route: { scope: "sub", sub },
       }) +
-      `<div class="side"></div>` +
+      `<div class="side">${sideSearchHtml({ scope: "sub", sub })}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       `<div id="siteTable" class="sitetable">${postHtml}</div>` +
@@ -429,7 +429,7 @@
         me: opts.me,
         route: { scope: "user" },
       }) +
-      `<div class="side"></div>` +
+      `<div class="side">${sideSearchHtml({ scope: "user" })}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       `<div id="siteTable" class="sitetable">` +
@@ -550,9 +550,14 @@
       (opts.tabmenu || "") +
       `</div>` +
       (id ? userbarLoggedIn(id) : userbarLoggedOut()) +
-      searchFormHtml(opts.route, opts.query) +
       `</div>`
     );
+  }
+
+  // Old reddit's search box lives at the TOP of the right sidebar (.side), not in
+  // the header — a `.spacer` wrapping the #search form.
+  function sideSearchHtml(route, query) {
+    return `<div class="spacer">${searchFormHtml(route, query)}</div>`;
   }
 
   // ---------- search (testable) ----------------------------------------
@@ -647,7 +652,7 @@
     esc, formatAge, thumbnailHtml, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
-    meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, buildHeader,
+    meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage,
   };
 
@@ -803,7 +808,7 @@
     }
     if (!v || !v.about || !v.about.data) return;
     const side = document.querySelector(".side");
-    if (side) side.innerHTML = buildSidebar(v.about, v.rules);
+    if (side) side.insertAdjacentHTML("beforeend", buildSidebar(v.about, v.rules));
   }
 
   function renderError(status) {
@@ -943,7 +948,7 @@
       if (!res.ok) return;
       const about = await res.json();
       const side = document.querySelector(".side");
-      if (side && about && about.data) side.innerHTML = buildUserSidebar(about);
+      if (side && about && about.data) side.insertAdjacentHTML("beforeend", buildUserSidebar(about));
     } catch (e) {
       /* ignore */
     }
