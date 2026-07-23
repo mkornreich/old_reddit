@@ -279,7 +279,8 @@
       prefs.rebuild &&
       (!!globalThis.ORR.isListingRoute(location) ||
         !!globalThis.ORR.isCommentsRoute(location) ||
-        !!globalThis.ORR.isUserRoute(location));
+        !!globalThis.ORR.isUserRoute(location) ||
+        !!globalThis.ORR.isSearchRoute(location));
     if (prefs.enabled && !rebuildOwns) enable();
     else disable();
   }

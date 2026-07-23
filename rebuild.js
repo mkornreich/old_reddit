@@ -179,10 +179,7 @@
     const headerLink = route.scope === "front" ? "/" : "/r/" + route.sub + "/";
 
     const inner =
-      `<div id="header" role="banner"><div id="header-bottom-left">` +
-      `<span class="pagename redditname"><a href="${headerLink}">${esc(pageName)}</a></span>` +
-      tabmenuHtml(route) +
-      `</div></div>` +
+      buildHeader({ tabmenu: tabmenuHtml(route), pageName, pageHref: headerLink, me: opts.me, route }) +
       `<div class="side"></div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
@@ -318,10 +315,13 @@
     const treeHtml = buildCommentTree(comments, linkId, opts.nowMs);
 
     const inner =
-      `<div id="header" role="banner"><div id="header-bottom-left">` +
-      `<span class="pagename redditname"><a href="/r/${esc(sub)}/">r/${esc(sub)}</a></span>` +
-      `<ul class="tabmenu"><li class="selected"><a class="choice" href="${esc(permalink)}">comments</a></li></ul>` +
-      `</div></div>` +
+      buildHeader({
+        tabmenu: `<ul class="tabmenu"><li class="selected"><a class="choice" href="${esc(permalink)}">comments</a></li></ul>`,
+        pageName: "r/" + sub,
+        pageHref: "/r/" + sub + "/",
+        me: opts.me,
+        route: { scope: "sub", sub },
+      }) +
       `<div class="side"></div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
@@ -384,10 +384,13 @@
       .join("");
     const count = (startRank - 1) + children.length;
     const inner =
-      `<div id="header" role="banner"><div id="header-bottom-left">` +
-      `<span class="pagename redditname"><a href="/user/${esc(route.name)}/">${esc(route.name)}</a></span>` +
-      userTabmenuHtml(route) +
-      `</div></div>` +
+      buildHeader({
+        tabmenu: userTabmenuHtml(route),
+        pageName: route.name,
+        pageHref: "/user/" + route.name + "/",
+        me: opts.me,
+        route: { scope: "user" },
+      }) +
       `<div class="side"></div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
@@ -412,10 +415,202 @@
     return html;
   }
 
+  // ---------- shared header (testable) ---------------------------------
+
+  // Normalize /api/me.json (modern FLAT shape me.name, OR classic {data:{}}) to an
+  // identity, or null when logged out. Never trust me.modhash for writes.
+  function meIdentity(me) {
+    const d = me && me.name ? me : (me && me.data) || null;
+    if (!d || !d.name) return null;
+    const link = d.link_karma || 0;
+    const comment = d.comment_karma || 0;
+    return {
+      name: d.name,
+      linkKarma: link,
+      commentKarma: comment,
+      totalKarma: d.total_karma != null ? d.total_karma : link + comment,
+      inbox: d.inbox_count || 0,
+      hasMail: !!d.has_mail || (d.inbox_count || 0) > 0,
+      isGold: !!d.is_gold,
+    };
+  }
+
+  function userbarLoggedIn(id) {
+    const karmaTitle = `post karma: ${formatNumber(id.linkKarma)} / comment karma: ${formatNumber(id.commentKarma)}`;
+    const mailCls = id.hasMail ? "havemail" : "nohavemail";
+    const badge = id.inbox > 0 ? `<span class="message-count">${esc(id.inbox)}</span>` : "";
+    return (
+      `<div id="header-bottom-right">` +
+      `<span class="user"><a href="/user/${esc(id.name)}" class="hover">${esc(id.name)}</a>` +
+      ` <span class="userkarma" title="${esc(karmaTitle)}">${formatNumber(id.totalKarma)}</span></span>` +
+      `<span class="separator">|</span>` +
+      `<a href="/message/inbox/" id="mail" class="${mailCls}" title="${id.hasMail ? "new mail!" : "no new mail"}">${badge}</a>` +
+      `<span class="separator">|</span>` +
+      `<a href="/prefs" class="pref-lang">preferences</a>` +
+      `<span class="separator">|</span>` +
+      `<a href="/logout" id="logout">logout</a>` +
+      `</div>`
+    );
+  }
+
+  function userbarLoggedOut() {
+    return (
+      `<div id="header-bottom-right">` +
+      `<a href="/login" class="login-required login-link">login</a>` +
+      ` <span class="separator">or</span> ` +
+      `<a href="/register" class="register-link">sign up</a>` +
+      `</div>`
+    );
+  }
+
+  const DEFAULT_SRBAR = ["AskReddit", "funny", "pics", "science", "worldnews", "videos", "gaming", "aww", "todayilearned", "news"];
+
+  function srBarHtml(route) {
+    const cur = route && route.scope === "sub" ? String(route.sub || "").toLowerCase() : "";
+    const links = DEFAULT_SRBAR.map(
+      (s) => `<a href="/r/${esc(s)}/" class="choice${s.toLowerCase() === cur ? " selected" : ""}">${esc(s)}</a>`
+    ).join("\n");
+    return (
+      `<div id="sr-header-area"><div class="width-clip"><div class="sr-list">` +
+      `<a href="/" class="choice">front</a><span class="separator">-</span>` +
+      `<a href="/r/all/" class="choice${cur === "all" ? " selected" : ""}">all</a><span class="separator">-</span>` +
+      `<span class="flat-list sr-bar">${links}</span>` +
+      `</div></div></div>`
+    );
+  }
+
+  function isRealSub(sub) {
+    return !!sub && sub !== "all" && sub !== "popular" && !/[+\-]/.test(sub);
+  }
+
+  function searchFormHtml(route, query) {
+    const inSub = route && route.scope === "sub" && isRealSub(route.sub);
+    const action = inSub ? "/r/" + route.sub + "/search" : "/search";
+    const restrict = inSub
+      ? `<input type="checkbox" name="restrict_sr" id="orr-restrict" value="1"> <label for="orr-restrict">limit to r/${esc(route.sub)}</label>`
+      : "";
+    return (
+      `<form id="search" action="${esc(action)}" method="get" role="search">` +
+      `<input type="text" name="q" placeholder="search" value="${esc(query || "")}">` +
+      `<input type="submit" value="search">` +
+      restrict +
+      `</form>`
+    );
+  }
+
+  // The full old-reddit header. Caller supplies pageName/pageHref + a pre-built
+  // tabmenu; `me` is the /api/me.json blob (undefined → logged-out, then patched).
+  function buildHeader(opts) {
+    opts = opts || {};
+    const id = meIdentity(opts.me);
+    return (
+      `<div id="header" role="banner">` +
+      srBarHtml(opts.route) +
+      `<a href="/" id="header-img" class="default-header title">reddit</a>` +
+      `<div id="header-bottom-left">` +
+      `<span class="pagename redditname"><a href="${esc(opts.pageHref || "/")}">${esc(opts.pageName || "reddit.com")}</a></span>` +
+      (opts.tabmenu || "") +
+      `</div>` +
+      (id ? userbarLoggedIn(id) : userbarLoggedOut()) +
+      searchFormHtml(opts.route, opts.query) +
+      `</div>`
+    );
+  }
+
+  // ---------- search (testable) ----------------------------------------
+
+  function searchJsonUrl(route, params) {
+    const q = new URLSearchParams({ raw_json: "1", limit: "25" });
+    q.set("q", params.q || "");
+    q.set("sort", params.sort || "relevance");
+    q.set("t", params.t || "all");
+    if (route.sub && params.restrict_sr) q.set("restrict_sr", "1");
+    if (params.after) { q.set("after", params.after); q.set("count", params.count || "25"); }
+    else if (params.before) { q.set("before", params.before); q.set("count", params.count || "25"); }
+    return location.origin + route.basePath + ".json?" + q.toString();
+  }
+
+  function searchHref(route, params, overrides) {
+    const p = Object.assign({}, params, overrides);
+    const q = new URLSearchParams();
+    q.set("q", p.q || "");
+    if (p.sort) q.set("sort", p.sort);
+    if (p.t) q.set("t", p.t);
+    if (route.sub && p.restrict_sr) q.set("restrict_sr", "1");
+    if (p.after) { q.set("after", p.after); q.set("count", p.count); }
+    else if (p.before) { q.set("before", p.before); q.set("count", p.count); }
+    return route.basePath + "?" + q.toString();
+  }
+
+  const SEARCH_SORTS = ["relevance", "hot", "top", "new", "comments"];
+
+  function searchSortMenuHtml(route, params) {
+    const cur = params.sort || "relevance";
+    const links = SEARCH_SORTS.map((s) => {
+      const href = searchHref(route, params, { sort: s, after: null, before: null, count: null });
+      return `<a href="${esc(href)}"${s === cur ? ' style="font-weight:bold;text-decoration:underline"' : ""}>${s}</a>`;
+    }).join(' <span class="separator">&middot;</span> ');
+    return `<div class="menuarea" style="padding:5px 10px;font-size:small">sorted by: ${links}</div>`;
+  }
+
+  function searchTimeMenuHtml(route, params) {
+    const t = params.t || "all";
+    const links = TIMES.map(([val, label]) => {
+      const href = searchHref(route, params, { t: val, after: null, before: null, count: null });
+      return `<a href="${esc(href)}"${val === t ? ' style="font-weight:bold;text-decoration:underline"' : ""}>${label}</a>`;
+    }).join(' <span class="separator">&middot;</span> ');
+    return `<div class="menuarea" style="padding:5px 10px;font-size:small">links from: ${links}</div>`;
+  }
+
+  function searchNavHtml(route, params, listing, count) {
+    const parts = [];
+    if (listing.before)
+      parts.push(`<a href="${esc(searchHref(route, params, { before: listing.before, after: null, count }))}" rel="prev nofollow">&lsaquo; prev</a>`);
+    if (listing.after)
+      parts.push(`<a href="${esc(searchHref(route, params, { after: listing.after, before: null, count }))}" rel="next nofollow">next &rsaquo;</a>`);
+    if (!parts.length) return "";
+    return `<div class="nav-buttons"><span class="nextprev">view more: ${parts.join(" ")}</span></div>`;
+  }
+
+  function buildSearchPage(json, opts) {
+    opts = opts || {};
+    const route = opts.route || { scope: "search", sub: null, basePath: "/search" };
+    const params = opts.params || {};
+    const listing = (json && json.data) || {};
+    const children = (listing.children || []).filter((c) => c.kind === "t3");
+    const startRank = (opts.startCount || 0) + 1;
+    const items = children
+      .map((c, i) => buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub: true, nowMs: opts.nowMs }))
+      .join("");
+    const count = (startRank - 1) + children.length;
+
+    const pageName = route.sub ? "r/" + route.sub : "reddit.com";
+    const pageHref = route.sub ? "/r/" + route.sub + "/" : "/";
+    const tabmenu = `<ul class="tabmenu"><li class="selected"><a class="choice" href="${esc(searchHref(route, params, {}))}">search</a></li></ul>`;
+
+    const inner =
+      buildHeader({ tabmenu, pageName, pageHref, me: opts.me, route, query: params.q }) +
+      `<div class="side"></div>` +
+      `<a name="content"></a>` +
+      `<div class="content" role="main">` +
+      `<div class="searchpane raisedbox">${searchFormHtml(route, params.q)}</div>` +
+      searchSortMenuHtml(route, params) +
+      searchTimeMenuHtml(route, params) +
+      `<div id="siteTable" class="sitetable linklisting search-result-listing">` +
+      (items || `<div class="thing">No results.</div>`) +
+      `</div>` +
+      searchNavHtml(route, params, listing, count) +
+      `</div>`;
+
+    return { className: "search-page listing-page", inner };
+  }
+
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
+    meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, buildHeader,
+    searchJsonUrl, searchHref, buildSearchPage,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -427,6 +622,36 @@
   const CACHE_TTL = 60000;
   let active = false; // rebuild currently owns the page
   let wired = false;
+
+  // Logged-in identity for the header (fetched once).
+  let mePromise = null;
+  let meCached; // undefined = not fetched, null = logged out, object = raw me.json
+
+  function fetchMe() {
+    if (mePromise) return mePromise;
+    mePromise = fetch(location.origin + "/api/me.json", { credentials: "include", headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        meCached = j && (j.name || (j.data && j.data.name)) ? j : null;
+        return meCached;
+      })
+      .catch(() => {
+        meCached = null;
+        return null;
+      });
+    return mePromise;
+  }
+
+  // Re-render just the userbar once me.json resolves; idempotent.
+  function patchHeader() {
+    fetchMe().then((me) => {
+      if (!active) return;
+      const right = document.querySelector("#header-bottom-right");
+      if (!right) return;
+      const id = meIdentity(me);
+      right.outerHTML = id ? userbarLoggedIn(id) : userbarLoggedOut();
+    });
+  }
 
   function hideGuard() {
     if (document.getElementById(GUARD_ID)) return;
@@ -499,9 +724,10 @@
 
   function renderInto(route, json, params) {
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
-    const body = buildBody(route, json, { startCount, t: params.t });
+    const body = buildBody(route, json, { startCount, t: params.t, me: meCached });
     const sub = route.scope === "front" ? "reddit" : "r/" + route.sub;
     replaceBody(body, sub + " — old reddit");
+    patchHeader();
     loadSidebar(route); // async, fills .side when about/rules arrive
   }
 
@@ -619,10 +845,11 @@
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
-    const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort });
+    const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached });
     replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
     active = true;
     unhideGuard();
+    patchHeader();
     loadSidebar({ scope: "sub", sub: body.sub || cr.sub });
   }
 
@@ -662,9 +889,10 @@
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
-    replaceBody(buildUserPage(ur, json, { startCount }), "u/" + ur.name + " — old reddit");
+    replaceBody(buildUserPage(ur, json, { startCount, me: meCached }), "u/" + ur.name + " — old reddit");
     active = true;
     unhideGuard();
+    patchHeader();
     loadUserSidebar(ur.name);
   }
 
@@ -683,10 +911,61 @@
     }
   }
 
+  async function loadSearch(url, firstLoad) {
+    const route = ORR.isSearchRoute(url);
+    if (!route) return;
+    const params = {
+      q: url.searchParams.get("q") || "",
+      sort: url.searchParams.get("sort") || "relevance",
+      t: url.searchParams.get("t") || "all",
+      restrict_sr: url.searchParams.get("restrict_sr") === "1" || url.searchParams.get("restrict_sr") === "on",
+      after: url.searchParams.get("after"),
+      before: url.searchParams.get("before"),
+      count: url.searchParams.get("count"),
+    };
+    hideGuard();
+    let watchdog = null;
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
+    let json;
+    try {
+      const jsonUrl = searchJsonUrl(route, params);
+      const hit = cache.get(jsonUrl);
+      if (hit && Date.now() - hit.t < CACHE_TTL) json = hit.json;
+      else {
+        const res = await fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } });
+        if (!res.ok) {
+          const e = new Error("HTTP " + res.status);
+          e.status = res.status;
+          throw e;
+        }
+        json = await res.json();
+        cache.set(jsonUrl, { json, t: Date.now() });
+      }
+    } catch (err) {
+      if (watchdog) clearTimeout(watchdog);
+      if (firstLoad) {
+        active = false;
+        unhideGuard();
+      } else {
+        renderError(err.status || 0);
+        unhideGuard();
+      }
+      return;
+    }
+    if (watchdog) clearTimeout(watchdog);
+    await ensureCss();
+    const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    replaceBody(buildSearchPage(json, { route, params, startCount, me: meCached }), (params.q ? params.q + " — " : "") + "search — old reddit");
+    active = true;
+    unhideGuard();
+    patchHeader();
+  }
+
   function loadPage(url, firstLoad) {
     if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
     if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
     if (ORR.isUserRoute(url)) return loadUser(url, firstLoad);
+    if (ORR.isSearchRoute(url)) return loadSearch(url, firstLoad);
   }
 
   // Expand a "load more comments" stub via the morechildren API, re-nesting the
@@ -762,8 +1041,8 @@
           return;
         }
         if (url.origin !== location.origin) return; // external link → normal nav
-        // Only intercept routes we rebuild; let search/wiki/etc navigate normally.
-        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url)) return;
+        // Only intercept routes we rebuild; let wiki/etc navigate normally.
+        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url)) return;
         e.preventDefault();
         e.stopPropagation();
         history.pushState(null, "", url.pathname + url.search);
@@ -773,10 +1052,36 @@
       true
     );
 
+    // The old-reddit search form → navigate to a search route we rebuild.
+    document.addEventListener(
+      "submit",
+      (e) => {
+        if (!active) return;
+        const form = e.target;
+        if (!form || form.id !== "search") return;
+        e.preventDefault();
+        e.stopPropagation();
+        const input = form.querySelector('input[name="q"]');
+        const q = input ? input.value.trim() : "";
+        if (!q) return;
+        const restrict = form.querySelector('input[name="restrict_sr"]');
+        const action = form.getAttribute("action") || "/search";
+        const usp = new URLSearchParams();
+        usp.set("q", q); // encodes & etc. so queries aren't split
+        if (restrict && restrict.checked) usp.set("restrict_sr", "1");
+        const target = action + "?" + usp.toString();
+        history.pushState(null, "", target);
+        window.scrollTo(0, 0);
+        loadPage(new URL(target, location.origin), false);
+      },
+      true
+    );
+
     window.addEventListener("popstate", () => {
       if (!active) return;
       const url = new URL(location.href);
-      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url)) loadPage(url, false);
+      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url) || ORR.isSearchRoute(url))
+        loadPage(url, false);
     });
   }
 
@@ -789,8 +1094,10 @@
     }
     if (!prefs.rebuild) return; // rebuild mode off → restyle.js handles the page
     const url = new URL(location.href);
-    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url)) return; // else restyle.js skins
+    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url))
+      return; // else restyle.js skins
     wireNav();
+    fetchMe(); // prime the identity so the header usually renders logged-in on first paint
     loadPage(url, true);
   }
 

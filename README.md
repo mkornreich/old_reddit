@@ -120,7 +120,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.3.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.4.0.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -146,7 +146,8 @@ store if you ever want an Edge listing.
 ## Experimental: Rebuild mode
 
 Turn on **Rebuild frontend** (toolbar/options toggle) and, on a subreddit /
-front-page **listing**, a post's **comments** page, or a **user profile**, the
+front-page **listing**, a post's **comments** page, a **user profile**, or a
+**search**, the
 extension stops *skinning* new Reddit and instead **rebuilds old Reddit's real
 frontend**: it fetches the data from Reddit's JSON
 API and renders old Reddit's actual `#siteTable` of `.thing.link` items — ranks,
@@ -166,11 +167,13 @@ CSS, bundled with its asset URLs rewritten to `redditstatic.com`).
   letting normal Reddit render — it never leaves the page blank.
 - **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
   need an OAuth write token). The arrows/buttons render for looks but are inert.
-- **Listings, comment threads, and user profiles.** Post permalinks render as old
-  Reddit's comments page (post + nested comment tree, "sorted by" menu, "load more
-  comments" via the morechildren API); `/user/{name}` pages render old Reddit's
-  profile (overview/submitted/comments tabs, karma sidebar). Search and modtools
-  still fall through to normal Reddit.
+- **Listings, comments, user profiles, and search.** Post permalinks render old
+  Reddit's comments page (nested tree, "sorted by" menu, "load more" via
+  morechildren); `/user/{name}` renders the profile (overview/submitted/comments
+  tabs + karma sidebar); `/search` renders results with sort/time filters. Every
+  page carries the real old-Reddit **header** — your username, karma, mail badge,
+  the subreddit bar, and a working **search box** (from `/api/me.json`). Modtools,
+  wiki, and settings still fall through to normal Reddit.
 - **Fragile & unsupported.** The cookie `.json` path has no SLA; Reddit could close
   it. Media embeds/galleries, awards, and live updates aren't reproduced. Treat
   this as a proof-of-concept.

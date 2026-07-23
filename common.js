@@ -80,8 +80,18 @@
     return null;
   }
 
+  // /search  or  /r/{sub}/search  (query params read at load time from the URL)
+  function isSearchRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+    if (segs.length === 1 && segs[0] === "search") return { scope: "search", sub: null, basePath: "/search" };
+    if (segs[0] === "r" && segs[2] === "search" && segs.length === 3)
+      return { scope: "search", sub: segs[1], basePath: "/r/" + segs[1] + "/search" };
+    return null;
+  }
+
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
-    getPrefs, setPrefs, isListingRoute, isCommentsRoute, isUserRoute,
+    getPrefs, setPrefs, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute,
   };
 })();
