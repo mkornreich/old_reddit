@@ -1,30 +1,36 @@
-# Old Reddit Skin
+# Old Reddit
 
-A small, dependency-free browser extension — **Firefox and Chrome / Chromium
-(Edge, Brave, Opera)** — that **repaints new Reddit in place to look like old
-Reddit** — no redirect, just CSS (plus a little JS to reach the parts CSS can't). It
-stays on `www.reddit.com` / `sh.reddit.com` and restyles the page.
+A dependency-free browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
+Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches each page
+from Reddit's JSON API and renders old Reddit's *real* archived HTML + CSS, then
+layers on RES-style power features.
+
+> **Experimental & logged-in only.** It replaces new Reddit's DOM on
+> listing/comment/profile/search pages. It needs a **logged-in** Reddit session
+> (Reddit blocks the anonymous JSON API); on any API error it **falls back** to
+> normal Reddit rather than showing a broken page.
 
 What it does:
 
-- **Classic styling** — white page, Verdana, flat rows (no rounded cards or
-  shadows), the light-blue header band, blue links, compact spacing.
-- **Compact feed** — in listings, each post is just a **title + byline line**;
-  inline images/videos/galleries and self-text are hidden. Click the little
-  **`[+]`** expando on a post to reveal its media inline, or open the post to see
-  everything. Small link thumbnails are kept.
-- **No signup nag** — hides the logged-out "Join the most real place on the
-  internet" promo card.
-- **Rebuild mode** *(experimental, v3)* — optionally goes further than skinning: on
-  subreddit / front-page listings it discards new Reddit's DOM and renders old
-  Reddit's **real** frontend (its actual archived HTML + CSS) from Reddit's JSON
-  API. See [Experimental: Rebuild mode](#experimental-rebuild-mode).
+- **Old Reddit, rebuilt** — subreddit & front-page **listings**, **comment
+  threads**, **user profiles**, and **search**, in old Reddit's genuine 2019 HTML +
+  CSS (from the Wayback archive) fed by the live JSON API. Full header (your
+  karma/mail, subreddit bar), the subreddit **sidebar** with rules, the **search
+  box**, sort tabs, and the **time filter**.
+- **Inline expandos** — click `[+]` to reveal a post's image / video / gallery /
+  self-text; galleries have prev/next.
+- **Infinite scroll** *(on by default)* — RES "never-ending reddit".
+- **Keyboard navigation** — `j`/`k` move, `o`/Enter open, `x` expand.
+- **Collapse comments** — `[–]` on any comment; comments new since your last visit
+  are flagged.
+- **Night mode** *(on by default)* — dark theme.
+- **Filters** — hide posts by subreddit / user / domain / title keyword (Options).
+- **User tags & hover cards** — colored labels on users; hover a name or subreddit
+  for a quick info card.
 
-> Earlier versions of this extension *redirected* to `old.reddit.com`. That has
-> been removed — this is now purely the in-place skin. If you want the genuine
-> classic site instead, the well-known [Old Reddit
-> Redirect](https://addons.mozilla.org/firefox/addon/old-reddit-redirect/) add-on
-> does that.
+> Earlier versions were a lighter CSS **skin** of new Reddit (and before that, a
+> **redirect** to old.reddit.com). Both were superseded by this full rebuild — see
+> the git history / older releases if you want them.
 
 ---
 
@@ -40,7 +46,7 @@ exactly. It is inherently fragile:
 - It targets shreddit's **custom-element tag names, slot names, and user-facing
   text** (all more stable than Reddit's hashed class names), but Reddit can still
   **break it on any deploy**. When that happens, the fix is updating the selectors
-  in [oldreddit-skin-css.js](oldreddit-skin-css.js) / [restyle.js](restyle.js).
+  in [rebuild.js](rebuild.js) / [vendor/oldreddit.css](vendor/oldreddit.css).
 - It will **never be a pixel match** for `old.reddit.com`.
 
 ---
@@ -120,7 +126,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.6.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.7.0.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -199,34 +205,33 @@ npm run build      # distributable .zip in web-ext-artifacts/
 
 Click the toolbar button (or open the add-on's preferences in `about:addons`):
 
-- **Old Reddit skin** — the in-place CSS skin (on/off). Takes effect live.
-- **Rebuild frontend** — the experimental old-Reddit-from-the-API mode.
-- **↳ Infinite scroll** — RES-style "never-ending reddit": in Rebuild mode, the next
-  page auto-loads as you scroll listings, search, and profiles.
+- **Enable old Reddit** — master on/off.
+- **Night mode** — dark theme (on by default).
+- **Infinite scroll** — auto-load the next page (on by default).
+- **Filters** *(Options page)* — hide posts by subreddit / user / domain / title keyword.
 
-All stored in `storage.local`.
+Keyboard nav, comment collapse, hover cards, user tags, back-to-top and inline
+expandos are always on. All settings live in `storage.local`.
 
 ---
 
 ## How it works
 
-A single content script runs at `document_start` on new-Reddit hosts (never on
-`old.reddit.com`):
+A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs at
+`document_start` on `www.reddit.com` / `sh.reddit.com`:
 
-- **Styling** — [oldreddit-skin-css.js](oldreddit-skin-css.js) holds the skin as a
-  string; [restyle.js](restyle.js) injects it into the main document *and* into
-  every open shadow root, and re-injects as Reddit's SPA renders (via a
-  `MutationObserver`).
-- **Compact feed** — CSS hides `[slot="post-media-container"]` / `[slot="text-body"]`
-  scoped to `<shreddit-feed>` (plus a `view-context` backstop so the permalink page
-  keeps its media), gated by `:not(.orr-expanded)`. A `[+]` button injected per post
-  toggles that class to reveal media — the reveal is class-gated, so it survives a
-  media selector changing.
-- **Signup promo** — found by its text ("Join the most real place on the internet")
-  and hidden via a class, so it works regardless of Reddit's class names.
-
-Everything is removable: turning the skin off strips the injected styles, expando
-buttons, and hide-classes with no reload.
+- **Route** — [common.js](common.js) maps the URL to a listing / comments / user /
+  search route (else it leaves new Reddit alone).
+- **Fetch** — a same-origin `fetch('{path}/.json', {credentials:'include'})` (and
+  `/api/me.json`, `/about.json`, `morechildren`, …) rides your logged-in session.
+- **Render** — [rebuild.js](rebuild.js) builds old Reddit's real markup from the JSON
+  and swaps out new Reddit's `<body>`, styled by
+  [vendor/oldreddit.css](vendor/oldreddit.css) (the archived 2019 stylesheet, asset
+  URLs rewritten to `redditstatic.com`).
+- **Enhance** — keyboard nav, comment collapse, infinite scroll, night mode, filters,
+  user tags, hover cards and inline expandos run on the rebuilt DOM.
+- **Fail safe** — a visibility guard + 8s watchdog; any non-200 (e.g. logged-out
+  `403`) reveals normal Reddit instead of a blank page.
 
 ---
 
@@ -235,9 +240,7 @@ buttons, and hide-classes with no reload.
 | File | Purpose |
 |------|---------|
 | `manifest.json` | MV3 manifest (Firefox + Chrome), registers the content scripts |
-| `oldreddit-skin-css.js` | The old-Reddit skin stylesheet (as a string) |
-| `restyle.js` | Content script: injects the skin, compact-feed expando, promo hide |
-| `rebuild.js` | Content script: rebuilds old Reddit's real frontend from the JSON API (Rebuild mode) |
+| `rebuild.js` | Content script: rebuilds old Reddit from the JSON API + all RES-style features |
 | `vendor/oldreddit.css` | Old Reddit's real archived 2019 stylesheet (source) |
 | `vendor/oldreddit.bundled.css` | The above with asset URLs rewritten — the file injected at runtime |
 | `scripts/build-css.mjs` | Rebuilds `oldreddit.bundled.css` from the source |

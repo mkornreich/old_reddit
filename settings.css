@@ -203,3 +203,22 @@ body.options { max-width: 460px; margin: 0 auto; padding-bottom: 8px; }
   line-height: 1.5;
   color: var(--orr-sub);
 }
+.orr-intro code { font-family: Consolas, Menlo, monospace; font-size: 11px; }
+
+.orr-filters { padding: 12px 16px 20px; border-top: 1px solid var(--orr-border); }
+.orr-filters h2 { margin: 4px 0 2px; font-size: 13px; }
+.orr-filters-hint { margin: 0 0 10px; font-size: 11px; color: var(--orr-sub); }
+.orr-field { display: block; margin-bottom: 10px; }
+.orr-field span { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.orr-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Verdana, sans-serif;
+  font-size: 12px;
+  padding: 6px;
+  border: 1px solid var(--orr-border);
+  border-radius: 3px;
+  background: var(--orr-bg);
+  color: var(--orr-text);
+  resize: vertical;
+}

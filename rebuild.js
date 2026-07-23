@@ -73,14 +73,24 @@
       };
     }
     if (d.is_gallery && d.gallery_data && d.media_metadata) {
-      const imgs = (d.gallery_data.items || [])
+      const srcs = (d.gallery_data.items || [])
         .map((it) => {
           const m = d.media_metadata[it.media_id];
-          const src = m && m.s ? m.s.u || m.s.gif : null;
-          return src ? `<img class="preview" src="${esc(src)}">` : "";
+          return m && m.s ? m.s.u || m.s.gif : null;
         })
-        .join("");
-      if (imgs) return { type: "image gallery", html: `<div class="expando-container">${imgs}</div>` };
+        .filter(Boolean);
+      if (srcs.length) {
+        const n = srcs.length;
+        const imgs = srcs.map((s, i) => `<img class="orr-gimg${i === 0 ? " active" : ""}" src="${esc(s)}">`).join("");
+        const nav =
+          n > 1
+            ? `<div class="orr-gnav-bar"><a class="orr-gnav" data-d="-1" href="javascript:void(0)">&lsaquo; prev</a> <span class="orr-gcount">1 / ${n}</span> <a class="orr-gnav" data-d="1" href="javascript:void(0)">next &rsaquo;</a></div>`
+            : "";
+        return {
+          type: "image gallery",
+          html: `<div class="expando-container"><div class="orr-gallery" data-idx="0" data-n="${n}">${nav}<div class="orr-gitems">${imgs}</div></div></div>`,
+        };
+      }
     }
     const isImg = d.post_hint === "image" || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(d.url || "");
     if (isImg) {
@@ -312,12 +322,13 @@
     const kids = childrenOf(d.replies);
     const childHtml = kids.length ? buildCommentTree(kids, opts.linkId, opts.nowMs) : "";
     return (
-      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}">` +
+      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}" data-created="${esc(d.created_utc || 0)}">` +
       `<span class="rank"></span>` +
       `<div class="midcol unvoted"><div class="arrow up login-required" role="button" aria-label="upvote"></div>` +
       `<div class="arrow down login-required" role="button" aria-label="downvote"></div></div>` +
       `<div class="entry unvoted">` +
-      `<p class="tagline"><a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
+      `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-label="collapse">[&ndash;]</a> ` +
+      `<a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
       ` <span class="score unvoted">${pts}</span> ` +
       `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
@@ -524,13 +535,15 @@
   function searchFormHtml(route, query) {
     const inSub = route && route.scope === "sub" && isRealSub(route.sub);
     const action = inSub ? "/r/" + route.sub + "/search" : "/search";
+    // "limit to r/x" shown right below the search bar (old reddit hides it in
+    // #searchexpando; per request we keep it visible).
     const restrict = inSub
-      ? `<input type="checkbox" name="restrict_sr" id="orr-restrict" value="1"> <label for="orr-restrict">limit to r/${esc(route.sub)}</label>`
+      ? `<div class="orr-restrict" style="font-size:11px;margin-top:4px"><label><input type="checkbox" name="restrict_sr" value="1"> limit my search to r/${esc(route.sub)}</label></div>`
       : "";
     return (
       `<form id="search" action="${esc(action)}" method="get" role="search">` +
       `<input type="text" name="q" placeholder="search" value="${esc(query || "")}">` +
-      `<input type="submit" value="search">` +
+      `<input type="submit" value="">` +
       restrict +
       `</form>`
     );
@@ -739,7 +752,10 @@
       const res = await st.fetchPage(st.after, st.count);
       if (infState !== st) return; // navigated away mid-fetch
       const table = document.getElementById("siteTable");
-      if (table && res && res.itemsHtml) table.insertAdjacentHTML("beforeend", res.itemsHtml);
+      if (table && res && res.itemsHtml) {
+        table.insertAdjacentHTML("beforeend", res.itemsHtml);
+        enhanceNewItems(table);
+      }
       st.count += (res && res.addedCount) || 0;
       st.after = (res && res.after) || null;
       if (!st.after) teardownInfinite();
@@ -748,6 +764,325 @@
     } finally {
       if (infState === st) st.loading = false;
     }
+  }
+
+  // ==================== RES-style enhancements ==========================
+
+  let nightModeOn = true;
+  let dataCache = { filters: { subreddits: [], users: [], domains: [], keywords: [], flairs: [] }, userTags: {}, threadVisits: {} };
+  const enhanceCache = new Map();
+
+  const ENHANCE_CSS = `
+.thing.comment.collapsed > .child, .thing.comment.collapsed > .entry .usertext-body,
+.thing.comment.collapsed > .entry .flat-list.buttons { display:none !important; }
+.thing.comment.collapsed > .entry .tagline { opacity:.75; }
+a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:pointer; margin-right:2px; }
+.thing.orr-kb-sel > .entry { outline:2px solid #ff4500; outline-offset:1px; }
+.thing.orr-filtered { display:none !important; }
+#orr-top { position:fixed; right:16px; bottom:16px; z-index:2147483000; background:#5f99cf; color:#fff;
+  border:1px solid #336699; border-radius:3px; padding:6px 10px; font:12px verdana; cursor:pointer; display:none; }
+#orr-top.show { display:block; }
+.orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; color:#fff; vertical-align:middle; }
+#orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
+  border-radius:3px; padding:8px; font:11px verdana; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
+#orr-hovercard .orr-tagbtn { color:#369; cursor:pointer; text-decoration:underline; }
+.thing.comment.orr-new > .entry > .tagline:after { content:" \\2022 new"; color:#ff4500; font-weight:bold; }
+.orr-gimg { display:none; max-width:100%; height:auto; }
+.orr-gimg.active { display:block; }
+.orr-gnav-bar { margin:4px 0; font-size:12px; }
+a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }`;
+
+  const NIGHT_CSS = `
+html.orr-night, html.orr-night body, html.orr-night .content, html.orr-night #siteTable,
+html.orr-night .commentarea, html.orr-night shreddit-app { background:#1a1a1b !important; color:#d7dadc !important; }
+html.orr-night a, html.orr-night a * { color:#6cb0ff !important; }
+html.orr-night a:visited, html.orr-night a:visited * { color:#b39ddb !important; }
+html.orr-night .thing, html.orr-night .thing.comment { background:transparent !important; }
+html.orr-night .thing { border-color:#343536 !important; }
+html.orr-night .tagline, html.orr-night .domain, html.orr-night .score, html.orr-night .rank { color:#818384 !important; }
+html.orr-night .md, html.orr-night .usertext-body, html.orr-night .md * { background:transparent !important; color:#d7dadc !important; }
+html.orr-night .side .spacer > *, html.orr-night .titlebox, html.orr-night .sidecontentbox {
+  background:#242526 !important; border-color:#343536 !important; color:#d7dadc !important; }
+html.orr-night #search input[type=text] { background:#111 !important; color:#d7dadc !important; border-color:#474748 !important; }
+html.orr-night #header { background:#20303f !important; border-color:#14202b !important; }
+html.orr-night .tabmenu li a, html.orr-night #header-bottom-right, html.orr-night #header-bottom-right a { color:#d7dadc !important; }
+html.orr-night #header-bottom-right { background:#2a2f31 !important; }
+html.orr-night .thing.comment .child { border-color:#343536 !important; }
+html.orr-night #orr-hovercard { background:#242526 !important; color:#d7dadc !important; }
+html.orr-night .menuarea { background:transparent !important; color:#d7dadc !important; }`;
+
+  function injectStaticCss() {
+    if (!document.getElementById("orr-enhance-css")) {
+      const s = document.createElement("style");
+      s.id = "orr-enhance-css";
+      s.textContent = ENHANCE_CSS + "\n" + NIGHT_CSS;
+      (document.head || document.documentElement).appendChild(s);
+    }
+  }
+  function applyNight() {
+    document.documentElement.classList.toggle("orr-night", !!nightModeOn);
+  }
+
+  function ensureUiChrome() {
+    if (!document.body) return;
+    if (!document.getElementById("orr-top")) {
+      const b = document.createElement("div");
+      b.id = "orr-top";
+      b.textContent = "↑ top";
+      b.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+      document.body.appendChild(b);
+    }
+    if (!document.getElementById("orr-hovercard")) {
+      const c = document.createElement("div");
+      c.id = "orr-hovercard";
+      c.style.display = "none";
+      document.body.appendChild(c);
+    }
+  }
+
+  // ---- keyboard navigation ----
+  let kbIdx = -1;
+  function kbThings() {
+    const inComments = !!document.querySelector(".commentarea");
+    const sel = inComments ? ".nestedlisting > .thing.comment" : "#siteTable > .thing.link:not(.orr-filtered)";
+    return Array.from(document.querySelectorAll(sel));
+  }
+  function kbSelect(i) {
+    const things = kbThings();
+    if (!things.length) return;
+    kbIdx = Math.max(0, Math.min(i, things.length - 1));
+    things.forEach((t) => t.classList.remove("orr-kb-sel"));
+    const el = things[kbIdx];
+    el.classList.add("orr-kb-sel");
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  function kbCurrent() {
+    const things = kbThings();
+    return kbIdx >= 0 ? things[kbIdx] : null;
+  }
+  function handleKeydown(e) {
+    if (!active || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    switch (e.key) {
+      case "j": kbSelect(kbIdx + 1); e.preventDefault(); break;
+      case "k": kbSelect(kbIdx - 1); e.preventDefault(); break;
+      case "o":
+      case "Enter": {
+        const c = kbCurrent();
+        const a = c && c.querySelector(".title a, a.bylink");
+        if (a) a.click();
+        break;
+      }
+      case "x": {
+        const c = kbCurrent();
+        const btn = c && c.querySelector(".expando-button");
+        if (btn) btn.click();
+        else if (c && c.classList.contains("comment")) {
+          const ex = c.querySelector(":scope > .entry .expand");
+          if (ex) ex.click();
+        }
+        break;
+      }
+      default: return;
+    }
+  }
+
+  // ---- collapse comments ----
+  function toggleCollapse(expandLink) {
+    const thing = expandLink.closest(".thing.comment");
+    if (!thing) return;
+    const collapsed = thing.classList.toggle("collapsed");
+    expandLink.innerHTML = collapsed ? "[+]" : "[&ndash;]";
+  }
+
+  // ---- gallery nav ----
+  function galleryNav(navEl) {
+    const gal = navEl.closest(".orr-gallery");
+    if (!gal) return;
+    const imgs = Array.from(gal.querySelectorAll(".orr-gimg"));
+    const n = imgs.length;
+    let idx = parseInt(gal.getAttribute("data-idx") || "0", 10);
+    idx = (idx + parseInt(navEl.getAttribute("data-d") || "1", 10) + n) % n;
+    gal.setAttribute("data-idx", String(idx));
+    imgs.forEach((im, i) => im.classList.toggle("active", i === idx));
+    const cnt = gal.querySelector(".orr-gcount");
+    if (cnt) cnt.textContent = idx + 1 + " / " + n;
+  }
+
+  // ---- user tags ----
+  const TAG_COLORS = ["#ff4500", "#0079d3", "#46a758", "#a333c8", "#c69026", "#008985"];
+  function tagColor(name) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    return TAG_COLORS[h % TAG_COLORS.length];
+  }
+  function patchTags(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll("a.author").forEach((a) => {
+      if (a.dataset.orrTagged) return;
+      const m = /\/user\/([^/?#]+)/.exec(a.getAttribute("href") || "");
+      if (!m) return;
+      a.dataset.orrTagged = "1";
+      const t = dataCache.userTags[m[1].toLowerCase()];
+      if (t) {
+        const span = document.createElement("span");
+        span.className = "orr-usertag";
+        span.style.background = t.color || "#888";
+        span.textContent = t.text;
+        a.insertAdjacentElement("afterend", span);
+      }
+    });
+  }
+  function promptTag(username) {
+    const key = username.toLowerCase();
+    const cur = dataCache.userTags[key];
+    const text = window.prompt("Tag for u/" + username + " (blank to remove):", cur ? cur.text : "");
+    if (text === null) return;
+    if (!text.trim()) delete dataCache.userTags[key];
+    else dataCache.userTags[key] = { text: text.trim(), color: cur ? cur.color : tagColor(key) };
+    ORR.setPrefs({ userTags: dataCache.userTags });
+    // repaint: clear markers so patchTags re-runs
+    document.querySelectorAll("a.author[data-orr-tagged]").forEach((a) => delete a.dataset.orrTagged);
+    document.querySelectorAll(".orr-usertag").forEach((s) => s.remove());
+    patchTags(document);
+    hideHoverCard();
+  }
+
+  // ---- filters ----
+  function applyFilters(scope) {
+    const f = dataCache.filters || {};
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll("#siteTable .thing.link").forEach((p) => {
+      const sub = (p.getAttribute("data-subreddit") || "").toLowerCase();
+      const author = (p.getAttribute("data-author") || "").toLowerCase();
+      const domain = (p.getAttribute("data-domain") || "").toLowerCase();
+      const titleEl = p.querySelector(".title a");
+      const title = (titleEl ? titleEl.textContent : "").toLowerCase();
+      const hide =
+        (f.subreddits || []).some((s) => s && s.toLowerCase() === sub) ||
+        (f.users || []).some((u) => u && u.toLowerCase() === author) ||
+        (f.domains || []).some((d) => d && domain.indexOf(d.toLowerCase()) >= 0) ||
+        (f.keywords || []).some((k) => k && title.indexOf(k.toLowerCase()) >= 0);
+      p.classList.toggle("orr-filtered", hide);
+    });
+  }
+
+  // ---- new comments since last visit ----
+  function markNewComments() {
+    const area = document.querySelector(".commentarea");
+    if (!area) return;
+    const post = document.querySelector("#siteTable .thing.link");
+    const t3 = post ? post.getAttribute("data-fullname") : null;
+    if (!t3) return;
+    const last = dataCache.threadVisits[t3] || 0;
+    if (last) {
+      document.querySelectorAll(".thing.comment").forEach((c) => {
+        const created = parseInt(c.getAttribute("data-created") || "0", 10);
+        if (created > last) c.classList.add("orr-new");
+      });
+    }
+    dataCache.threadVisits[t3] = Math.floor((typeof Date.now === "function" ? Date.now() : 0) / 1000);
+    // cap growth
+    const keys = Object.keys(dataCache.threadVisits);
+    if (keys.length > 800) delete dataCache.threadVisits[keys[0]];
+    ORR.setPrefs({ threadVisits: dataCache.threadVisits });
+  }
+
+  // ---- hover cards ----
+  let hoverTimer = null;
+  function hideHoverCard() {
+    const c = document.getElementById("orr-hovercard");
+    if (c) c.style.display = "none";
+  }
+  function positionCard(card, anchor) {
+    const r = anchor.getBoundingClientRect();
+    card.style.left = Math.min(r.left, window.innerWidth - 340) + "px";
+    card.style.top = Math.min(r.bottom + 4, window.innerHeight - 120) + "px";
+  }
+  async function showHoverCard(anchor) {
+    const href = anchor.getAttribute("href") || "";
+    const card = document.getElementById("orr-hovercard");
+    if (!card) return;
+    const um = /^\/user\/([^/?#]+)\/?$/.exec(href);
+    const sm = /^\/r\/([^/?#+]+)\/?$/.exec(href);
+    if (!um && !sm) return;
+    const url = um
+      ? location.origin + "/user/" + um[1] + "/about.json?raw_json=1"
+      : location.origin + "/r/" + sm[1] + "/about.json?raw_json=1";
+    const j = await fetchJsonCached(url);
+    if (!j || !j.data) return;
+    const d = j.data;
+    let html;
+    if (um) {
+      const name = d.name || um[1];
+      const cake = d.created_utc ? new Date(d.created_utc * 1000).toISOString().slice(0, 10) : "?";
+      html =
+        `<b>u/${esc(name)}</b><br>${formatNumber(d.link_karma)} post &middot; ${formatNumber(d.comment_karma)} comment karma` +
+        `<br>cake day ${esc(cake)}<br><span class="orr-tagbtn" data-tag-user="${esc(name)}">tag user</span>`;
+    } else {
+      html =
+        `<b>r/${esc(d.display_name || sm[1])}</b><br>${formatNumber(d.subscribers)} subscribers` +
+        (d.public_description ? `<br>${esc(d.public_description).slice(0, 240)}` : "");
+    }
+    card.innerHTML = html;
+    positionCard(card, anchor);
+    card.style.display = "block";
+  }
+  function fetchJsonCached(url) {
+    if (enhanceCache.has(url)) return enhanceCache.get(url);
+    const p = fetch(url, { credentials: "include", headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+    enhanceCache.set(url, p);
+    return p;
+  }
+
+  function wireEnhancements() {
+    document.addEventListener("keydown", handleKeydown, true);
+    window.addEventListener("scroll", () => {
+      const b = document.getElementById("orr-top");
+      if (b) b.classList.toggle("show", window.scrollY > 500);
+    });
+    document.addEventListener(
+      "mouseover",
+      (e) => {
+        const a = e.target.closest && e.target.closest("a.author, .sr-bar a.choice, a.subreddit");
+        if (!a) {
+          if (!(e.target.closest && e.target.closest("#orr-hovercard"))) {
+            if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+          }
+          return;
+        }
+        if (hoverTimer) clearTimeout(hoverTimer);
+        hoverTimer = setTimeout(() => showHoverCard(a), 350);
+      },
+      true
+    );
+    document.addEventListener("mouseout", (e) => {
+      const to = e.relatedTarget;
+      if (to && to.closest && (to.closest("#orr-hovercard") || to.closest("a.author, .sr-bar a.choice, a.subreddit"))) return;
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+      setTimeout(() => {
+        const c = document.getElementById("orr-hovercard");
+        if (c && !c.matches(":hover")) hideHoverCard();
+      }, 250);
+    });
+  }
+
+  // Per-render pass: chrome, night, filters, tags, new-comments; reset keyboard.
+  function afterRender() {
+    injectStaticCss();
+    applyNight();
+    ensureUiChrome();
+    kbIdx = -1;
+    applyFilters(document);
+    patchTags(document);
+    markNewComments();
+  }
+  function enhanceNewItems(scope) {
+    applyFilters(scope || document);
+    patchTags(scope || document);
   }
 
   function hideGuard() {
@@ -818,6 +1153,7 @@
     } catch (e) {
       /* ignore */
     }
+    afterRender();
   }
 
   function renderInto(route, json, params) {
@@ -1176,6 +1512,30 @@
       "click",
       (e) => {
         if (!active) return;
+        // Comment collapse toggle.
+        const expandLink = e.target.closest && e.target.closest("a.expand");
+        if (expandLink) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleCollapse(expandLink);
+          return;
+        }
+        // Gallery prev/next.
+        const gnav = e.target.closest && e.target.closest("a.orr-gnav");
+        if (gnav) {
+          e.preventDefault();
+          e.stopPropagation();
+          galleryNav(gnav);
+          return;
+        }
+        // Tag-user link (inside a hover card).
+        const tagBtn = e.target.closest && e.target.closest(".orr-tagbtn");
+        if (tagBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          promptTag(tagBtn.getAttribute("data-tag-user") || "");
+          return;
+        }
         // Old-reddit expando button → toggle the post's inline media/text.
         const expBtn = e.target.closest && e.target.closest(".expando-button");
         if (expBtn) {
@@ -1250,6 +1610,8 @@
       if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url) || ORR.isSearchRoute(url))
         loadPage(url, false);
     });
+
+    wireEnhancements();
   }
 
   async function start() {
@@ -1259,27 +1621,43 @@
     } catch (e) {
       return;
     }
-    if (!prefs.rebuild) return; // rebuild mode off → restyle.js handles the page
-    infiniteOn = prefs.infiniteScroll === true;
+    if (!prefs.enabled) return; // extension off → leave new Reddit alone
+    infiniteOn = prefs.infiniteScroll !== false;
+    nightModeOn = prefs.nightMode !== false;
+    try {
+      dataCache = await ORR.getData();
+    } catch (e) {
+      /* keep defaults */
+    }
     const url = new URL(location.href);
     if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url))
-      return; // else restyle.js skins
+      return; // unsupported route → leave it to new Reddit
     wireNav();
     fetchMe(); // prime the identity so the header usually renders logged-in on first paint
     loadPage(url, true);
   }
 
-  // React to the toggle changing live.
+  // React to setting changes live.
   try {
     api.storage.onChanged.addListener((changes, area) => {
       if (area !== "local") return;
-      if (changes.infiniteScroll) infiniteOn = changes.infiniteScroll.newValue === true; // applies on next page
-      if (changes.rebuild || changes.enabled) {
-        if (changes.rebuild && changes.rebuild.newValue === false && active) {
-          location.reload(); // hand the page back to new Reddit
-        } else if (!active) {
-          start();
-        }
+      if (changes.infiniteScroll) infiniteOn = changes.infiniteScroll.newValue !== false;
+      if (changes.nightMode) {
+        nightModeOn = changes.nightMode.newValue !== false;
+        if (active) applyNight();
+      }
+      if ((changes.filters || changes.userTags || changes.threadVisits) && active) {
+        ORR.getData().then((d) => {
+          dataCache = d;
+          applyFilters(document);
+          document.querySelectorAll("a.author[data-orr-tagged]").forEach((a) => delete a.dataset.orrTagged);
+          document.querySelectorAll(".orr-usertag").forEach((s) => s.remove());
+          patchTags(document);
+        });
+      }
+      if (changes.enabled) {
+        if (changes.enabled.newValue === false && active) location.reload();
+        else if (!active) start();
       }
     });
   } catch (e) {

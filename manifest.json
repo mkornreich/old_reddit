@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Old Reddit Skin",
-  "version": "3.6.0",
-  "description": "Repaints new Reddit in place to look like old Reddit: classic styling, a compact feed (media hidden behind a [+] expando), and no logged-out signup promo.",
+  "name": "Old Reddit",
+  "version": "3.7.0",
+  "description": "Rebuilds Reddit's frontend from its JSON API into old Reddit's real HTML + CSS, with RES-style extras: infinite scroll, keyboard nav, comment collapse, night mode, filters, user tags, and hover cards.",
   "browser_specific_settings": {
     "gecko": {
       "id": "old-reddit-redirect@extension.local",
@@ -33,7 +33,7 @@
         "*://amp.reddit.com/*",
         "*://sh.reddit.com/*"
       ],
-      "js": ["common.js", "oldreddit-skin-css.js", "restyle.js", "rebuild.js"],
+      "js": ["common.js", "rebuild.js"],
       "run_at": "document_start",
       "all_frames": false
     }
@@ -45,7 +45,7 @@
     }
   ],
   "action": {
-    "default_title": "Old Reddit Skin",
+    "default_title": "Old Reddit",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",

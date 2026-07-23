@@ -12,7 +12,8 @@
 (function () {
   const api = typeof browser !== "undefined" ? browser : chrome;
 
-  const DEFAULTS = Object.freeze({ enabled: true, rebuild: false, infiniteScroll: false });
+  // Rebuild is now the only mode. Toggles default ON.
+  const DEFAULTS = Object.freeze({ enabled: true, infiniteScroll: true, nightMode: true });
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
   const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
@@ -20,16 +21,26 @@
   async function getPrefs() {
     const stored = await api.storage.local.get({
       enabled: undefined,
-      rebuild: undefined,
       infiniteScroll: undefined,
-      mode: undefined, // legacy (pre-2.0)
+      nightMode: undefined,
+      mode: undefined, // legacy
     });
     let enabled = stored.enabled;
     if (enabled === undefined) enabled = stored.mode === "off" ? false : true;
     return {
       enabled: enabled !== false,
-      rebuild: stored.rebuild === true,
-      infiniteScroll: stored.infiniteScroll === true,
+      infiniteScroll: stored.infiniteScroll !== false, // default on
+      nightMode: stored.nightMode !== false, // default on
+    };
+  }
+
+  // Larger data blobs (kept out of getPrefs). All default to empty.
+  async function getData() {
+    const d = await api.storage.local.get({ filters: null, userTags: null, threadVisits: null });
+    return {
+      filters: d.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [] },
+      userTags: d.userTags || {},
+      threadVisits: d.threadVisits || {},
     };
   }
 
@@ -97,6 +108,6 @@
 
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
-    getPrefs, setPrefs, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute,
+    getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute,
   };
 })();

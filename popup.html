@@ -3,22 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Old Reddit Skin</title>
+  <title>Old Reddit</title>
   <link rel="stylesheet" href="settings.css">
 </head>
 <body class="popup">
   <header class="orr-header">
     <img class="orr-logo" src="icons/icon.svg" alt="">
     <div>
-      <h1>Old Reddit Skin</h1>
+      <h1>Old Reddit</h1>
       <p id="status" class="orr-status"></p>
     </div>
   </header>
 
   <label class="orr-row">
     <span class="orr-row-text">
-      <span class="orr-row-title">Old Reddit skin</span>
-      <span class="orr-row-sub">Repaint new Reddit to look like old Reddit, with a compact feed</span>
+      <span class="orr-row-title">Enable old Reddit</span>
+      <span class="orr-row-sub">Rebuild Reddit's frontend from the API into the classic UI (logged-in)</span>
     </span>
     <input type="checkbox" id="enabled">
     <span class="orr-switch" aria-hidden="true"></span>
@@ -26,25 +26,26 @@
 
   <label class="orr-row">
     <span class="orr-row-text">
-      <span class="orr-row-title">Rebuild frontend <span class="orr-badge">experimental</span></span>
-      <span class="orr-row-sub">On listings, render old Reddit's real HTML/CSS from the API (logged-in only)</span>
+      <span class="orr-row-title">Night mode</span>
+      <span class="orr-row-sub">Dark theme</span>
     </span>
-    <input type="checkbox" id="rebuild">
+    <input type="checkbox" id="night">
     <span class="orr-switch" aria-hidden="true"></span>
   </label>
 
-  <label class="orr-row orr-sub-row">
+  <label class="orr-row">
     <span class="orr-row-text">
-      <span class="orr-row-title">↳ Infinite scroll</span>
-      <span class="orr-row-sub">Auto-load the next page as you scroll (Rebuild mode)</span>
+      <span class="orr-row-title">Infinite scroll</span>
+      <span class="orr-row-sub">Auto-load the next page as you scroll</span>
     </span>
     <input type="checkbox" id="infinite">
     <span class="orr-switch" aria-hidden="true"></span>
   </label>
 
   <footer class="orr-footer">
-    <p>In the feed, click <code>[+]</code> on a post to reveal its image/video. Open a
-    post to see everything.</p>
+    <p>Keys: <code>j</code>/<code>k</code> move · <code>o</code> open · <code>x</code> expand.
+    Click <code>[–]</code> to collapse a comment, hover a name for info, and set
+    filters/tags in <strong>Options</strong>.</p>
   </footer>
 
   <script src="common.js"></script>

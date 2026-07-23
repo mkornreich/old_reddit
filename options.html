@@ -3,30 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Old Reddit Skin — Options</title>
+  <title>Old Reddit — Options</title>
   <link rel="stylesheet" href="settings.css">
 </head>
 <body class="options">
   <header class="orr-header">
     <img class="orr-logo" src="icons/icon.svg" alt="">
     <div>
-      <h1>Old Reddit Skin</h1>
+      <h1>Old Reddit</h1>
       <p id="status" class="orr-status"></p>
     </div>
   </header>
 
   <p class="orr-intro">
-    Repaints new Reddit in place toward an old-Reddit look — white page, Verdana,
-    flat rows, blue links — and renders a <strong>compact feed</strong> where inline
-    images/videos/self-text are hidden until you click the <code>[+]</code> expando
-    or open the post. It also hides the logged-out signup promo. This is an
-    approximation that can break when Reddit changes its markup.
+    Rebuilds Reddit's frontend from its JSON API into old Reddit's real HTML + CSS
+    (logged-in only). Keyboard nav (<code>j</code>/<code>k</code>/<code>o</code>/<code>x</code>),
+    comment collapse, hover cards, user tags, back-to-top and inline expandos are
+    always on. Experimental — read-only, and it falls back to normal Reddit if the
+    API is unavailable.
   </p>
 
   <label class="orr-row">
     <span class="orr-row-text">
-      <span class="orr-row-title">Old Reddit skin</span>
-      <span class="orr-row-sub">Repaint new Reddit to look like old Reddit, with a compact feed</span>
+      <span class="orr-row-title">Enable old Reddit</span>
+      <span class="orr-row-sub">Rebuild the classic UI from the API</span>
     </span>
     <input type="checkbox" id="enabled">
     <span class="orr-switch" aria-hidden="true"></span>
@@ -34,26 +34,30 @@
 
   <label class="orr-row">
     <span class="orr-row-text">
-      <span class="orr-row-title">Rebuild frontend <span class="orr-badge">experimental</span></span>
-      <span class="orr-row-sub">On subreddit/front-page listings, render old Reddit's real HTML + CSS from Reddit's JSON API instead of skinning. Read-only, logged-in only.</span>
+      <span class="orr-row-title">Night mode</span>
+      <span class="orr-row-sub">Dark theme over the old-Reddit layout</span>
     </span>
-    <input type="checkbox" id="rebuild">
+    <input type="checkbox" id="night">
     <span class="orr-switch" aria-hidden="true"></span>
   </label>
 
-  <label class="orr-row orr-sub-row">
+  <label class="orr-row">
     <span class="orr-row-text">
-      <span class="orr-row-title">↳ Infinite scroll</span>
-      <span class="orr-row-sub">RES-style "never-ending reddit" — auto-load the next page as you scroll (Rebuild mode only)</span>
+      <span class="orr-row-title">Infinite scroll</span>
+      <span class="orr-row-sub">RES "never-ending reddit" — auto-load pages as you scroll</span>
     </span>
     <input type="checkbox" id="infinite">
     <span class="orr-switch" aria-hidden="true"></span>
   </label>
 
-  <footer class="orr-footer">
-    <p>In the feed, click <code>[+]</code> on a post to reveal its image/video. Open a
-    post to see everything.</p>
-  </footer>
+  <section class="orr-filters">
+    <h2>Filters — hide posts matching…</h2>
+    <p class="orr-filters-hint">One per line. Applied to listings, search and profiles.</p>
+    <label class="orr-field"><span>Subreddits</span><textarea id="filter-subreddits" rows="3" placeholder="AskReddit&#10;announcements"></textarea></label>
+    <label class="orr-field"><span>Users</span><textarea id="filter-users" rows="3" placeholder="spez"></textarea></label>
+    <label class="orr-field"><span>Domains</span><textarea id="filter-domains" rows="3" placeholder="twitter.com&#10;x.com"></textarea></label>
+    <label class="orr-field"><span>Title keywords</span><textarea id="filter-keywords" rows="3" placeholder="politics&#10;spoiler"></textarea></label>
+  </section>
 
   <script src="common.js"></script>
   <script src="settings.js"></script>

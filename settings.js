@@ -1,34 +1,34 @@
 "use strict";
 
-// Wires the toggles (shared markup in popup.html and options.html) to storage.
-// The content scripts react to changes via storage.onChanged, so toggling takes
-// effect live (rebuild mode reloads the page to hand it over/back).
+// Wires the settings UI (popup.html + options.html) to storage. Rebuild is now
+// the only mode; the content script (rebuild.js) reacts to changes live.
 
 (function () {
-  const { getPrefs, setPrefs } = globalThis.ORR;
+  const { getPrefs, setPrefs, getData } = globalThis.ORR;
 
   const enabledEl = document.getElementById("enabled");
-  const rebuildEl = document.getElementById("rebuild");
+  const nightEl = document.getElementById("night");
   const infiniteEl = document.getElementById("infinite");
   const statusEl = document.getElementById("status");
 
+  // Filter lists (options page only).
+  const fSubs = document.getElementById("filter-subreddits");
+  const fUsers = document.getElementById("filter-users");
+  const fDomains = document.getElementById("filter-domains");
+  const fKeywords = document.getElementById("filter-keywords");
+
   function render(p) {
-    enabledEl.checked = p.enabled;
-    if (rebuildEl) rebuildEl.checked = p.rebuild;
+    if (enabledEl) enabledEl.checked = p.enabled;
+    if (nightEl) {
+      nightEl.checked = p.nightMode;
+      nightEl.disabled = !p.enabled;
+    }
     if (infiniteEl) {
       infiniteEl.checked = p.infiniteScroll;
-      infiniteEl.disabled = !p.rebuild; // only meaningful in Rebuild mode
-      const row = infiniteEl.closest(".orr-row");
-      if (row) row.classList.toggle("orr-disabled", !p.rebuild);
+      infiniteEl.disabled = !p.enabled;
     }
-    document.body.classList.toggle("is-off", !p.enabled && !p.rebuild);
-    if (statusEl) {
-      statusEl.textContent = p.rebuild
-        ? "Rebuild mode ON (experimental)"
-        : p.enabled
-          ? "Old Reddit skin is ON"
-          : "Off — Reddit looks normal";
-    }
+    document.body.classList.toggle("is-off", !p.enabled);
+    if (statusEl) statusEl.textContent = p.enabled ? "Old Reddit is ON" : "Off — new Reddit shows as-is";
   }
 
   async function update(patch) {
@@ -36,9 +36,33 @@
     render(await getPrefs());
   }
 
-  enabledEl.addEventListener("change", () => update({ enabled: enabledEl.checked }));
-  if (rebuildEl) rebuildEl.addEventListener("change", () => update({ rebuild: rebuildEl.checked }));
+  if (enabledEl) enabledEl.addEventListener("change", () => update({ enabled: enabledEl.checked }));
+  if (nightEl) nightEl.addEventListener("change", () => update({ nightMode: nightEl.checked }));
   if (infiniteEl) infiniteEl.addEventListener("change", () => update({ infiniteScroll: infiniteEl.checked }));
+
+  // ---- filters (options page) ----
+  const toArr = (s) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+  const toLines = (a) => (a || []).join("\n");
+  function saveFilters() {
+    setPrefs({
+      filters: {
+        subreddits: toArr(fSubs.value),
+        users: toArr(fUsers.value),
+        domains: toArr(fDomains.value),
+        keywords: toArr(fKeywords.value),
+        flairs: [],
+      },
+    });
+  }
+  if (fSubs && getData) {
+    getData().then((d) => {
+      fSubs.value = toLines(d.filters.subreddits);
+      fUsers.value = toLines(d.filters.users);
+      fDomains.value = toLines(d.filters.domains);
+      fKeywords.value = toLines(d.filters.keywords);
+    });
+    [fSubs, fUsers, fDomains, fKeywords].forEach((el) => el.addEventListener("change", saveFilters));
+  }
 
   getPrefs().then(render);
 })();
