@@ -1,0 +1,205 @@
+:root {
+  --orr-blue: #5f99cf;      /* classic old-reddit header blue */
+  --orr-blue-dark: #336699;
+  --orr-orange: #ff4500;    /* reddit orangered */
+  --orr-bg: #ffffff;
+  --orr-panel: #f6f7f8;
+  --orr-text: #1a1a1b;
+  --orr-sub: #7c7c7c;
+  --orr-border: #d7dadc;
+  --orr-track: #cfd4d8;
+  --orr-on: #46a758;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --orr-bg: #1a1a1b;
+    --orr-panel: #242526;
+    --orr-text: #d7dadc;
+    --orr-sub: #9a9c9e;
+    --orr-border: #343536;
+    --orr-track: #45474a;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: Verdana, Arial, "Helvetica Neue", Helvetica, sans-serif;
+  color: var(--orr-text);
+  background: var(--orr-bg);
+}
+
+body.popup { width: 320px; }
+body.options { max-width: 460px; margin: 0 auto; padding-bottom: 8px; }
+
+.orr-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(var(--orr-blue), var(--orr-blue-dark));
+  color: #fff;
+}
+
+.orr-logo {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.orr-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.orr-status {
+  margin: 2px 0 0;
+  font-size: 11px;
+  opacity: 0.92;
+}
+
+.orr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--orr-border);
+  cursor: pointer;
+}
+
+.orr-row-text {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.orr-row-title { font-size: 13px; font-weight: 600; }
+.orr-row-sub { font-size: 11px; color: var(--orr-sub); line-height: 1.35; }
+
+/* Visually hide the real checkbox/radio; the label click still toggles it. */
+.orr-row input[type="checkbox"],
+.orr-row input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Radio dot (mode selector). */
+.orr-radio {
+  flex: 0 0 auto;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--orr-track);
+  background: var(--orr-bg);
+  transition: border-color 0.15s ease;
+}
+.orr-radio::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--orr-blue-dark);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.15s ease;
+}
+.orr-row input[type="radio"]:checked ~ .orr-radio { border-color: var(--orr-blue-dark); }
+.orr-row input[type="radio"]:checked ~ .orr-radio::after { transform: translate(-50%, -50%) scale(1); }
+.orr-row input[type="radio"]:focus-visible ~ .orr-radio {
+  outline: 2px solid var(--orr-blue);
+  outline-offset: 2px;
+}
+
+/* Sub-row (the "include mobile" toggle nested under Redirect). */
+.orr-sub-row {
+  padding-left: 40px;
+  background: var(--orr-panel);
+}
+.orr-sub-row .orr-row-title { font-weight: 400; font-size: 12px; }
+.orr-row.orr-disabled { opacity: 0.4; cursor: default; }
+
+/* "experimental" badge. */
+.orr-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--orr-orange);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  vertical-align: middle;
+}
+
+/* Toggle switch drawn from the sibling span. */
+.orr-switch {
+  flex: 0 0 auto;
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 22px;
+  background: var(--orr-track);
+  transition: background 0.15s ease;
+}
+.orr-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s ease;
+}
+.orr-row input[type="checkbox"]:checked ~ .orr-switch { background: var(--orr-on); }
+.orr-row input[type="checkbox"]:checked ~ .orr-switch::after { transform: translateX(18px); }
+.orr-row input[type="checkbox"]:focus-visible ~ .orr-switch {
+  outline: 2px solid var(--orr-blue);
+  outline-offset: 2px;
+}
+
+/* Disabled sub-toggle (master off). */
+.orr-row:has(input:disabled) { cursor: default; opacity: 0.5; }
+
+.orr-footer {
+  padding: 12px 16px 14px;
+  color: var(--orr-sub);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.orr-footer code {
+  font-family: Consolas, "SF Mono", Menlo, monospace;
+  background: var(--orr-panel);
+  border: 1px solid var(--orr-border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 10.5px;
+  color: var(--orr-text);
+}
+.orr-footer a { color: var(--orr-blue); }
+
+.orr-intro {
+  padding: 12px 16px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--orr-sub);
+}

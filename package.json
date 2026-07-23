@@ -1,0 +1,16 @@
+{
+  "name": "old-reddit-skin",
+  "version": "2.0.2",
+  "description": "Firefox extension that repaints new Reddit to look like old Reddit.",
+  "private": true,
+  "scripts": {
+    "lint": "web-ext lint",
+    "start": "web-ext run",
+    "build": "web-ext build --overwrite-dest",
+    "sign:unlisted": "web-ext sign --channel=unlisted",
+    "sign:listed": "web-ext sign --channel=listed"
+  },
+  "devDependencies": {
+    "web-ext": "^8.3.0"
+  }
+}

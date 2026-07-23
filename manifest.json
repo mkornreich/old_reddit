@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Old Reddit Skin",
+  "version": "2.0.2",
+  "description": "Repaints new Reddit in place to look like old Reddit: classic styling, a compact feed (media hidden behind a [+] expando), and no logged-out signup promo.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "old-reddit-redirect@extension.local",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "icons": {
+    "48": "icons/icon.svg",
+    "96": "icons/icon.svg",
+    "128": "icons/icon.svg"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "*://reddit.com/*",
+    "*://*.reddit.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://www.reddit.com/*",
+        "*://reddit.com/*",
+        "*://new.reddit.com/*",
+        "*://np.reddit.com/*",
+        "*://amp.reddit.com/*",
+        "*://sh.reddit.com/*"
+      ],
+      "js": ["common.js", "oldreddit-skin-css.js", "restyle.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Old Reddit Skin",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon.svg",
+      "96": "icons/icon.svg",
+      "128": "icons/icon.svg"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  }
+}

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Old Reddit Skin — Options</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body class="options">
+  <header class="orr-header">
+    <img class="orr-logo" src="icons/icon.svg" alt="">
+    <div>
+      <h1>Old Reddit Skin</h1>
+      <p id="status" class="orr-status"></p>
+    </div>
+  </header>
+
+  <p class="orr-intro">
+    Repaints new Reddit in place toward an old-Reddit look — white page, Verdana,
+    flat rows, blue links — and renders a <strong>compact feed</strong> where inline
+    images/videos/self-text are hidden until you click the <code>[+]</code> expando
+    or open the post. It also hides the logged-out signup promo. This is an
+    approximation that can break when Reddit changes its markup.
+  </p>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Old Reddit skin</span>
+      <span class="orr-row-sub">Repaint new Reddit to look like old Reddit, with a compact feed</span>
+    </span>
+    <input type="checkbox" id="enabled">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <footer class="orr-footer">
+    <p>In the feed, click <code>[+]</code> on a post to reveal its image/video. Open a
+    post to see everything.</p>
+  </footer>
+
+  <script src="common.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>

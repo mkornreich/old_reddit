@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Old Reddit style: classic blue header bar + orange reddit alien nod -->
+  <rect width="128" height="128" rx="24" fill="#cee3f8"/>
+  <rect x="0" y="0" width="128" height="34" rx="24" fill="#5f99cf"/>
+  <rect x="0" y="18" width="128" height="16" fill="#5f99cf"/>
+  <!-- little orillo/alien head in classic reddit orange -->
+  <g transform="translate(64 78)">
+    <circle cx="0" cy="0" r="30" fill="#ff4500"/>
+    <circle cx="0" cy="0" r="30" fill="none" stroke="#a83400" stroke-width="2"/>
+    <!-- eyes -->
+    <circle cx="-11" cy="-3" r="5.5" fill="#fff"/>
+    <circle cx="11" cy="-3" r="5.5" fill="#fff"/>
+    <circle cx="-11" cy="-3" r="2.6" fill="#ff4500"/>
+    <circle cx="11" cy="-3" r="2.6" fill="#ff4500"/>
+    <!-- smile -->
+    <path d="M-13 10 q13 12 26 0" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+    <!-- antenna -->
+    <line x1="18" y1="-24" x2="26" y2="-36" stroke="#a83400" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="27" cy="-38" r="4" fill="#a83400"/>
+  </g>
+  <!-- "old" tag -->
+  <text x="64" y="24" font-family="Verdana, Geneva, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">old</text>
+</svg>

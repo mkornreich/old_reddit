@@ -1,0 +1,15 @@
+# dependencies / build output
+node_modules/
+web-ext-artifacts/
+*.zip
+*.xpi
+
+# secrets & local signing state — NEVER commit
+creds.sh
+*.sh
+.amo-env
+.env
+.amo-upload-uuid
+
+# local editor / agent config
+.claude/
