@@ -113,6 +113,30 @@ folder** loads in every one of them — no separate build.
 > fee) gives one-click installs that survive updates and need no Developer mode.
 > Edge, Brave, and Opera can all install from the Chrome Web Store too.
 
+### Publishing to the Chrome Web Store
+
+A ready-to-upload package is checked in at
+**[`dist/old-reddit-skin-chrome-2.1.0.zip`](dist/)** (`manifest.json` at the zip
+root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
+
+1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
+   (one-time $5 USD fee).
+2. **New item** → upload the zip.
+3. Fill in the listing: a ≥1280×800 screenshot, a description, and the privacy
+   section — declare **no data collected** (the extension only reads Reddit pages
+   to restyle them and stores a single on/off flag locally).
+4. Submit for review.
+
+To rebuild the zip after changes:
+
+```bash
+npm run build                                   # web-ext build -> web-ext-artifacts/*.zip
+# then strip the Firefox key + repackage into dist/ (see the release build for exact steps)
+```
+
+The **same zip** also uploads to the free [Edge Add-ons](https://partner.microsoft.com/dashboard/microsoftedge/)
+store if you ever want an Edge listing.
+
 ---
 
 ## Develop

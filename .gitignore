@@ -13,3 +13,6 @@ creds.sh
 
 # local editor / agent config
 .claude/
+
+# but DO track the Web Store package
+!dist/*.zip
