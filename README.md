@@ -120,7 +120,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.4.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.5.0.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -151,7 +151,8 @@ front-page **listing**, a post's **comments** page, a **user profile**, or a
 extension stops *skinning* new Reddit and instead **rebuilds old Reddit's real
 frontend**: it fetches the data from Reddit's JSON
 API and renders old Reddit's actual `#siteTable` of `.thing.link` items — ranks,
-vote arrows, thumbnails, taglines, comment counts, sort tabs, next/prev paging, the
+vote arrows, thumbnails, taglines, comment counts, an **expando button** (click to
+reveal a post's image/video/gallery/self-text inline), sort tabs, next/prev paging, the
 **time filter** (`top`/`controversial`: past hour → all time), and the **subreddit
 sidebar** (description + rules, from `/about.json` + `/about/rules.json`) — styled by
 old Reddit's genuine archived stylesheet (`vendor/oldreddit.css`, the 2019 desktop

@@ -57,6 +57,40 @@
     return `<a class="thumbnail ${cls} may-blank" href="${esc(permalink)}"></a>`;
   }
 
+  // Determine a post's expandable inline content, or null. Returns { type, html }
+  // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
+  function postExpando(d) {
+    if (d.is_self) {
+      return d.selftext_html
+        ? { type: "selftext", html: `<div class="expando-container"><div class="usertext-body"><div class="md">${d.selftext_html}</div></div></div>` }
+        : null;
+    }
+    const rv = d.media && d.media.reddit_video;
+    if (d.is_video && rv && rv.fallback_url) {
+      return {
+        type: "video-muted",
+        html: `<div class="expando-container"><video class="reddit-video" controls preload="none" width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
+      };
+    }
+    if (d.is_gallery && d.gallery_data && d.media_metadata) {
+      const imgs = (d.gallery_data.items || [])
+        .map((it) => {
+          const m = d.media_metadata[it.media_id];
+          const src = m && m.s ? m.s.u || m.s.gif : null;
+          return src ? `<img class="preview" src="${esc(src)}">` : "";
+        })
+        .join("");
+      if (imgs) return { type: "image gallery", html: `<div class="expando-container">${imgs}</div>` };
+    }
+    const isImg = d.post_hint === "image" || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(d.url || "");
+    if (isImg) {
+      const source = d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source;
+      const src = source && source.url ? source.url : d.url;
+      return { type: "image", html: `<div class="expando-container"><img class="preview" src="${esc(src)}"></div>` };
+    }
+    return null;
+  }
+
   // Build one old-reddit listing item (.thing.link) from a post's `data` object.
   function buildItem(d, opts) {
     opts = opts || {};
@@ -71,11 +105,14 @@
       : "";
     const oddeven = opts.odd ? "odd" : "even";
     const nsfw = d.over_18 ? "over18" : "";
-    // On a comments page the post shows its self-text expanded.
-    const expando =
-      opts.expandText && d.is_self && d.selftext_html
-        ? `<div class="expando"><div class="usertext-body">${d.selftext_html}</div></div>`
+    // Expandable content. On a comments page (expandText) it's shown expanded;
+    // in listings (expandoButton) it's collapsed behind an old-reddit expando box.
+    const exp = opts.expandText || opts.expandoButton ? postExpando(d) : null;
+    const expBtn =
+      opts.expandoButton && exp
+        ? `<div class="expando-button collapsed ${exp.type}" role="button" tabindex="0" aria-label="expand"></div>`
         : "";
+    const expando = exp ? `<div class="expando"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
 
     return (
       `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw} link" id="thing_${esc(d.name)}"` +
@@ -89,6 +126,7 @@
       `</div>` +
       thumbnailHtml(d, permalink) +
       `<div class="entry unvoted">` +
+      expBtn +
       `<div class="top-matter">` +
       `<p class="title">` +
       `<a class="title may-blank" href="${esc(linkHref)}" tabindex="1">${esc(d.title)}</a>` +
@@ -170,7 +208,7 @@
 
     const items = children
       .map((c, i) =>
-        buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub, nowMs: opts.nowMs })
+        buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub, expandoButton: true, nowMs: opts.nowMs })
       )
       .join("");
 
@@ -377,7 +415,7 @@
     const startRank = (opts.startCount || 0) + 1;
     const items = children
       .map((c, i) => {
-        if (c.kind === "t3") return buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub: true, nowMs: opts.nowMs });
+        if (c.kind === "t3") return buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub: true, expandoButton: true, nowMs: opts.nowMs });
         if (c.kind === "t1") return buildUserComment(c.data, { nowMs: opts.nowMs });
         return "";
       })
@@ -580,7 +618,7 @@
     const children = (listing.children || []).filter((c) => c.kind === "t3");
     const startRank = (opts.startCount || 0) + 1;
     const items = children
-      .map((c, i) => buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub: true, nowMs: opts.nowMs }))
+      .map((c, i) => buildItem(c.data, { rank: startRank + i, odd: i % 2 === 0, showSub: true, expandoButton: true, nowMs: opts.nowMs }))
       .join("");
     const count = (startRank - 1) + children.length;
 
@@ -606,7 +644,7 @@
   }
 
   globalThis.ORR_REBUILD = {
-    esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
+    esc, formatAge, thumbnailHtml, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, buildHeader,
@@ -1022,6 +1060,19 @@
       "click",
       (e) => {
         if (!active) return;
+        // Old-reddit expando button → toggle the post's inline media/text.
+        const expBtn = e.target.closest && e.target.closest(".expando-button");
+        if (expBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          const entry = expBtn.closest(".entry");
+          const expando = entry ? entry.querySelector(":scope > .expando") : null;
+          const collapse = !expBtn.classList.contains("collapsed");
+          expBtn.classList.toggle("collapsed", collapse);
+          expBtn.classList.toggle("expanded", !collapse);
+          if (expando) expando.style.display = collapse ? "none" : "";
+          return;
+        }
         // "load more comments" stub → expand via the morechildren API.
         const moreEl = e.target.closest && e.target.closest("a.orr-more");
         if (moreEl) {
