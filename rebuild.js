@@ -71,6 +71,11 @@
       : "";
     const oddeven = opts.odd ? "odd" : "even";
     const nsfw = d.over_18 ? "over18" : "";
+    // On a comments page the post shows its self-text expanded.
+    const expando =
+      opts.expandText && d.is_self && d.selftext_html
+        ? `<div class="expando"><div class="usertext-body">${d.selftext_html}</div></div>`
+        : "";
 
     return (
       `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw} link" id="thing_${esc(d.name)}"` +
@@ -95,7 +100,9 @@
       `<li class="first"><a href="${esc(permalink)}" class="bylink comments may-blank">${comments}</a></li>` +
       `<li class="share"><a class="post-sharing-button" href="${esc(permalink)}">share</a></li>` +
       `</ul>` +
-      `</div></div><div class="clearleft"></div></div>`
+      `</div>` +
+      expando +
+      `</div><div class="clearleft"></div></div>`
     );
   }
 
@@ -232,7 +239,105 @@
     return html;
   }
 
-  globalThis.ORR_REBUILD = { esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody, formatNumber, buildSidebar };
+  // ---------- comments page builders (testable) ------------------------
+
+  const COMMENT_SORTS = ["best", "top", "new", "controversial", "old", "qa"];
+
+  function commentSortMenuHtml(permalink, currentSort) {
+    const cur = currentSort || "best";
+    const links = COMMENT_SORTS.map((s) => {
+      const sel = s === cur;
+      return `<a href="${esc(permalink)}?sort=${s}"${sel ? ' style="font-weight:bold;text-decoration:underline"' : ""}>${s}</a>`;
+    }).join(' <span class="separator">&middot;</span> ');
+    return `<div class="menuarea" style="padding:5px 10px;font-size:small">sorted by: ${links}</div>`;
+  }
+
+  function childrenOf(replies) {
+    if (replies && replies.data && Array.isArray(replies.data.children)) return replies.data.children;
+    return [];
+  }
+
+  function buildMore(d, linkId) {
+    const count = d.count || 0;
+    if (!d.children || !d.children.length) {
+      return `<div class="morecomments"><a href="#" class="orr-more" data-link="${esc(linkId)}" data-parent="${esc(d.parent_id || "")}">continue this thread &rarr;</a></div>`;
+    }
+    return (
+      `<div class="morecomments"><a href="#" class="orr-more" data-link="${esc(linkId)}"` +
+      ` data-children="${esc(d.children.join(","))}" data-count="${esc(count)}">` +
+      `load more comments (${esc(count)} ${count === 1 ? "reply" : "replies"})</a></div>`
+    );
+  }
+
+  function buildComment(d, opts) {
+    opts = opts || {};
+    const pts = d.score_hidden ? "score hidden" : `${esc(d.score)} point${d.score === 1 ? "" : "s"}`;
+    const bodyHtml = d.body_html ? d.body_html : d.body ? `<div class="md"><p>${esc(d.body)}</p></div>` : "";
+    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
+    const kids = childrenOf(d.replies);
+    const childHtml = kids.length ? buildCommentTree(kids, opts.linkId, opts.nowMs) : "";
+    return (
+      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}">` +
+      `<span class="rank"></span>` +
+      `<div class="midcol unvoted"><div class="arrow up login-required" role="button" aria-label="upvote"></div>` +
+      `<div class="arrow down login-required" role="button" aria-label="downvote"></div></div>` +
+      `<div class="entry unvoted">` +
+      `<p class="tagline"><a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
+      ` <span class="score unvoted">${pts}</span> ` +
+      `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
+      `<div class="usertext-body">${bodyHtml}</div>` +
+      `<ul class="flat-list buttons"><li class="first"><a href="${esc(d.permalink || "")}" class="bylink">permalink</a></li></ul>` +
+      `</div>` +
+      `<div class="child">${childHtml}</div>` +
+      `<div class="clearleft"></div></div>`
+    );
+  }
+
+  function buildCommentTree(children, linkId, nowMs) {
+    return (children || [])
+      .map((c) => {
+        if (c.kind === "t1") return buildComment(c.data, { linkId, nowMs });
+        if (c.kind === "more") return buildMore(c.data, linkId);
+        return "";
+      })
+      .join("");
+  }
+
+  // Build the full old-reddit comments page from the [post, comments] JSON array.
+  function buildCommentsBody(data, opts) {
+    opts = opts || {};
+    const postListing = data && data[0] && data[0].data;
+    const commentsListing = data && data[1] && data[1].data;
+    const post = postListing && postListing.children && postListing.children[0] && postListing.children[0].data;
+    const comments = (commentsListing && commentsListing.children) || [];
+    const linkId = post ? post.name : "";
+    const sub = post ? post.subreddit : opts.sub || "";
+    const permalink = post ? post.permalink : opts.permalink || "";
+
+    const postHtml = post ? buildItem(post, { rank: "", showSub: false, expandText: true, nowMs: opts.nowMs }) : "";
+    const treeHtml = buildCommentTree(comments, linkId, opts.nowMs);
+
+    const inner =
+      `<div id="header" role="banner"><div id="header-bottom-left">` +
+      `<span class="pagename redditname"><a href="/r/${esc(sub)}/">r/${esc(sub)}</a></span>` +
+      `<ul class="tabmenu"><li class="selected"><a class="choice" href="${esc(permalink)}">comments</a></li></ul>` +
+      `</div></div>` +
+      `<div class="side"></div>` +
+      `<a name="content"></a>` +
+      `<div class="content" role="main">` +
+      `<div id="siteTable" class="sitetable">${postHtml}</div>` +
+      `<div class="commentarea">` +
+      commentSortMenuHtml(permalink, opts.sort) +
+      `<div class="sitetable nestedlisting">${treeHtml || '<div class="thing">No comments yet.</div>'}</div>` +
+      `</div></div>`;
+
+    return { className: "comments-page", inner, sub, linkId };
+  }
+
+  globalThis.ORR_REBUILD = {
+    esc, formatAge, thumbnailHtml, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
+    formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
+  };
 
   // ---------- runtime driver -------------------------------------------
 
@@ -299,21 +404,25 @@
     return json;
   }
 
-  function renderInto(route, json, params) {
-    const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
-    const body = buildBody(route, json, { startCount, t: params.t });
+  function replaceBody(body, title) {
     const fresh = document.createElement("body");
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
     if (document.body) document.documentElement.replaceChild(fresh, document.body);
     else document.documentElement.appendChild(fresh);
     document.documentElement.classList.add("orr-rebuilt");
-    const sub = route.scope === "front" ? "reddit" : "r/" + route.sub;
     try {
-      document.title = sub + " — old reddit";
+      document.title = title;
     } catch (e) {
       /* ignore */
     }
+  }
+
+  function renderInto(route, json, params) {
+    const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    const body = buildBody(route, json, { startCount, t: params.t });
+    const sub = route.scope === "front" ? "reddit" : "r/" + route.sub;
+    replaceBody(body, sub + " — old reddit");
     loadSidebar(route); // async, fills .side when about/rules arrive
   }
 
@@ -363,7 +472,7 @@
     if (st) st.innerHTML = `<div class="thing"><div class="entry"><p>${esc(msg)}</p></div></div>`;
   }
 
-  async function loadRoute(url, firstLoad) {
+  async function loadListing(url, firstLoad) {
     const route = ORR.isListingRoute(url);
     if (!route) return;
     const params = {
@@ -399,6 +508,96 @@
     unhideGuard();
   }
 
+  async function loadComments(url, firstLoad) {
+    const cr = ORR.isCommentsRoute(url);
+    if (!cr) return;
+    const sort = url.searchParams.get("sort");
+    hideGuard();
+    let watchdog = null;
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
+    let data;
+    try {
+      const q = new URLSearchParams({ raw_json: "1", limit: "200" });
+      if (sort) q.set("sort", sort);
+      const jsonUrl = location.origin + url.pathname.replace(/\/$/, "") + "/.json?" + q.toString();
+      const res = await fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } });
+      if (!res.ok) {
+        const e = new Error("HTTP " + res.status);
+        e.status = res.status;
+        throw e;
+      }
+      data = await res.json();
+    } catch (err) {
+      if (watchdog) clearTimeout(watchdog);
+      if (firstLoad) {
+        active = false;
+        unhideGuard();
+      } else {
+        renderError(err.status || 0);
+        unhideGuard();
+      }
+      return;
+    }
+    if (watchdog) clearTimeout(watchdog);
+    await ensureCss();
+    const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort });
+    replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
+    active = true;
+    unhideGuard();
+    loadSidebar({ scope: "sub", sub: body.sub || cr.sub });
+  }
+
+  function loadPage(url, firstLoad) {
+    if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
+    if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
+  }
+
+  // Expand a "load more comments" stub via the morechildren API, re-nesting the
+  // returned comments under their parent by parent_id. Best-effort (experimental).
+  async function handleMore(el) {
+    const linkId = el.getAttribute("data-link");
+    const childrenCsv = el.getAttribute("data-children");
+    if (!childrenCsv) {
+      el.textContent = "(continue this thread — open the comment's permalink)";
+      return;
+    }
+    const original = el.textContent;
+    el.textContent = "loading…";
+    try {
+      const q = new URLSearchParams({
+        api_type: "json", link_id: linkId, children: childrenCsv, raw_json: "1", limit_children: "false",
+      });
+      const res = await fetch(location.origin + "/api/morechildren.json?" + q.toString(), {
+        credentials: "include", headers: { Accept: "application/json" },
+      });
+      const j = await res.json();
+      const things = (j && j.json && j.json.data && j.json.data.things) || [];
+      insertMoreThings(el, things, linkId);
+    } catch (e) {
+      el.textContent = original + " (failed to load)";
+    }
+  }
+
+  function insertMoreThings(moreEl, things, linkId) {
+    const wrap = moreEl.parentElement; // .morecomments
+    for (const t of things) {
+      let html = "";
+      if (t.kind === "t1") html = buildComment(t.data, { linkId });
+      else if (t.kind === "more") html = buildMore(t.data, linkId);
+      else continue;
+      const tmp = document.createElement("div");
+      tmp.innerHTML = html;
+      const node = tmp.firstElementChild;
+      if (!node) continue;
+      const parentId = t.data.parent_id;
+      const parentThing = parentId ? document.getElementById("thing_" + parentId) : null;
+      let target = parentThing ? parentThing.querySelector(":scope > .child") : null;
+      if (!target) target = wrap && wrap.parentElement; // fall back to the nesting level of the stub
+      if (target) target.appendChild(node);
+    }
+    if (wrap) wrap.remove(); // drop the used stub
+  }
+
   function wireNav() {
     if (wired) return;
     wired = true;
@@ -407,6 +606,14 @@
       "click",
       (e) => {
         if (!active) return;
+        // "load more comments" stub → expand via the morechildren API.
+        const moreEl = e.target.closest && e.target.closest("a.orr-more");
+        if (moreEl) {
+          e.preventDefault();
+          e.stopPropagation();
+          handleMore(moreEl);
+          return;
+        }
         const a = e.target.closest && e.target.closest("a[href]");
         if (!a) return;
         const href = a.getAttribute("href");
@@ -418,12 +625,13 @@
           return;
         }
         if (url.origin !== location.origin) return; // external link → normal nav
-        if (!ORR.isListingRoute(url)) return; // comments/user/etc → let new Reddit handle it
+        // Only intercept routes we rebuild (listings + comments); let user/search/etc navigate normally.
+        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url)) return;
         e.preventDefault();
         e.stopPropagation();
         history.pushState(null, "", url.pathname + url.search);
         window.scrollTo(0, 0);
-        loadRoute(url, false);
+        loadPage(url, false);
       },
       true
     );
@@ -431,7 +639,7 @@
     window.addEventListener("popstate", () => {
       if (!active) return;
       const url = new URL(location.href);
-      if (ORR.isListingRoute(url)) loadRoute(url, false);
+      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url)) loadPage(url, false);
     });
   }
 
@@ -444,9 +652,9 @@
     }
     if (!prefs.rebuild) return; // rebuild mode off → restyle.js handles the page
     const url = new URL(location.href);
-    if (!ORR.isListingRoute(url)) return; // unsupported route → restyle.js skins it
+    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url)) return; // other routes → restyle.js skins
     wireNav();
-    loadRoute(url, true);
+    loadPage(url, true);
   }
 
   // React to the toggle changing live.

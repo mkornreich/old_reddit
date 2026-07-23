@@ -275,7 +275,9 @@
     }
     // When the rebuilder owns this listing route, the skin must step aside so it
     // doesn't paint over the rebuilt old-reddit DOM.
-    const rebuildOwns = prefs.rebuild && !!globalThis.ORR.isListingRoute(location);
+    const rebuildOwns =
+      prefs.rebuild &&
+      (!!globalThis.ORR.isListingRoute(location) || !!globalThis.ORR.isCommentsRoute(location));
     if (prefs.enabled && !rebuildOwns) enable();
     else disable();
   }

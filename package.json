@@ -1,6 +1,6 @@
 {
   "name": "old-reddit-skin",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Firefox extension that repaints new Reddit to look like old Reddit.",
   "private": true,
   "scripts": {

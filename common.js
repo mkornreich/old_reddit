@@ -45,8 +45,20 @@
       return { scope: "sub", sub: segs[1], sort: "hot", basePath: "/r/" + segs[1] };
     if (segs[0] === "r" && segs.length === 3 && SORTS_SUB.includes(segs[2]))
       return { scope: "sub", sub: segs[1], sort: segs[2], basePath: "/r/" + segs[1] + "/" + segs[2] };
-    return null; // comments, user pages, search, wiki, etc. — not rebuilt
+    return null; // user pages, search, wiki, etc. — not rebuilt
   }
 
-  globalThis.ORR = { api, DEFAULTS, SORTS_SUB, SORTS_FRONT, getPrefs, setPrefs, isListingRoute };
+  // Returns a comments-route descriptor for a post permalink, else null.
+  //   /r/{sub}/comments/{id}/{slug}/[{commentId}]/  or  /comments/{id}/...
+  function isCommentsRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+    if (segs[0] === "r" && segs[2] === "comments" && segs[3])
+      return { scope: "comments", sub: segs[1], postId: segs[3], commentId: segs[5] || null, permalink: pathname };
+    if (segs[0] === "comments" && segs[1])
+      return { scope: "comments", sub: null, postId: segs[1], commentId: segs[3] || null, permalink: pathname };
+    return null;
+  }
+
+  globalThis.ORR = { api, DEFAULTS, SORTS_SUB, SORTS_FRONT, getPrefs, setPrefs, isListingRoute, isCommentsRoute };
 })();
