@@ -120,7 +120,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.5.1.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.6.0.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -199,8 +199,12 @@ npm run build      # distributable .zip in web-ext-artifacts/
 
 Click the toolbar button (or open the add-on's preferences in `about:addons`):
 
-- **Old Reddit skin** — a single on/off switch. Toggling takes effect live, no
-  reload. Stored in `storage.local`.
+- **Old Reddit skin** — the in-place CSS skin (on/off). Takes effect live.
+- **Rebuild frontend** — the experimental old-Reddit-from-the-API mode.
+- **↳ Infinite scroll** — RES-style "never-ending reddit": in Rebuild mode, the next
+  page auto-loads as you scroll listings, search, and profiles.
+
+All stored in `storage.local`.
 
 ---
 

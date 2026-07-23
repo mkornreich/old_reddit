@@ -696,6 +696,60 @@
     });
   }
 
+  // --- Infinite scroll (RES "never-ending reddit") ---------------------
+  let infiniteOn = false;
+  let infState = null; // { fetchPage, after, count, loading, sentinel, observer }
+
+  function teardownInfinite() {
+    if (infState) {
+      if (infState.observer) infState.observer.disconnect();
+      if (infState.sentinel && infState.sentinel.remove) infState.sentinel.remove();
+    }
+    infState = null;
+  }
+
+  // fetchPage(after, count) -> Promise<{ itemsHtml, after, addedCount }>
+  function setupInfinite(fetchPage, after, count) {
+    if (!infiniteOn || !after) return;
+    const st = document.getElementById("siteTable");
+    if (!st || !st.parentNode) return;
+    const nb = document.querySelector(".nav-buttons"); // manual pager gives way to auto-load
+    if (nb) nb.style.display = "none";
+    const sentinel = document.createElement("div");
+    sentinel.className = "orr-inf-sentinel";
+    sentinel.style.height = "1px";
+    st.parentNode.insertBefore(sentinel, st.nextSibling);
+    infState = { fetchPage, after, count: count || 0, loading: false, sentinel, observer: null };
+    if (typeof IntersectionObserver === "undefined") return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMoreInfinite();
+      },
+      { rootMargin: "800px" }
+    );
+    obs.observe(sentinel);
+    infState.observer = obs;
+  }
+
+  async function loadMoreInfinite() {
+    const st = infState;
+    if (!st || st.loading || !st.after) return;
+    st.loading = true;
+    try {
+      const res = await st.fetchPage(st.after, st.count);
+      if (infState !== st) return; // navigated away mid-fetch
+      const table = document.getElementById("siteTable");
+      if (table && res && res.itemsHtml) table.insertAdjacentHTML("beforeend", res.itemsHtml);
+      st.count += (res && res.addedCount) || 0;
+      st.after = (res && res.after) || null;
+      if (!st.after) teardownInfinite();
+    } catch (e) {
+      teardownInfinite(); // stop on error rather than hammer the API
+    } finally {
+      if (infState === st) st.loading = false;
+    }
+  }
+
   function hideGuard() {
     if (document.getElementById(GUARD_ID)) return;
     const s = document.createElement("style");
@@ -752,6 +806,7 @@
   }
 
   function replaceBody(body, title) {
+    teardownInfinite();
     const fresh = document.createElement("body");
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
@@ -772,6 +827,22 @@
     replaceBody(body, sub + " — old reddit");
     patchHeader();
     loadSidebar(route); // async, fills .side when about/rules arrive
+
+    const l0 = (json && json.data) || {};
+    const showSub = route.scope === "front" || route.sub === "all" || route.sub === "popular";
+    const count0 = startCount + (l0.children || []).filter((c) => c.kind === "t3").length;
+    setupInfinite(
+      async (after, count) => {
+        const j = await fetchListing(route, { after, count, t: params.t });
+        const kids = (((j && j.data) || {}).children || []).filter((c) => c.kind === "t3");
+        const html = kids
+          .map((c, i) => buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub, expandoButton: true }))
+          .join("");
+        return { itemsHtml: html, after: ((j && j.data) || {}).after, addedCount: kids.length };
+      },
+      l0.after,
+      count0
+    );
   }
 
   const aboutCache = new Map(); // sub (lowercase) -> { v, t }
@@ -937,6 +1008,28 @@
     unhideGuard();
     patchHeader();
     loadUserSidebar(ur.name);
+
+    const l0 = (json && json.data) || {};
+    const c0 = startCount + (l0.children || []).length;
+    setupInfinite(
+      async (after, count) => {
+        const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
+        const r2 = await fetch(location.origin + ur.basePath + "/.json?" + q.toString(), { credentials: "include", headers: { Accept: "application/json" } });
+        if (!r2.ok) throw new Error("HTTP " + r2.status);
+        const j2 = await r2.json();
+        const kids = ((j2 && j2.data) || {}).children || [];
+        const html = kids
+          .map((c, i) => {
+            if (c.kind === "t3") return buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub: true, expandoButton: true });
+            if (c.kind === "t1") return buildUserComment(c.data, {});
+            return "";
+          })
+          .join("");
+        return { itemsHtml: html, after: ((j2 && j2.data) || {}).after, addedCount: kids.length };
+      },
+      l0.after,
+      c0
+    );
   }
 
   async function loadUserSidebar(name) {
@@ -1002,6 +1095,24 @@
     active = true;
     unhideGuard();
     patchHeader();
+
+    const l0 = (json && json.data) || {};
+    const c0 = startCount + (l0.children || []).filter((c) => c.kind === "t3").length;
+    setupInfinite(
+      async (after, count) => {
+        const u = searchJsonUrl(route, Object.assign({}, params, { after, before: null, count }));
+        const r2 = await fetch(u, { credentials: "include", headers: { Accept: "application/json" } });
+        if (!r2.ok) throw new Error("HTTP " + r2.status);
+        const j2 = await r2.json();
+        const kids = (((j2 && j2.data) || {}).children || []).filter((c) => c.kind === "t3");
+        const html = kids
+          .map((c, i) => buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub: true, expandoButton: true }))
+          .join("");
+        return { itemsHtml: html, after: ((j2 && j2.data) || {}).after, addedCount: kids.length };
+      },
+      l0.after,
+      c0
+    );
   }
 
   function loadPage(url, firstLoad) {
@@ -1149,6 +1260,7 @@
       return;
     }
     if (!prefs.rebuild) return; // rebuild mode off → restyle.js handles the page
+    infiniteOn = prefs.infiniteScroll === true;
     const url = new URL(location.href);
     if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url))
       return; // else restyle.js skins
@@ -1160,7 +1272,9 @@
   // React to the toggle changing live.
   try {
     api.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && (changes.rebuild || changes.enabled)) {
+      if (area !== "local") return;
+      if (changes.infiniteScroll) infiniteOn = changes.infiniteScroll.newValue === true; // applies on next page
+      if (changes.rebuild || changes.enabled) {
         if (changes.rebuild && changes.rebuild.newValue === false && active) {
           location.reload(); // hand the page back to new Reddit
         } else if (!active) {

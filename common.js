@@ -12,7 +12,7 @@
 (function () {
   const api = typeof browser !== "undefined" ? browser : chrome;
 
-  const DEFAULTS = Object.freeze({ enabled: true, rebuild: false });
+  const DEFAULTS = Object.freeze({ enabled: true, rebuild: false, infiniteScroll: false });
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
   const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
@@ -21,11 +21,16 @@
     const stored = await api.storage.local.get({
       enabled: undefined,
       rebuild: undefined,
+      infiniteScroll: undefined,
       mode: undefined, // legacy (pre-2.0)
     });
     let enabled = stored.enabled;
     if (enabled === undefined) enabled = stored.mode === "off" ? false : true;
-    return { enabled: enabled !== false, rebuild: stored.rebuild === true };
+    return {
+      enabled: enabled !== false,
+      rebuild: stored.rebuild === true,
+      infiniteScroll: stored.infiniteScroll === true,
+    };
   }
 
   async function setPrefs(patch) {
