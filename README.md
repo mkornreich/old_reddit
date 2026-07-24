@@ -34,6 +34,28 @@ What it does:
 
 ---
 
+## Screenshots
+
+> Rendered from the extension's **own output** (its builders + the bundled
+> old-Reddit stylesheet) with **sample data** — not a live-Reddit capture (Reddit
+> blocks this build environment). In your browser it looks the same, with your feeds.
+
+**Subreddit listing** — header, sidebar (search + rules), ranked posts, vote
+arrows, and per-post `[+]` expandos:
+
+![Old Reddit subreddit listing](screenshots/listing.png)
+
+**Comments** — `[–]` collapse toggles, the *sorted by* menu, an inline
+`preview.redd.it` image, and the auto-loading "load more comments":
+
+![Old Reddit comments page](screenshots/comments.png)
+
+**Night mode** (optional dark theme):
+
+![Night mode](screenshots/dark.png)
+
+---
+
 ## Please read — this is an approximation
 
 New Reddit is a fundamentally different page from old Reddit, so this skin **shifts
@@ -126,7 +148,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.7.4.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.7.5.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)

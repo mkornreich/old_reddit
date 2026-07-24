@@ -849,7 +849,12 @@ html.orr-night #header-bottom-right { background:#2a2f31 !important; }
 html.orr-night .thing.comment .child { border-color:#343536 !important; }
 html.orr-night #orr-hovercard { background:#242526 !important; color:#d7dadc !important; }
 html.orr-night .menuarea { background:transparent !important; color:#d7dadc !important; }
-html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
+html.orr-night .orr-inline-img img { border-color:#343536 !important; }
+html.orr-night .side, html.orr-night .side * { background-color:transparent !important; }
+html.orr-night .side .sidecontentbox, html.orr-night .side .titlebox { border-color:#343536 !important; }
+html.orr-night .tabmenu li a { background-color:#223244 !important; border-color:#14202b !important; color:#cfe0f0 !important; }
+html.orr-night .tabmenu li.selected a { background-color:#1a1a1b !important; color:#ff7043 !important; }
+html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
 
   function injectStaticCss() {
     if (!document.getElementById("orr-enhance-css")) {

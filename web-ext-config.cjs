@@ -16,6 +16,7 @@ module.exports = {
     "*.sh",
     "scripts",
     "dist",
+    "screenshots",
     "vendor/oldreddit.css",
     ".amo-env",
     ".env",
