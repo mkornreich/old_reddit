@@ -720,6 +720,24 @@
   // --- Infinite scroll (RES "never-ending reddit") ---------------------
   let infiniteOn = false;
   let infState = null; // { fetchPage, after, count, loading, sentinel, observer }
+  let rateLimited = false; // set when Reddit returns 429; halts all auto-loading
+
+  // Stop auto-loading but keep the sentinel visible with a message.
+  function stopInfinite(msg) {
+    if (!infState) return;
+    if (infState.observer) {
+      infState.observer.disconnect();
+      infState.observer = null;
+    }
+    infState.after = null;
+    if (infState.sentinel) {
+      const m = infState.sentinel.querySelector(".orr-loading");
+      if (m) {
+        m.textContent = msg;
+        m.classList.add("orr-error");
+      }
+    }
+  }
 
   function teardownInfinite() {
     if (infState) {
@@ -754,7 +772,7 @@
 
   async function loadMoreInfinite() {
     const st = infState;
-    if (!st || st.loading || !st.after) return;
+    if (!st || st.loading || !st.after || rateLimited) return;
     st.loading = true;
     try {
       const res = await st.fetchPage(st.after, st.count);
@@ -768,7 +786,12 @@
       st.after = (res && res.after) || null;
       if (!st.after) teardownInfinite();
     } catch (e) {
-      teardownInfinite(); // stop on error rather than hammer the API
+      if (e && e.status === 429) {
+        rateLimited = true;
+        stopInfinite("⚠ Reddit is rate-limiting — auto-load stopped. Reload the page to resume.");
+      } else {
+        teardownInfinite(); // stop on error rather than hammer the API
+      }
     } finally {
       if (infState === st) st.loading = false;
     }
@@ -803,6 +826,8 @@ a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 .orr-inline-img img { max-width:100%; max-height:80vh; height:auto; display:block; border:1px solid #ccc; }
 .orr-inf-sentinel { text-align:center; padding:10px; }
 .orr-loading { color:#888; font-style:italic; font-size:13px; }
+.orr-loading.orr-error { color:#c00; font-style:normal; font-weight:bold; }
+a.orr-more { color:#369; }
 .morecomments a.orr-more[data-orr-loading="1"] { color:#888; font-style:italic; }
 #sr-header-area .sr-list { padding-left:8px; }`;
 
@@ -1185,6 +1210,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
   function replaceBody(body, title) {
     teardownInfinite();
     teardownMores();
+    rateLimited = false; // new page → try again
     const fresh = document.createElement("body");
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
@@ -1394,7 +1420,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
       async (after, count) => {
         const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
         const r2 = await fetch(location.origin + ur.basePath + "/.json?" + q.toString(), { credentials: "include", headers: { Accept: "application/json" } });
-        if (!r2.ok) throw new Error("HTTP " + r2.status);
+        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; throw e; }
         const j2 = await r2.json();
         const kids = ((j2 && j2.data) || {}).children || [];
         const html = kids
@@ -1481,7 +1507,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
       async (after, count) => {
         const u = searchJsonUrl(route, Object.assign({}, params, { after, before: null, count }));
         const r2 = await fetch(u, { credentials: "include", headers: { Accept: "application/json" } });
-        if (!r2.ok) throw new Error("HTTP " + r2.status);
+        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; throw e; }
         const j2 = await r2.json();
         const kids = (((j2 && j2.data) || {}).children || []).filter((c) => c.kind === "t3");
         const html = kids
@@ -1503,7 +1529,8 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
 
   // Expand a "load more comments" stub via the morechildren API, re-nesting the
   // returned comments under their parent by parent_id. Best-effort (experimental).
-  async function handleMore(el) {
+  async function handleMore(el, auto) {
+    if (auto && rateLimited) return; // don't auto-load while rate-limited
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
@@ -1524,8 +1551,16 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
       const res = await fetch(location.origin + "/api/morechildren.json?" + q.toString(), {
         credentials: "include", headers: { Accept: "application/json" },
       });
+      if (res.status === 429) {
+        rateLimited = true;
+        teardownMores(); // halt further auto-loads
+        el.dataset.orrLoading = "";
+        el.textContent = "⚠ Reddit is rate-limiting — click to retry loading comments";
+        return;
+      }
       const j = await res.json();
       const things = (j && j.json && j.json.data && j.json.data.things) || [];
+      rateLimited = false; // a successful call clears the rate-limit state
       insertMoreThings(el, things, linkId, rest);
     } catch (e) {
       el.textContent = "load more comments — failed, click to retry";
@@ -1568,6 +1603,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
   // Auto-load "load more comments" stubs when they scroll into view.
   let commentMoreObserver = null;
   function observeMores() {
+    if (rateLimited) return;
     if (typeof IntersectionObserver === "undefined") return;
     if (!commentMoreObserver) {
       commentMoreObserver = new IntersectionObserver(
@@ -1575,7 +1611,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
           for (const en of entries) {
             if (en.isIntersecting) {
               commentMoreObserver.unobserve(en.target);
-              handleMore(en.target);
+              handleMore(en.target, true);
             }
           }
         },
@@ -1583,6 +1619,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
       );
     }
     document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed])").forEach((a) => {
+      if (a.closest(".child")) return; // nested "more" inside a thread → manual click only
       a.setAttribute("data-orr-observed", "1");
       commentMoreObserver.observe(a);
     });
