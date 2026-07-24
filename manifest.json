@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Old Reddit",
-  "version": "3.7.1",
+  "version": "3.7.2",
   "description": "Rebuilds Reddit's frontend from its JSON API into old Reddit's real HTML + CSS, with RES-style extras: infinite scroll, keyboard nav, comment collapse, night mode, filters, user tags, and hover cards.",
   "browser_specific_settings": {
     "gecko": {

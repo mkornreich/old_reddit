@@ -57,6 +57,14 @@
     return `<a class="thumbnail ${cls} may-blank" href="${esc(permalink)}"></a>`;
   }
 
+  // True for links that point at an image (reddit/imgur CDNs or a direct image URL),
+  // e.g. https://preview.redd.it/xyz.png?width=573&...&s=abc
+  function isImageUrl(href) {
+    if (typeof href !== "string" || !href) return false;
+    if (/(?:i\.redd\.it|preview\.redd\.it|external-preview\.redd\.it|i\.imgur\.com)\//i.test(href)) return true;
+    return /\.(png|jpe?g|gif|webp)(?:[?#]|$)/i.test(href);
+  }
+
   // Determine a post's expandable inline content, or null. Returns { type, html }
   // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
   function postExpando(d) {
@@ -662,7 +670,7 @@
   }
 
   globalThis.ORR_REBUILD = {
-    esc, formatAge, thumbnailHtml, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
+    esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
@@ -791,6 +799,8 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 .orr-gimg.active { display:block; }
 .orr-gnav-bar { margin:4px 0; font-size:12px; }
 a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
+.orr-inline-img { margin:4px 0; }
+.orr-inline-img img { max-width:100%; max-height:80vh; height:auto; display:block; border:1px solid #ccc; }
 #sr-header-area .sr-list { padding-left:8px; }`;
 
   const NIGHT_CSS = `
@@ -810,7 +820,8 @@ html.orr-night .tabmenu li a, html.orr-night #header-bottom-right, html.orr-nigh
 html.orr-night #header-bottom-right { background:#2a2f31 !important; }
 html.orr-night .thing.comment .child { border-color:#343536 !important; }
 html.orr-night #orr-hovercard { background:#242526 !important; color:#d7dadc !important; }
-html.orr-night .menuarea { background:transparent !important; color:#d7dadc !important; }`;
+html.orr-night .menuarea { background:transparent !important; color:#d7dadc !important; }
+html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
 
   function injectStaticCss() {
     if (!document.getElementById("orr-enhance-css")) {
@@ -1072,6 +1083,30 @@ html.orr-night .menuarea { background:transparent !important; color:#d7dadc !imp
   }
 
   // Per-render pass: chrome, night, filters, tags, new-comments; reset keyboard.
+  // Render image links inside comment/post bodies as inline <img> (RES-style).
+  function inlineImages(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    let links;
+    try {
+      links = root.querySelectorAll(".md a[href], .usertext-body a[href]");
+    } catch (e) {
+      return;
+    }
+    for (const a of links) {
+      if (a.dataset.orrImg) continue;
+      const href = a.getAttribute("href") || "";
+      if (!isImageUrl(href)) continue;
+      a.dataset.orrImg = "1";
+      const wrap = document.createElement("div");
+      wrap.className = "orr-inline-img";
+      const img = document.createElement("img");
+      img.setAttribute("loading", "lazy");
+      img.src = href;
+      wrap.appendChild(img);
+      a.insertAdjacentElement("afterend", wrap);
+    }
+  }
+
   function afterRender() {
     injectStaticCss();
     applyNight();
@@ -1080,10 +1115,12 @@ html.orr-night .menuarea { background:transparent !important; color:#d7dadc !imp
     applyFilters(document);
     patchTags(document);
     markNewComments();
+    inlineImages(document);
   }
   function enhanceNewItems(scope) {
     applyFilters(scope || document);
     patchTags(scope || document);
+    inlineImages(scope || document);
   }
 
   function hideGuard() {
@@ -1503,6 +1540,8 @@ html.orr-night .menuarea { background:transparent !important; color:#d7dadc !imp
       if (target) target.appendChild(node);
     }
     if (wrap) wrap.remove(); // drop the used stub
+    patchTags(document);
+    inlineImages(document);
   }
 
   function wireNav() {
