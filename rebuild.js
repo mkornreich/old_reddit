@@ -738,7 +738,7 @@
     if (nb) nb.style.display = "none";
     const sentinel = document.createElement("div");
     sentinel.className = "orr-inf-sentinel";
-    sentinel.style.height = "1px";
+    sentinel.innerHTML = '<span class="orr-loading">loading more…</span>';
     st.parentNode.insertBefore(sentinel, st.nextSibling);
     infState = { fetchPage, after, count: count || 0, loading: false, sentinel, observer: null };
     if (typeof IntersectionObserver === "undefined") return;
@@ -801,6 +801,9 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 .orr-inline-img { margin:4px 0; }
 .orr-inline-img img { max-width:100%; max-height:80vh; height:auto; display:block; border:1px solid #ccc; }
+.orr-inf-sentinel { text-align:center; padding:10px; }
+.orr-loading { color:#888; font-style:italic; font-size:13px; }
+.morecomments a.orr-more[data-orr-loading="1"] { color:#888; font-style:italic; }
 #sr-header-area .sr-list { padding-left:8px; }`;
 
   const NIGHT_CSS = `
@@ -1116,6 +1119,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
     patchTags(document);
     markNewComments();
     inlineImages(document);
+    observeMores();
   }
   function enhanceNewItems(scope) {
     applyFilters(scope || document);
@@ -1180,6 +1184,7 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
 
   function replaceBody(body, title) {
     teardownInfinite();
+    teardownMores();
     const fresh = document.createElement("body");
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
@@ -1505,24 +1510,30 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
       el.textContent = "(continue this thread — open the comment's permalink)";
       return;
     }
-    const original = el.textContent;
-    el.textContent = "loading…";
+    if (el.dataset.orrLoading) return;
+    el.dataset.orrLoading = "1";
+    const allIds = childrenCsv.split(",").filter(Boolean);
+    const batch = allIds.slice(0, 100); // morechildren takes up to ~100 ids per call
+    const rest = allIds.slice(100);
+    const left = parseInt(el.getAttribute("data-count") || String(allIds.length), 10) || allIds.length;
+    el.textContent = "loading more comments… (" + left + (left === 1 ? " reply" : " replies") + " left)";
     try {
       const q = new URLSearchParams({
-        api_type: "json", link_id: linkId, children: childrenCsv, raw_json: "1", limit_children: "false",
+        api_type: "json", link_id: linkId, children: batch.join(","), raw_json: "1", limit_children: "false",
       });
       const res = await fetch(location.origin + "/api/morechildren.json?" + q.toString(), {
         credentials: "include", headers: { Accept: "application/json" },
       });
       const j = await res.json();
       const things = (j && j.json && j.json.data && j.json.data.things) || [];
-      insertMoreThings(el, things, linkId);
+      insertMoreThings(el, things, linkId, rest);
     } catch (e) {
-      el.textContent = original + " (failed to load)";
+      el.textContent = "load more comments — failed, click to retry";
+      el.dataset.orrLoading = "";
     }
   }
 
-  function insertMoreThings(moreEl, things, linkId) {
+  function insertMoreThings(moreEl, things, linkId, rest) {
     const wrap = moreEl.parentElement; // .morecomments
     for (const t of things) {
       let html = "";
@@ -1535,13 +1546,52 @@ html.orr-night .orr-inline-img img { border-color:#343536 !important; }`;
       if (!node) continue;
       const parentId = t.data.parent_id;
       const parentThing = parentId ? document.getElementById("thing_" + parentId) : null;
-      let target = parentThing ? parentThing.querySelector(":scope > .child") : null;
-      if (!target) target = wrap && wrap.parentElement; // fall back to the nesting level of the stub
-      if (target) target.appendChild(node);
+      const child = parentThing ? parentThing.querySelector(":scope > .child") : null;
+      if (child) child.appendChild(node);
+      else if (wrap && wrap.parentNode) wrap.parentNode.insertBefore(node, wrap); // keep the stub at the bottom
     }
-    if (wrap) wrap.remove(); // drop the used stub
+    if (rest && rest.length && wrap) {
+      // more still to load: refresh the stub so the auto-loader continues.
+      moreEl.setAttribute("data-children", rest.join(","));
+      moreEl.setAttribute("data-count", String(rest.length));
+      moreEl.textContent = "load more comments (" + rest.length + (rest.length === 1 ? " reply" : " replies") + ")";
+      moreEl.dataset.orrLoading = "";
+      moreEl.removeAttribute("data-orr-observed");
+    } else if (wrap) {
+      wrap.remove(); // done — drop the stub
+    }
     patchTags(document);
     inlineImages(document);
+    observeMores(); // pick up new/continued "more" stubs
+  }
+
+  // Auto-load "load more comments" stubs when they scroll into view.
+  let commentMoreObserver = null;
+  function observeMores() {
+    if (typeof IntersectionObserver === "undefined") return;
+    if (!commentMoreObserver) {
+      commentMoreObserver = new IntersectionObserver(
+        (entries) => {
+          for (const en of entries) {
+            if (en.isIntersecting) {
+              commentMoreObserver.unobserve(en.target);
+              handleMore(en.target);
+            }
+          }
+        },
+        { rootMargin: "600px" }
+      );
+    }
+    document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed])").forEach((a) => {
+      a.setAttribute("data-orr-observed", "1");
+      commentMoreObserver.observe(a);
+    });
+  }
+  function teardownMores() {
+    if (commentMoreObserver) {
+      commentMoreObserver.disconnect();
+      commentMoreObserver = null;
+    }
   }
 
   function wireNav() {
