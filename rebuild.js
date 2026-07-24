@@ -790,7 +790,8 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 .orr-gimg { display:none; max-width:100%; height:auto; }
 .orr-gimg.active { display:block; }
 .orr-gnav-bar { margin:4px 0; font-size:12px; }
-a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }`;
+a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
+#sr-header-area .sr-list { padding-left:8px; }`;
 
   const NIGHT_CSS = `
 html.orr-night, html.orr-night body, html.orr-night .content, html.orr-night #siteTable,

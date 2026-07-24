@@ -23,7 +23,7 @@ What it does:
 - **Keyboard navigation** — `j`/`k` move, `o`/Enter open, `x` expand.
 - **Collapse comments** — `[–]` on any comment; comments new since your last visit
   are flagged.
-- **Night mode** *(on by default)* — dark theme.
+- **Night mode** — dark theme (off by default, toggle in the popup).
 - **Filters** — hide posts by subreddit / user / domain / title keyword (Options).
 - **User tags & hover cards** — colored labels on users; hover a name or subreddit
   for a quick info card.
@@ -126,7 +126,7 @@ folder** loads in every one of them — no separate build.
 ### Publishing to the Chrome Web Store
 
 A ready-to-upload package is checked in at
-**[`dist/old-reddit-skin-chrome-3.7.0.zip`](dist/)** (`manifest.json` at the zip
+**[`dist/old-reddit-skin-chrome-3.7.1.zip`](dist/)** (`manifest.json` at the zip
 root, Chrome-validated, Firefox-only manifest keys stripped). To publish:
 
 1. Register once at the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole/)
@@ -206,7 +206,7 @@ npm run build      # distributable .zip in web-ext-artifacts/
 Click the toolbar button (or open the add-on's preferences in `about:addons`):
 
 - **Enable old Reddit** — master on/off.
-- **Night mode** — dark theme (on by default).
+- **Night mode** — dark theme (off by default).
 - **Infinite scroll** — auto-load the next page (on by default).
 - **Filters** *(Options page)* — hide posts by subreddit / user / domain / title keyword.
 

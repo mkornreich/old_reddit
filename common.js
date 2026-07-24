@@ -12,8 +12,8 @@
 (function () {
   const api = typeof browser !== "undefined" ? browser : chrome;
 
-  // Rebuild is now the only mode. Toggles default ON.
-  const DEFAULTS = Object.freeze({ enabled: true, infiniteScroll: true, nightMode: true });
+  // Rebuild is now the only mode.
+  const DEFAULTS = Object.freeze({ enabled: true, infiniteScroll: true, nightMode: false });
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
   const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
@@ -30,7 +30,7 @@
     return {
       enabled: enabled !== false,
       infiniteScroll: stored.infiniteScroll !== false, // default on
-      nightMode: stored.nightMode !== false, // default on
+      nightMode: stored.nightMode === true, // default off
     };
   }
 
