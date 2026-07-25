@@ -722,10 +722,11 @@
   const MIN_GAP = 900; // ms between consecutive auto page-loads (~1/sec — the safe zone)
 
   function isTransient(status) {
-    // 429 = rate limit, 5xx = server hiccup, 0/null = network error. NOT 403:
-    // a 403 is either a logged-out session or a network-security block — retrying
-    // either only makes it worse, so we surface it instead.
-    return status === 429 || status === 503 || status === 500 || status == null || status === 0;
+    // 429 = rate limit, any 5xx = server/gateway hiccup (502 Bad Gateway and
+    // 504 Gateway Timeout are common on Reddit's edge under load), 0/null =
+    // network error. NOT 4xx like 401/403/404: a 403 is a logged-out session or
+    // a network-security block — retrying only makes it worse, so we surface it.
+    return status === 429 || (typeof status === "number" && status >= 500 && status <= 599) || status == null || status === 0;
   }
   function jitter() {
     return Math.floor((typeof Math.random === "function" ? Math.random() : 0.5) * 800);
@@ -1597,6 +1598,13 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
   }
 
   function loadPage(url, firstLoad) {
+    // Starting any navigation: stop the previous page's auto-load retry timers,
+    // observers, and sentinel up front — otherwise a pending backoff retry could
+    // fire after we've moved on and refetch the old page into the new/error DOM.
+    // (replaceBody also tears down on the success path; this covers the case
+    // where the new load errors out and never reaches replaceBody.)
+    teardownInfinite();
+    teardownMores();
     if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
     if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
     if (ORR.isUserRoute(url)) return loadUser(url, firstLoad);

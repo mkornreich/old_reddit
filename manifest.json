@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Old Reddit",
-  "version": "3.7.7",
+  "version": "3.7.8",
   "description": "Rebuilds Reddit into old Reddit's classic UI from its API: infinite scroll, keyboard nav, collapse, night mode, filters.",
   "browser_specific_settings": {
     "gecko": {
