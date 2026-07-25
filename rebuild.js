@@ -65,6 +65,22 @@
     return /\.(png|jpe?g|gif|webp)(?:[?#]|$)/i.test(href);
   }
 
+  // Reddit serves a v.redd.it video as a video-only DASH mp4 plus a separate audio
+  // file. Derive the likely audio URLs from the fallback (video) URL — Reddit has
+  // used several names over the years, so we list them newest-first and the runtime
+  // probes them in order. Returns [] if this isn't a v.redd.it fallback URL.
+  function audioCandidates(fallbackUrl) {
+    const m = /^(https?:\/\/v\.redd\.it\/[^/?#]+)\//i.exec(fallbackUrl || "");
+    if (!m) return [];
+    const base = m[1];
+    return [
+      base + "/DASH_AUDIO_128.mp4",
+      base + "/DASH_AUDIO_64.mp4",
+      base + "/DASH_audio.mp4",
+      base + "/audio",
+    ];
+  }
+
   // Determine a post's expandable inline content, or null. Returns { type, html }
   // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
   function postExpando(d) {
@@ -75,9 +91,14 @@
     }
     const rv = d.media && d.media.reddit_video;
     if (d.is_video && rv && rv.fallback_url) {
+      // Reddit's fallback_url is a VIDEO-ONLY DASH stream — the audio lives in a
+      // separate v.redd.it file. We attach the candidate audio URLs so the runtime
+      // can play a hidden, synced <audio> element alongside it (see wireRedditVideo).
+      const cands = rv.has_audio === false ? [] : audioCandidates(rv.fallback_url);
+      const audioAttr = cands.length ? ` data-audio-candidates="${esc(cands.join("|"))}"` : "";
       return {
-        type: "video-muted",
-        html: `<div class="expando-container"><video class="reddit-video" controls preload="none" width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
+        type: cands.length ? "video" : "video-muted",
+        html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
       };
     }
     if (d.is_gallery && d.gallery_data && d.media_metadata) {
@@ -1212,6 +1233,56 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     }
   }
 
+  // Give a Reddit video its sound back. The <video> plays the video-only DASH
+  // stream; we play a hidden <audio> (the separate v.redd.it audio track) locked to
+  // it, so the native volume/mute controls work. Audio URLs are probed lazily on
+  // first play (preload="none" means nothing loads until the user hits play), and a
+  // truly silent clip (all candidates 404) just falls back to no audio.
+  function wireRedditVideo(video) {
+    if (!video || video.dataset.orrAudioWired) return;
+    const cands = (video.getAttribute("data-audio-candidates") || "").split("|").filter(Boolean);
+    if (!cands.length) return;
+    video.dataset.orrAudioWired = "1";
+    const audio = document.createElement("audio");
+    audio.preload = "none";
+    audio.style.display = "none";
+    audio.src = cands[0];
+    (video.parentNode || video).appendChild(audio);
+
+    let idx = 0, resolved = false, dead = false;
+    const resync = () => { if (dead) return; try { if (Math.abs(audio.currentTime - video.currentTime) > 0.3) audio.currentTime = video.currentTime; } catch (e) {} };
+    const start = () => { if (dead) return; try { audio.currentTime = video.currentTime; } catch (e) {} audio.play().catch(() => {}); };
+
+    audio.addEventListener("playing", () => { resolved = true; resync(); });
+    audio.addEventListener("error", () => {
+      if (resolved || dead) return; // only advance while still probing candidates
+      idx += 1;
+      if (idx >= cands.length) { dead = true; return; } // no audio track — silent clip
+      audio.src = cands[idx];
+      if (!video.paused) start(); // retry the new candidate if we're mid-play
+    });
+
+    video.addEventListener("play", start);
+    video.addEventListener("playing", start);
+    video.addEventListener("pause", () => audio.pause());
+    video.addEventListener("waiting", () => audio.pause()); // buffering → hold audio
+    video.addEventListener("seeking", resync);
+    video.addEventListener("seeked", resync);
+    video.addEventListener("timeupdate", resync);
+    video.addEventListener("ratechange", () => { try { audio.playbackRate = video.playbackRate; } catch (e) {} });
+    video.addEventListener("volumechange", () => { audio.volume = video.volume; audio.muted = video.muted; });
+    // mirror the initial volume/mute state onto the audio track
+    audio.volume = video.volume;
+    audio.muted = video.muted;
+  }
+
+  function wireRedditVideos(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    let vids;
+    try { vids = root.querySelectorAll("video.reddit-video[data-audio-candidates]"); } catch (e) { return; }
+    vids.forEach(wireRedditVideo);
+  }
+
   function afterRender() {
     injectStaticCss();
     applyNight();
@@ -1221,12 +1292,14 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     patchTags(document);
     markNewComments();
     inlineImages(document);
+    wireRedditVideos(document);
     observeMores();
   }
   function enhanceNewItems(scope) {
     applyFilters(scope || document);
     patchTags(scope || document);
     inlineImages(scope || document);
+    wireRedditVideos(scope || document);
   }
 
   function hideGuard() {
@@ -1796,7 +1869,18 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
           const collapse = !expBtn.classList.contains("collapsed");
           expBtn.classList.toggle("collapsed", collapse);
           expBtn.classList.toggle("expanded", !collapse);
-          if (expando) expando.style.display = collapse ? "none" : "";
+          if (expando) {
+            expando.style.display = collapse ? "none" : "";
+            if (collapse) {
+              // Collapsing hides the media but display:none does NOT pause it — so
+              // stop any playing video (which cascades to audio.pause() via the
+              // 'pause' listener), else its hidden audio keeps playing with no
+              // visible controls.
+              expando.querySelectorAll("video").forEach((v) => { try { v.pause(); } catch (e) {} });
+            } else {
+              wireRedditVideos(expando); // give the video its sound
+            }
+          }
           return;
         }
         // "load more comments" stub → expand via the morechildren API.
