@@ -222,3 +222,13 @@ body.options { max-width: 460px; margin: 0 auto; padding-bottom: 8px; }
   color: var(--orr-text);
   resize: vertical;
 }
+
+/* backup & sync section */
+.orr-data { margin-top: 26px; }
+.orr-data-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.orr-btn {
+  appearance: none; cursor: pointer; font: 600 13px/1 inherit;
+  padding: 9px 14px; border-radius: 6px; border: 1px solid var(--orr-border, #d0d7de);
+  background: var(--orr-btn-bg, #f6f8fa); color: var(--orr-fg, #1f2328);
+}
+.orr-btn:hover { background: var(--orr-btn-hover, #eaeef2); }

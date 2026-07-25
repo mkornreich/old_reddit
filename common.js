@@ -18,13 +18,31 @@
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
   const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
 
+  // Small settings + filter lists follow the user across devices via storage.sync.
+  // userTags and the large per-device blobs stay in storage.local — userTags can
+  // grow past storage.sync's ~8KB/item quota, and a quota failure must not risk
+  // leaving a stale copy in sync that getData would then prefer.
+  const SYNC_KEYS = ["enabled", "infiniteScroll", "nightMode", "filters"];
+
+  function syncArea() {
+    return api.storage && api.storage.sync ? api.storage.sync : api.storage.local;
+  }
+  async function areaGet(area, keys) {
+    try {
+      return await area.get(keys);
+    } catch (e) {
+      return {};
+    }
+  }
+
   async function getPrefs() {
-    const stored = await api.storage.local.get({
-      enabled: undefined,
-      infiniteScroll: undefined,
-      nightMode: undefined,
-      mode: undefined, // legacy
-    });
+    const want = { enabled: undefined, infiniteScroll: undefined, nightMode: undefined, mode: undefined };
+    const sync = await areaGet(syncArea(), want);
+    const local = await areaGet(api.storage.local, want);
+    // Per-key merge: sync wins where set, local fills the rest. (An all-or-nothing
+    // fallback would orphan pre-migration local settings once ANY one key is synced.)
+    const stored = {};
+    Object.keys(want).forEach((k) => { stored[k] = sync[k] !== undefined ? sync[k] : local[k]; });
     let enabled = stored.enabled;
     if (enabled === undefined) enabled = stored.mode === "off" ? false : true;
     return {
@@ -36,16 +54,38 @@
 
   // Larger data blobs (kept out of getPrefs). All default to empty.
   async function getData() {
-    const d = await api.storage.local.get({ filters: null, userTags: null, threadVisits: null });
+    const s = await areaGet(syncArea(), { filters: null });
+    const l = await areaGet(api.storage.local, {
+      filters: null, userTags: null, threadVisits: null, visitedPosts: null, collapsedComments: null,
+    });
     return {
-      filters: d.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [] },
-      userTags: d.userTags || {},
-      threadVisits: d.threadVisits || {},
+      filters: s.filters || l.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [] },
+      userTags: l.userTags || {},
+      threadVisits: l.threadVisits || {},
+      visitedPosts: l.visitedPosts || {},
+      collapsedComments: l.collapsedComments || {},
     };
   }
 
   async function setPrefs(patch) {
-    await api.storage.local.set(patch);
+    const syncPatch = {}, localPatch = {};
+    Object.keys(patch).forEach((k) => {
+      if (SYNC_KEYS.indexOf(k) >= 0) syncPatch[k] = patch[k];
+      else localPatch[k] = patch[k];
+    });
+    const jobs = [];
+    if (Object.keys(syncPatch).length) {
+      const keys = Object.keys(syncPatch);
+      // On a sync failure (e.g. quota) fall back to local, but first drop the keys
+      // from sync so a stale sync copy can't shadow the local one in getData/getPrefs.
+      jobs.push(
+        Promise.resolve(syncArea().set(syncPatch)).catch(() =>
+          Promise.resolve(syncArea().remove(keys)).catch(() => {}).then(() => api.storage.local.set(syncPatch))
+        )
+      );
+    }
+    if (Object.keys(localPatch).length) jobs.push(api.storage.local.set(localPatch));
+    await Promise.all(jobs);
   }
 
   // Returns a route descriptor for listing pages the rebuilder supports, else null.

@@ -17,10 +17,11 @@
 
   <p class="orr-intro">
     Rebuilds Reddit's frontend from its JSON API into old Reddit's real HTML + CSS
-    (logged-in only). Keyboard nav (<code>j</code>/<code>k</code>/<code>o</code>/<code>x</code>),
-    comment collapse, hover cards, user tags, back-to-top and inline expandos are
-    always on. Experimental — read-only, and it falls back to normal Reddit if the
-    API is unavailable.
+    (logged-in only). Keyboard nav (press <code>?</code> for the full list), comment
+    collapse + navigator, hover cards, user tags, OP highlighting, inline media
+    (images, galleries, videos with sound, YouTube/redgifs/streamable), NSFW blur,
+    resizable images and back-to-top are always on. Experimental — it falls back to
+    normal Reddit if the API is unavailable.
   </p>
 
   <label class="orr-row">
@@ -57,6 +58,16 @@
     <label class="orr-field"><span>Users</span><textarea id="filter-users" rows="3" placeholder="spez"></textarea></label>
     <label class="orr-field"><span>Domains</span><textarea id="filter-domains" rows="3" placeholder="twitter.com&#10;x.com"></textarea></label>
     <label class="orr-field"><span>Title keywords</span><textarea id="filter-keywords" rows="3" placeholder="politics&#10;spoiler"></textarea></label>
+  </section>
+
+  <section class="orr-data">
+    <h2>Backup &amp; sync</h2>
+    <p class="orr-filters-hint">Your settings, filters and user tags sync across devices via your browser account. Export a full backup (including read history and tags) or restore one here.</p>
+    <div class="orr-data-btns">
+      <button type="button" id="export-btn" class="orr-btn">Export settings…</button>
+      <button type="button" id="import-btn" class="orr-btn">Import settings…</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    </div>
   </section>
 
   <script src="common.js"></script>

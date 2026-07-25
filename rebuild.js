@@ -61,6 +61,8 @@
   // e.g. https://preview.redd.it/xyz.png?width=573&...&s=abc
   function isImageUrl(href) {
     if (typeof href !== "string" || !href) return false;
+    // Video files (incl. imgur .gifv) are handled by externalMediaExpando, not as images.
+    if (/\.(gifv|mp4|webm|mov)(?:[?#]|$)/i.test(href)) return false;
     if (/(?:i\.redd\.it|preview\.redd\.it|external-preview\.redd\.it|i\.imgur\.com)\//i.test(href)) return true;
     return /\.(png|jpe?g|gif|webp)(?:[?#]|$)/i.test(href);
   }
@@ -87,6 +89,40 @@
     ];
   }
 
+  function embedHtml(src, extra, w, h) {
+    return `<div class="expando-container"><iframe class="orr-embed" src="${esc(src)}" width="${w || 640}" height="${h || 360}" frameborder="0" loading="lazy" referrerpolicy="no-referrer" ${extra || ""}></iframe></div>`;
+  }
+
+  // Expand common non-Reddit media hosts inline (RES "show images" style), from a
+  // post's outbound URL. Returns { type, html } or null.
+  function externalMediaExpando(url) {
+    if (!url) return null;
+    let m;
+    if ((m = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/i.exec(url))) {
+      const t = (/[?&](?:t|start)=(\d+)/.exec(url) || [])[1];
+      return { type: "video", html: embedHtml("https://www.youtube-nocookie.com/embed/" + m[1] + (t ? "?start=" + t : ""), 'allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen') };
+    }
+    if ((m = /redgifs\.com\/(?:watch|ifr)\/([A-Za-z0-9]+)/i.exec(url))) {
+      return { type: "video", html: embedHtml("https://www.redgifs.com/ifr/" + m[1], "allowfullscreen") };
+    }
+    if ((m = /streamable\.com\/(?:e\/)?([A-Za-z0-9]+)/i.exec(url))) {
+      return { type: "video", html: embedHtml("https://streamable.com/e/" + m[1], "allowfullscreen") };
+    }
+    if ((m = /(?:twitter\.com|x\.com)\/[^/]+\/status\/(\d+)/i.exec(url))) {
+      return { type: "video", html: embedHtml("https://platform.twitter.com/embed/Tweet.html?id=" + m[1], "", 550, 500) };
+    }
+    if ((m = /imgur\.com\/(?:a|gallery)\/([A-Za-z0-9]+)/i.exec(url))) {
+      return { type: "image", html: embedHtml("https://imgur.com/a/" + m[1] + "/embed?pub=true", "allowfullscreen", 640, 500) };
+    }
+    if (/\.gifv(\?|$)/i.test(url)) {
+      return { type: "video", html: `<div class="expando-container"><video class="orr-directvideo" controls loop preload="metadata" width="640"><source src="${esc(url.replace(/\.gifv(\?|$)/i, ".mp4$1"))}" type="video/mp4"></video></div>` };
+    }
+    if (/\.(mp4|webm|mov)(\?|$)/i.test(url)) {
+      return { type: "video", html: `<div class="expando-container"><video class="orr-directvideo" controls preload="metadata" width="640"><source src="${esc(url)}"></video></div>` };
+    }
+    return null;
+  }
+
   // Determine a post's expandable inline content, or null. Returns { type, html }
   // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
   function postExpando(d) {
@@ -102,7 +138,8 @@
       // exact audio track, across DASH/CMAF naming) plus candidate URLs as a
       // fallback, so the runtime can play a hidden, synced <audio> element
       // alongside the video (see wireRedditVideo).
-      const base = rv.has_audio === false ? null : vRedditBase(rv.fallback_url);
+      // Reddit "gif" videos (is_gif) have no audio track — don't bother probing.
+      const base = (rv.has_audio === false || rv.is_gif === true) ? null : vRedditBase(rv.fallback_url);
       const cands = audioCandidates(base);
       const dashUrl = base ? base + "/DASHPlaylist.mpd" : "";
       const audioAttr = cands.length
@@ -133,11 +170,13 @@
         };
       }
     }
+    const ext = externalMediaExpando(d.url);
+    if (ext) return ext;
     const isImg = d.post_hint === "image" || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(d.url || "");
     if (isImg) {
       const source = d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source;
       const src = source && source.url ? source.url : d.url;
-      return { type: "image", html: `<div class="expando-container"><img class="preview" src="${esc(src)}"></div>` };
+      return { type: "image", html: `<div class="expando-container"><span class="orr-resizable"><img class="preview" src="${esc(src)}"></span></div>` };
     }
     return null;
   }
@@ -163,7 +202,8 @@
       opts.expandoButton && exp
         ? `<div class="expando-button collapsed ${exp.type}" role="button" tabindex="0" aria-label="expand"></div>`
         : "";
-    const expando = exp ? `<div class="expando"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
+    const blur = d.over_18 ? " orr-nsfw" : d.spoiler ? " orr-spoiler" : "";
+    const expando = exp ? `<div class="expando${blur}"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
 
     return (
       `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw} link" id="thing_${esc(d.name)}"` +
@@ -932,14 +972,61 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 .orr-gimg.active { display:block; }
 .orr-gnav-bar { margin:4px 0; font-size:12px; }
 a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
-.orr-inline-img { margin:4px 0; }
-.orr-inline-img img { max-width:100%; max-height:80vh; height:auto; display:block; border:1px solid #ccc; }
+.orr-inline-img { margin:4px 0; display:inline-block; overflow:hidden; resize:both; max-width:100%; line-height:0; border:1px solid #ccc; }
+.orr-inline-img img { width:100%; height:100%; object-fit:contain; display:block; }
+/* embeds + direct video */
+.orr-embed { width:640px; max-width:100%; height:360px; border:0; display:block; background:#000; }
+.orr-directvideo { max-width:100%; height:auto; display:block; background:#000; }
+/* drag-resizable images (RES-style); double-click to reset */
+.orr-resizable { display:inline-block; overflow:hidden; resize:both; max-width:100%; line-height:0; }
+.orr-resizable img.preview { width:100%; height:100%; object-fit:contain; display:block; max-width:none; max-height:none; }
+/* NSFW / spoiler blur with click-to-reveal */
+.expando.orr-nsfw, .expando.orr-spoiler { position:relative; }
+.expando.orr-nsfw:not(.orr-revealed) .expando-container,
+.expando.orr-spoiler:not(.orr-revealed) .expando-container { filter:blur(24px); pointer-events:none; }
+.expando.orr-nsfw:not(.orr-revealed)::after { content:"NSFW \\2014 click to reveal"; }
+.expando.orr-spoiler:not(.orr-revealed)::after { content:"spoiler \\2014 click to reveal"; }
+.expando.orr-nsfw:not(.orr-revealed)::after, .expando.orr-spoiler:not(.orr-revealed)::after {
+  position:absolute; top:8px; left:8px; z-index:3; background:rgba(0,0,0,.75); color:#fff;
+  padding:3px 9px; border-radius:3px; font:bold 12px verdana; cursor:pointer; }
 .orr-inf-sentinel { text-align:center; padding:10px; }
 .orr-loading { color:#888; font-style:italic; font-size:13px; }
 .orr-loading.orr-error { color:#c00; font-style:normal; font-weight:bold; }
 a.orr-more { color:#369; }
 .morecomments a.orr-more[data-orr-loading="1"] { color:#888; font-style:italic; }
-#sr-header-area .sr-list { padding-left:8px; }`;
+#sr-header-area .sr-list { padding-left:8px; }
+/* comment tools */
+.author.submitter { color:#fff !important; background:#0079d3; padding:0 3px; border-radius:2px; text-decoration:none; }
+a.orr-parent { color:#369; }
+.orr-inline-media { margin:6px 0; }
+.orr-flash { animation: orr-flash 1.3s ease-out; }
+@keyframes orr-flash { from { background:#ffe9a8; } to { background:transparent; } }
+#orr-cnav { position:fixed; right:12px; top:130px; z-index:2147483000; display:flex; flex-direction:column; gap:3px; }
+#orr-cnav button { width:36px; height:26px; font:11px verdana; cursor:pointer; color:#369;
+  background:#f6f7f8; border:1px solid #c7c7c7; border-radius:3px; padding:0; }
+#orr-cnav button:hover { background:#e9f0f7; }
+/* visited posts (persisted) */
+.thing.orr-visited .title a:not(:hover) { color:#9b9b9b; }
+/* keyboard-shortcuts help */
+#orr-help-btn { position:fixed; left:12px; bottom:12px; z-index:2147483000; width:26px; height:26px;
+  border-radius:50%; border:1px solid #336699; background:#5f99cf; color:#fff; cursor:pointer; font:bold 14px verdana; padding:0; }
+#orr-help { position:fixed; inset:0; z-index:2147483600; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
+#orr-help .orr-help-box { background:#fff; color:#111; border-radius:6px; padding:18px 22px; min-width:330px; box-shadow:0 6px 30px rgba(0,0,0,.4); font:13px verdana; }
+#orr-help h2 { margin:0 0 12px; font-size:16px; }
+#orr-help table { border-collapse:collapse; }
+#orr-help td { padding:3px 12px 3px 0; }
+#orr-help td.k { font-family:monospace; color:#369; white-space:nowrap; font-weight:bold; }
+#orr-help .orr-help-close { margin:14px 0 0; color:#888; font-size:11px; }
+/* loading skeleton */
+#orr-skeleton { position:fixed; inset:0; background:#fff; z-index:2147483500; overflow:hidden; padding:0; }
+#orr-skeleton .orr-sk-head { height:38px; background:#cee3f8; border-bottom:1px solid #5f99cf; }
+#orr-skeleton .orr-sk-body { padding:14px 18px; max-width:800px; }
+#orr-skeleton .orr-sk-row { display:flex; gap:10px; margin:0 0 16px; }
+#orr-skeleton .orr-sk-thumb { width:70px; height:50px; border-radius:3px; background:#e6e6e6; flex:0 0 auto; }
+#orr-skeleton .orr-sk-lines { flex:1; }
+#orr-skeleton .orr-sk-line { height:12px; margin:4px 0; border-radius:3px; background:linear-gradient(90deg,#ededed 25%,#f6f6f6 50%,#ededed 75%); background-size:400% 100%; animation:orr-sk-shim 1.3s infinite; }
+#orr-skeleton .orr-sk-line.w70 { width:70%; } #orr-skeleton .orr-sk-line.w40 { width:40%; }
+@keyframes orr-sk-shim { from { background-position:100% 0; } to { background-position:0 0; } }`;
 
   const NIGHT_CSS = `
 html.orr-night, html.orr-night body, html.orr-night .content, html.orr-night #siteTable,
@@ -964,7 +1051,19 @@ html.orr-night .side, html.orr-night .side * { background-color:transparent !imp
 html.orr-night .side .sidecontentbox, html.orr-night .side .titlebox { border-color:#343536 !important; }
 html.orr-night .tabmenu li a { background-color:#223244 !important; border-color:#14202b !important; color:#cfe0f0 !important; }
 html.orr-night .tabmenu li.selected a { background-color:#1a1a1b !important; color:#ff7043 !important; }
-html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
+html.orr-night #search input[type=submit] { filter:invert(0.85); }
+html.orr-night #orr-cnav button { background:#242526 !important; border-color:#343536 !important; color:#6cb0ff !important; }
+html.orr-night #orr-cnav button:hover { background:#2f3132 !important; }
+html.orr-night .author.submitter { background:#1667b8 !important; color:#fff !important; }
+html.orr-night .orr-flash { animation:orr-flash-n 1.3s ease-out; }
+@keyframes orr-flash-n { from { background:#4a441f; } to { background:transparent; } }
+html.orr-night #orr-help .orr-help-box { background:#242526 !important; color:#d7dadc !important; }
+html.orr-night #orr-help td.k { color:#6cb0ff !important; }
+html.orr-night .thing.orr-visited .title a:not(:hover) { color:#6a6a6b !important; }
+html.orr-night #orr-skeleton { background:#1a1a1b; }
+html.orr-night #orr-skeleton .orr-sk-head { background:#20303f; border-color:#14202b; }
+html.orr-night #orr-skeleton .orr-sk-thumb { background:#2f3132; }
+html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a2b2c 25%,#343536 50%,#2a2b2c 75%); background-size:400% 100%; }`;
 
   function injectStaticCss() {
     if (!document.getElementById("orr-enhance-css")) {
@@ -993,6 +1092,16 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       c.style.display = "none";
       document.body.appendChild(c);
     }
+    if (!document.getElementById("orr-help-btn")) {
+      const h = document.createElement("button");
+      h.id = "orr-help-btn";
+      h.type = "button";
+      h.textContent = "?";
+      h.title = "keyboard shortcuts (press ?)";
+      h.setAttribute("aria-label", "keyboard shortcuts");
+      h.addEventListener("click", toggleHelp);
+      document.body.appendChild(h);
+    }
   }
 
   // ---- keyboard navigation ----
@@ -1010,6 +1119,8 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     const el = things[kbIdx];
     el.classList.add("orr-kb-sel");
     el.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+    try { el.focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
   }
   function kbCurrent() {
     const things = kbThings();
@@ -1039,6 +1150,19 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
         }
         break;
       }
+      case "c": {
+        const c = kbCurrent();
+        const a = c && c.querySelector("a.comments, a.bylink.comments");
+        if (a) a.click();
+        break;
+      }
+      case "ArrowLeft": if (hoverGallery) { navGallery(hoverGallery, -1); e.preventDefault(); } else return; break;
+      case "ArrowRight": if (hoverGallery) { navGallery(hoverGallery, 1); e.preventDefault(); } else return; break;
+      case "?": toggleHelp(); e.preventDefault(); break;
+      case "Escape":
+        if (document.getElementById("orr-help")) { closeHelp(); e.preventDefault(); }
+        else hideHoverCard();
+        return;
       default: return;
     }
   }
@@ -1049,20 +1173,25 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     if (!thing) return;
     const collapsed = thing.classList.toggle("collapsed");
     expandLink.innerHTML = collapsed ? "[+]" : "[&ndash;]";
+    persistCollapse(thing, collapsed);
   }
 
   // ---- gallery nav ----
-  function galleryNav(navEl) {
-    const gal = navEl.closest(".orr-gallery");
+  let hoverGallery = null; // gallery under the pointer, for arrow-key navigation
+  function navGallery(gal, dir) {
     if (!gal) return;
     const imgs = Array.from(gal.querySelectorAll(".orr-gimg"));
     const n = imgs.length;
+    if (!n) return;
     let idx = parseInt(gal.getAttribute("data-idx") || "0", 10);
-    idx = (idx + parseInt(navEl.getAttribute("data-d") || "1", 10) + n) % n;
+    idx = (idx + dir + n) % n;
     gal.setAttribute("data-idx", String(idx));
     imgs.forEach((im, i) => im.classList.toggle("active", i === idx));
     const cnt = gal.querySelector(".orr-gcount");
     if (cnt) cnt.textContent = idx + 1 + " / " + n;
+  }
+  function galleryNav(navEl) {
+    navGallery(navEl.closest(".orr-gallery"), parseInt(navEl.getAttribute("data-d") || "1", 10));
   }
 
   // ---- user tags ----
@@ -1144,6 +1273,117 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     ORR.setPrefs({ threadVisits: dataCache.threadVisits });
   }
 
+  // ---- persist visited posts + collapsed comments ----
+  function postKey() {
+    const post = document.querySelector("#siteTable .thing.link");
+    return post ? post.getAttribute("data-fullname") : null;
+  }
+  function rememberVisit() {
+    const k = postKey();
+    if (!k) return;
+    if (!dataCache.visitedPosts) dataCache.visitedPosts = {};
+    if (!dataCache.visitedPosts[k]) {
+      dataCache.visitedPosts[k] = Math.floor(nowMsNow() / 1000);
+      const keys = Object.keys(dataCache.visitedPosts);
+      if (keys.length > 3000) delete dataCache.visitedPosts[keys[0]];
+      ORR.setPrefs({ visitedPosts: dataCache.visitedPosts });
+    }
+  }
+  function markVisited(scope) {
+    const set = dataCache.visitedPosts || {};
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll("#siteTable .thing.link").forEach((p) => {
+      if (set[p.getAttribute("data-fullname")]) p.classList.add("orr-visited");
+    });
+  }
+  function persistCollapse(thing, collapsed) {
+    const k = postKey();
+    const id = thing.getAttribute("data-fullname");
+    if (!k || !id) return;
+    if (!dataCache.collapsedComments) dataCache.collapsedComments = {};
+    let arr = dataCache.collapsedComments[k] || [];
+    if (collapsed) { if (arr.indexOf(id) < 0) arr = arr.concat(id); }
+    else arr = arr.filter((x) => x !== id);
+    if (arr.length) dataCache.collapsedComments[k] = arr;
+    else delete dataCache.collapsedComments[k];
+    const keys = Object.keys(dataCache.collapsedComments);
+    if (keys.length > 400) delete dataCache.collapsedComments[keys[0]];
+    ORR.setPrefs({ collapsedComments: dataCache.collapsedComments });
+  }
+  function applyCollapsedState() {
+    const k = postKey();
+    if (!k || !dataCache.collapsedComments) return;
+    const arr = dataCache.collapsedComments[k];
+    if (!arr || !arr.length) return;
+    arr.forEach((id) => {
+      const thing = document.getElementById("thing_" + id);
+      if (thing && thing.classList.contains("comment") && !thing.classList.contains("collapsed")) {
+        thing.classList.add("collapsed");
+        const ex = thing.querySelector(":scope > .entry .expand");
+        if (ex) ex.innerHTML = "[+]";
+      }
+    });
+  }
+
+  // ---- reddit preview images whose signed URL expired → refetch a fresh one ----
+  let previewJsonPromise = null; // shared across images so we fetch the page JSON once
+  function refreshPreviewUrl(img) {
+    if (img.dataset.orrRefetched) return;
+    img.dataset.orrRefetched = "1";
+    let path;
+    try { path = new URL(img.getAttribute("src") || img.src, location.origin).pathname; } catch (e) { return; }
+    if (!previewJsonPromise) {
+      const jsonUrl = location.origin + location.pathname.replace(/\/$/, "") + "/.json?raw_json=1";
+      previewJsonPromise = fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } })
+        .then((res) => (res.ok ? res.text() : ""))
+        .catch(() => "");
+      setTimeout(() => { previewJsonPromise = null; }, 30000); // allow a fresh fetch later
+    }
+    previewJsonPromise.then((text) => {
+      if (!text) return;
+      const fresh = (text.match(/https?:\/\/(?:external-)?preview\.redd\.it\/[^"\s\\]+/g) || [])
+        .map((u) => u.replace(/\\\//g, "/").replace(/\\u0026/gi, "&").replace(/&amp;/g, "&"))
+        .find((u) => { try { return new URL(u).pathname === path; } catch (e) { return false; } });
+      if (fresh && img.isConnected) img.src = fresh;
+    });
+  }
+
+  // ---- keyboard-shortcuts help overlay ----
+  const SHORTCUTS = [
+    ["j / k", "next / previous item"],
+    ["o / Enter", "open selected item"],
+    ["c", "open comments (on a listing)"],
+    ["x", "expand media / collapse comment"],
+    ["← / →", "gallery previous / next (while hovering a gallery)"],
+    ["comment nav", "▲▼ top comments, OP, new (widget, top-right)"],
+    ["?", "toggle this help"],
+    ["Esc", "close popups"],
+  ];
+  let helpPrevFocus = null;
+  function toggleHelp() {
+    if (document.getElementById("orr-help")) { closeHelp(); return; }
+    const ov = document.createElement("div");
+    ov.id = "orr-help";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", "keyboard shortcuts");
+    ov.tabIndex = -1;
+    ov.innerHTML =
+      '<div class="orr-help-box"><h2>Keyboard shortcuts</h2><table>' +
+      SHORTCUTS.map((s) => '<tr><td class="k">' + esc(s[0]) + "</td><td>" + esc(s[1]) + "</td></tr>").join("") +
+      '</table><p class="orr-help-close">press <b>?</b> or <b>Esc</b> to close</p></div>';
+    ov.addEventListener("click", (e) => { if (e.target === ov) closeHelp(); });
+    document.body.appendChild(ov);
+    helpPrevFocus = document.activeElement;
+    ov.focus();
+  }
+  function closeHelp() {
+    const ov = document.getElementById("orr-help");
+    if (ov) ov.remove();
+    if (helpPrevFocus && helpPrevFocus.focus) { try { helpPrevFocus.focus(); } catch (e) {} }
+    helpPrevFocus = null;
+  }
+
   // ---- hover cards ----
   let hoverTimer = null;
   function hideHoverCard() {
@@ -1154,6 +1394,21 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     const r = anchor.getBoundingClientRect();
     card.style.left = Math.min(r.left, window.innerWidth - 340) + "px";
     card.style.top = Math.min(r.bottom + 4, window.innerHeight - 120) + "px";
+  }
+  // Preview a nested comment's parent inline (RES "show parent on hover").
+  function showParentCard(pl) {
+    const card = document.getElementById("orr-hovercard");
+    if (!card) return;
+    const c = pl.closest(".thing.comment");
+    const p = c && parentOf(c);
+    if (!p) return;
+    const body = p.querySelector(":scope > .entry .usertext-body");
+    const author = p.querySelector(":scope > .entry a.author");
+    card.innerHTML =
+      '<div style="font-weight:bold;margin-bottom:4px">' + (author ? esc(author.textContent) : "parent comment") + "</div>" +
+      '<div class="orr-parentbody" style="max-height:200px;overflow:auto">' + (body ? body.innerHTML : "(parent)") + "</div>";
+    card.style.display = "block";
+    positionCard(card, pl);
   }
   async function showHoverCard(anchor) {
     const href = anchor.getAttribute("href") || "";
@@ -1199,9 +1454,25 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       const b = document.getElementById("orr-top");
       if (b) b.classList.toggle("show", window.scrollY > 500);
     });
+    // Track the gallery under the pointer so arrow keys can page through it.
+    document.addEventListener("mouseover", (e) => {
+      hoverGallery = (e.target.closest && e.target.closest(".orr-gallery")) || null;
+    }, true);
+    // Double-click a resized image to reset it to its natural size.
+    document.addEventListener("dblclick", (e) => {
+      const r = e.target.closest && e.target.closest(".orr-resizable, .orr-inline-img");
+      if (r) { r.style.width = ""; r.style.height = ""; }
+    });
+    // Refetch reddit preview images whose signed URL has expired (403).
+    document.addEventListener("error", (e) => {
+      const img = e.target;
+      if (img && img.tagName === "IMG" && /(?:external-)?preview\.redd\.it/i.test(img.src || "")) refreshPreviewUrl(img);
+    }, true);
     document.addEventListener(
       "mouseover",
       (e) => {
+        const pl = e.target.closest && e.target.closest("a.orr-parent");
+        if (pl) { if (hoverTimer) clearTimeout(hoverTimer); hoverTimer = setTimeout(() => showParentCard(pl), 300); return; }
         const a = e.target.closest && e.target.closest("a.author, .sr-bar a.choice, a.subreddit");
         if (!a) {
           if (!(e.target.closest && e.target.closest("#orr-hovercard"))) {
@@ -1216,7 +1487,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     );
     document.addEventListener("mouseout", (e) => {
       const to = e.relatedTarget;
-      if (to && to.closest && (to.closest("#orr-hovercard") || to.closest("a.author, .sr-bar a.choice, a.subreddit"))) return;
+      if (to && to.closest && (to.closest("#orr-hovercard") || to.closest("a.author, .sr-bar a.choice, a.subreddit, a.orr-parent"))) return;
       if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
       setTimeout(() => {
         const c = document.getElementById("orr-hovercard");
@@ -1350,6 +1621,178 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     vids.forEach(wireRedditVideo);
   }
 
+  // ---- comment tools: OP highlight, parent links, navigator, media ----
+  function nowMsNow() { return typeof Date.now === "function" ? Date.now() : 0; }
+
+  function postAuthor() {
+    const post = document.querySelector("#siteTable .thing.link");
+    const a = post ? (post.getAttribute("data-author") || "").toLowerCase() : "";
+    // A deleted OP/account is not a real author — don't match every [deleted] comment.
+    return a === "[deleted]" || a === "[removed]" ? "" : a;
+  }
+  // Distinguish the submitter's (OP's) comments, like old reddit's .submitter.
+  function markOP() {
+    const op = postAuthor();
+    if (!op) return;
+    document.querySelectorAll(".thing.comment").forEach((c) => {
+      if ((c.getAttribute("data-author") || "").toLowerCase() !== op) return;
+      const a = c.querySelector(":scope > .entry .tagline a.author");
+      if (a) a.classList.add("submitter");
+    });
+  }
+  // The parent comment of a nested comment (null for top-level).
+  function parentOf(commentThing) {
+    const child = commentThing.parentElement; // .child of the parent comment
+    return child ? child.closest(".thing.comment") : null;
+  }
+  // Add a "parent" button to nested comments (hover previews it, click jumps to it).
+  function addParentLinks() {
+    document.querySelectorAll(".commentarea .thing.comment").forEach((c) => {
+      const buttons = c.querySelector(":scope > .entry .flat-list.buttons");
+      if (!buttons || buttons.querySelector(".orr-parent")) return;
+      if (!parentOf(c)) return; // top-level → no parent
+      const li = document.createElement("li");
+      li.innerHTML = '<a href="javascript:void(0)" class="orr-parent">parent</a>';
+      buttons.appendChild(li);
+    });
+  }
+  function flash(el) {
+    el.classList.remove("orr-flash");
+    void el.offsetWidth; // restart the animation
+    el.classList.add("orr-flash");
+  }
+
+  // Comment navigator widget (top comments / OP / new), RES-style.
+  function ensureCommentNav() {
+    const onComments = !!document.querySelector(".commentarea");
+    let nav = document.getElementById("orr-cnav");
+    if (!onComments) { if (nav) nav.remove(); return; }
+    if (nav) return;
+    nav = document.createElement("div");
+    nav.id = "orr-cnav";
+    nav.setAttribute("role", "navigation");
+    nav.setAttribute("aria-label", "comment navigator");
+    nav.innerHTML =
+      '<button type="button" data-nav="prev" title="previous top-level comment" aria-label="previous top-level comment">&#9650;</button>' +
+      '<button type="button" data-nav="next" title="next top-level comment" aria-label="next top-level comment">&#9660;</button>' +
+      '<button type="button" data-nav="op" title="next comment by OP" aria-label="next OP comment">OP</button>' +
+      '<button type="button" data-nav="new" title="next new comment" aria-label="next new comment">new</button>';
+    document.body.appendChild(nav);
+    nav.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      const mode = b.getAttribute("data-nav");
+      if (mode === "prev") jumpComment(-1, topComments());
+      else if (mode === "next") jumpComment(1, topComments());
+      else if (mode === "op") jumpComment(1, opComments());
+      else if (mode === "new") jumpComment(1, newComments());
+    });
+  }
+  function topComments() { return Array.from(document.querySelectorAll(".nestedlisting > .thing.comment")); }
+  function opComments() {
+    const op = postAuthor();
+    return op ? Array.from(document.querySelectorAll(".thing.comment")).filter((c) => (c.getAttribute("data-author") || "").toLowerCase() === op) : [];
+  }
+  function newComments() { return Array.from(document.querySelectorAll(".thing.comment.orr-new")); }
+  function jumpComment(dir, els) {
+    if (!els.length) return;
+    let target = null;
+    if (dir > 0) target = els.find((t) => t.getBoundingClientRect().top > 4);
+    else { for (let i = els.length - 1; i >= 0; i--) { if (els[i].getBoundingClientRect().top < -4) { target = els[i]; break; } } }
+    if (!target) target = dir > 0 ? els[0] : els[els.length - 1];
+    if (target.classList.contains("collapsed")) { const ex = target.querySelector(":scope > .entry .expand"); if (ex) ex.click(); }
+    target.scrollIntoView({ block: "start", behavior: "smooth" });
+    flash(target);
+  }
+
+  // Expand media links inside comment bodies (RES "show images" for comments):
+  // youtube/redgifs/streamable/imgur/direct video via externalMediaExpando, and
+  // v.redd.it links via the DASH manifest (with synced audio).
+  function expandCommentMedia(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    let links;
+    try { links = root.querySelectorAll(".commentarea .md a[href], .commentarea .usertext-body a[href]"); } catch (e) { return; }
+    for (const a of links) {
+      if (a.dataset.orrMedia) continue;
+      const href = a.getAttribute("href") || "";
+      const ext = externalMediaExpando(href);
+      if (ext) {
+        a.dataset.orrMedia = "1";
+        const wrap = document.createElement("div");
+        wrap.className = "orr-inline-media";
+        wrap.innerHTML = ext.html;
+        a.insertAdjacentElement("afterend", wrap);
+        continue;
+      }
+      const vm = /^https?:\/\/v\.redd\.it\/([A-Za-z0-9]+)/i.exec(href);
+      if (vm) { a.dataset.orrMedia = "1"; buildVredditInto(a, "https://v.redd.it/" + vm[1]); }
+    }
+  }
+  async function buildVredditInto(anchor, base) {
+    try {
+      const res = await fetch(base + "/DASHPlaylist.mpd", { credentials: "omit" });
+      if (!res.ok) return;
+      const xml = await res.text();
+      const all = [];
+      const re = /<BaseURL>([^<]+)<\/BaseURL>/gi;
+      let m;
+      while ((m = re.exec(xml))) all.push(m[1]);
+      const vids = all.filter((u) => !/audio/i.test(u));
+      vids.sort((x, y) => (parseInt((y.match(/(\d+)/) || [])[1] || "0", 10)) - (parseInt((x.match(/(\d+)/) || [])[1] || "0", 10)));
+      const vfile = vids[0];
+      if (!vfile) return;
+      const vurl = /^https?:/i.test(vfile) ? vfile : base + "/" + vfile;
+      const wrap = document.createElement("div");
+      wrap.className = "orr-inline-media";
+      wrap.innerHTML =
+        '<div class="expando-container"><video class="reddit-video" controls preload="metadata" data-dash-url="' +
+        esc(base + "/DASHPlaylist.mpd") + '" data-audio-candidates="' + esc(audioCandidates(base).join("|")) +
+        '" width="480"><source src="' + esc(vurl) + '"></video></div>';
+      if (anchor.isConnected) { anchor.insertAdjacentElement("afterend", wrap); wireRedditVideos(wrap); }
+    } catch (e) { /* leave the link as-is */ }
+  }
+
+  // Load a truncated "continue this thread" stub inline via the comment permalink.
+  async function continueThread(el) {
+    if (el.dataset.orrLoading) return;
+    const parentId = el.getAttribute("data-parent"); // t1_xxx
+    const linkId = el.getAttribute("data-link");
+    const post = document.querySelector("#siteTable .thing.link");
+    const permalink = post && post.getAttribute("data-permalink");
+    if (!parentId || !permalink) { el.textContent = "(continue this thread — open the comment's permalink)"; return; }
+    el.dataset.orrLoading = "1";
+    el.textContent = "loading continued thread…";
+    const cid = parentId.replace(/^t1_/, "");
+    const url = location.origin + permalink.replace(/\/$/, "") + "/" + cid + "/.json?raw_json=1&limit=200";
+    try {
+      const res = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      const comments = (data[1] && data[1].data && data[1].data.children) || [];
+      const parent = comments[0] && comments[0].data;
+      const kids = parent && parent.replies && parent.replies.data ? parent.replies.data.children : [];
+      const wrap = el.parentElement; // .morecomments, sitting in the parent's .child
+      if (!wrap || !wrap.parentNode || !kids.length) { el.textContent = "(nothing more to load)"; return; }
+      const tmp = document.createElement("div");
+      tmp.innerHTML = buildCommentTree(kids, linkId, nowMsNow());
+      while (tmp.firstElementChild) wrap.parentNode.insertBefore(tmp.firstElementChild, wrap);
+      wrap.remove();
+      enhanceComments(document);
+    } catch (e) {
+      el.dataset.orrLoading = "";
+      el.textContent = "continue this thread — failed, click to retry";
+    }
+  }
+
+  function enhanceComments(scope) {
+    if (!document.querySelector(".commentarea")) return;
+    markOP();
+    addParentLinks();
+    ensureCommentNav();
+    applyCollapsedState();
+    expandCommentMedia(scope || document);
+  }
+
   function afterRender() {
     injectStaticCss();
     applyNight();
@@ -1358,13 +1801,17 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     applyFilters(document);
     patchTags(document);
     markNewComments();
+    markVisited(document);
     inlineImages(document);
     wireRedditVideos(document);
+    enhanceComments(document);
+    if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
   }
   function enhanceNewItems(scope) {
     applyFilters(scope || document);
     patchTags(scope || document);
+    markVisited(scope || document);
     inlineImages(scope || document);
     wireRedditVideos(scope || document);
   }
@@ -1373,12 +1820,31 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     if (document.getElementById(GUARD_ID)) return;
     const s = document.createElement("style");
     s.id = GUARD_ID;
-    s.textContent = "html{visibility:hidden!important}";
+    // Hide the underlying page but keep our loading skeleton visible.
+    s.textContent = "html{visibility:hidden!important}#orr-skeleton{visibility:visible!important}";
     (document.head || document.documentElement).appendChild(s);
   }
   function unhideGuard() {
     const s = document.getElementById(GUARD_ID);
     if (s) s.remove();
+    hideSkeleton();
+  }
+
+  // A lightweight old-reddit-ish loading skeleton, shown on first paint.
+  function showSkeleton() {
+    if (document.getElementById("orr-skeleton") || !document.body) return;
+    const sk = document.createElement("div");
+    sk.id = "orr-skeleton";
+    sk.setAttribute("aria-hidden", "true");
+    let rows = "";
+    for (let i = 0; i < 9; i++)
+      rows += '<div class="orr-sk-row"><div class="orr-sk-thumb"></div><div class="orr-sk-lines"><div class="orr-sk-line w70"></div><div class="orr-sk-line w40"></div></div></div>';
+    sk.innerHTML = '<div class="orr-sk-head"></div><div class="orr-sk-body">' + rows + "</div>";
+    document.body.appendChild(sk);
+  }
+  function hideSkeleton() {
+    const sk = document.getElementById("orr-skeleton");
+    if (sk) sk.remove();
   }
 
   async function ensureCss() {
@@ -1759,7 +2225,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
-      el.textContent = "(continue this thread — open the comment's permalink)";
+      continueThread(el); // "continue this thread" → load the subtree inline
       return;
     }
     if (el.dataset.orrLoading) return;
@@ -1859,6 +2325,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     }
     patchTags(document);
     inlineImages(document);
+    enhanceComments(document);
     observeMores(); // pick up new/continued "more" stubs
   }
 
@@ -1902,12 +2369,31 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       "click",
       (e) => {
         if (!active) return;
+        // Reveal blurred NSFW/spoiler media on first click.
+        const blurEl = e.target.closest && e.target.closest(".expando.orr-nsfw:not(.orr-revealed), .expando.orr-spoiler:not(.orr-revealed)");
+        if (blurEl) {
+          e.preventDefault();
+          e.stopPropagation();
+          blurEl.classList.add("orr-revealed");
+          return;
+        }
         // Comment collapse toggle.
         const expandLink = e.target.closest && e.target.closest("a.expand");
         if (expandLink) {
           e.preventDefault();
           e.stopPropagation();
           toggleCollapse(expandLink);
+          return;
+        }
+        // "parent" link → scroll to & flash the parent comment.
+        const parentLink = e.target.closest && e.target.closest("a.orr-parent");
+        if (parentLink) {
+          e.preventDefault();
+          e.stopPropagation();
+          const c = parentLink.closest(".thing.comment");
+          const p = c && parentOf(c);
+          if (p) { p.scrollIntoView({ block: "start", behavior: "smooth" }); flash(p); }
+          hideHoverCard();
           return;
         }
         // Gallery prev/next.
@@ -1940,11 +2426,18 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
             expando.style.display = collapse ? "none" : "";
             if (collapse) {
               // Collapsing hides the media but display:none does NOT pause it — so
-              // stop any playing video (which cascades to audio.pause() via the
-              // 'pause' listener), else its hidden audio keeps playing with no
-              // visible controls.
+              // stop any playing <video> (which cascades to audio.pause() via the
+              // 'pause' listener) AND blank any iframe embed (whose browsing context
+              // keeps playing audio while hidden). Both are restored on re-expand.
               expando.querySelectorAll("video").forEach((v) => { try { v.pause(); } catch (e) {} });
+              expando.querySelectorAll("iframe.orr-embed").forEach((f) => {
+                if (!f.dataset.orrSrc) f.dataset.orrSrc = f.src;
+                f.src = "about:blank";
+              });
             } else {
+              expando.querySelectorAll("iframe.orr-embed").forEach((f) => {
+                if (f.dataset.orrSrc) { f.src = f.dataset.orrSrc; delete f.dataset.orrSrc; }
+              });
               wireRedditVideos(expando); // give the video its sound
             }
           }
@@ -2034,6 +2527,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url))
       return; // unsupported route → leave it to new Reddit
     wireNav();
+    showSkeleton(); // visible placeholder while the first page loads
     fetchMe(); // prime the identity so the header usually renders logged-in on first paint
     loadPage(url, true);
   }
@@ -2041,7 +2535,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
   // React to setting changes live.
   try {
     api.storage.onChanged.addListener((changes, area) => {
-      if (area !== "local") return;
+      // settings/filters live in sync, big blobs in local — react to either.
       if (changes.infiniteScroll) infiniteOn = changes.infiniteScroll.newValue !== false;
       if (changes.nightMode) {
         nightModeOn = changes.nightMode.newValue !== false;
