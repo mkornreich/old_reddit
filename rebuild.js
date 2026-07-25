@@ -69,11 +69,17 @@
   // file. Derive the likely audio URLs from the fallback (video) URL — Reddit has
   // used several names over the years, so we list them newest-first and the runtime
   // probes them in order. Returns [] if this isn't a v.redd.it fallback URL.
-  function audioCandidates(fallbackUrl) {
+  function vRedditBase(fallbackUrl) {
     const m = /^(https?:\/\/v\.redd\.it\/[^/?#]+)\//i.exec(fallbackUrl || "");
-    if (!m) return [];
-    const base = m[1];
+    return m ? m[1] : null;
+  }
+  // Candidate audio-track URLs, tried in order if the DASH manifest can't be read.
+  // Reddit has used CMAF (current) and DASH (older) container/naming schemes.
+  function audioCandidates(base) {
+    if (!base) return [];
     return [
+      base + "/CMAF_AUDIO_128.mp4",
+      base + "/CMAF_AUDIO_64.mp4",
       base + "/DASH_AUDIO_128.mp4",
       base + "/DASH_AUDIO_64.mp4",
       base + "/DASH_audio.mp4",
@@ -91,11 +97,17 @@
     }
     const rv = d.media && d.media.reddit_video;
     if (d.is_video && rv && rv.fallback_url) {
-      // Reddit's fallback_url is a VIDEO-ONLY DASH stream — the audio lives in a
-      // separate v.redd.it file. We attach the candidate audio URLs so the runtime
-      // can play a hidden, synced <audio> element alongside it (see wireRedditVideo).
-      const cands = rv.has_audio === false ? [] : audioCandidates(rv.fallback_url);
-      const audioAttr = cands.length ? ` data-audio-candidates="${esc(cands.join("|"))}"` : "";
+      // Reddit's fallback_url is a VIDEO-ONLY stream — the audio is a separate
+      // v.redd.it file. We attach the DASH manifest URL (authoritative for the
+      // exact audio track, across DASH/CMAF naming) plus candidate URLs as a
+      // fallback, so the runtime can play a hidden, synced <audio> element
+      // alongside the video (see wireRedditVideo).
+      const base = rv.has_audio === false ? null : vRedditBase(rv.fallback_url);
+      const cands = audioCandidates(base);
+      const dashUrl = base ? base + "/DASHPlaylist.mpd" : "";
+      const audioAttr = cands.length
+        ? ` data-audio-candidates="${esc(cands.join("|"))}" data-dash-url="${esc(dashUrl)}"`
+        : "";
       return {
         type: cands.length ? "video" : "video-muted",
         html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
@@ -903,6 +915,11 @@
 a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:pointer; margin-right:2px; }
 .thing.orr-kb-sel > .entry { outline:2px solid #ff4500; outline-offset:1px; }
 .thing.orr-filtered { display:none !important; }
+/* Old-reddit's archived sprite dropped the image expando icon, so image/gallery
+   posts rendered an invisible (icon-less) expando box. Restore a visible icon. */
+.expando-button.image { background-repeat:no-repeat; background-position:center center; }
+.expando-button.image.collapsed { background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'23'%20height%3D'23'%3E%3Crect%20x%3D'3'%20y%3D'5'%20width%3D'17'%20height%3D'13'%20rx%3D'2'%20fill%3D'rgb(240%2C245%2C250)'%20stroke%3D'rgb(95%2C153%2C207)'%20stroke-width%3D'1.5'%2F%3E%3Ccircle%20cx%3D'8'%20cy%3D'9'%20r%3D'1.7'%20fill%3D'rgb(95%2C153%2C207)'%2F%3E%3Cpath%20d%3D'M4.5%2017%20L10%2010.5%20L13.5%2014%20L16%2011%20L18.5%2017%20Z'%20fill%3D'rgb(95%2C153%2C207)'%2F%3E%3C%2Fsvg%3E"); }
+.expando-button.image.expanded { background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'23'%20height%3D'23'%3E%3Crect%20x%3D'3'%20y%3D'5'%20width%3D'17'%20height%3D'13'%20rx%3D'2'%20fill%3D'rgb(95%2C153%2C207)'%20stroke%3D'rgb(60%2C110%2C160)'%20stroke-width%3D'1.5'%2F%3E%3Ccircle%20cx%3D'8'%20cy%3D'9'%20r%3D'1.7'%20fill%3D'white'%2F%3E%3Cpath%20d%3D'M4.5%2017%20L10%2010.5%20L13.5%2014%20L16%2011%20L18.5%2017%20Z'%20fill%3D'white'%2F%3E%3C%2Fsvg%3E"); }
 #orr-top { position:fixed; right:16px; bottom:16px; z-index:2147483000; background:#5f99cf; color:#fff;
   border:1px solid #336699; border-radius:3px; padding:6px 10px; font:12px verdana; cursor:pointer; display:none; }
 #orr-top.show { display:block; }
@@ -1233,37 +1250,87 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     }
   }
 
-  // Give a Reddit video its sound back. The <video> plays the video-only DASH
-  // stream; we play a hidden <audio> (the separate v.redd.it audio track) locked to
-  // it, so the native volume/mute controls work. Audio URLs are probed lazily on
-  // first play (preload="none" means nothing loads until the user hits play), and a
-  // truly silent clip (all candidates 404) just falls back to no audio.
+  // Read the exact audio-track URL out of a Reddit DASH manifest. Works across
+  // Reddit's container schemes (CMAF today, DASH historically) because it just
+  // picks the highest-bitrate BaseURL whose name contains "audio". Returns null
+  // if the manifest can't be read or has no audio track.
+  async function audioUrlFromManifest(dashUrl) {
+    if (!dashUrl) return null;
+    try {
+      let signal;
+      if (typeof AbortController === "function") {
+        const ac = new AbortController();
+        signal = ac.signal;
+        setTimeout(() => ac.abort(), 4000); // don't hang first play on a slow/blocked manifest
+      }
+      const res = await fetch(dashUrl, { credentials: "omit", signal });
+      if (!res.ok) return null;
+      const xml = await res.text();
+      const urls = [];
+      const re = /<BaseURL>([^<]+)<\/BaseURL>/gi;
+      let m;
+      while ((m = re.exec(xml))) if (/audio/i.test(m[1])) urls.push(m[1]);
+      if (!urls.length) return null;
+      urls.sort((a, b) => parseInt((b.match(/(\d+)/) || [])[1] || "0", 10) - parseInt((a.match(/(\d+)/) || [])[1] || "0", 10));
+      const f = urls[0];
+      if (/^https?:/i.test(f)) return f;
+      return dashUrl.replace(/\/DASHPlaylist\.mpd.*$/i, "") + "/" + f.replace(/^\//, "");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Give a Reddit video its sound back. The <video> plays the video-only stream;
+  // we play a hidden <audio> (the separate v.redd.it audio track) locked to it, so
+  // the native volume/mute controls work. The audio URL is resolved lazily on first
+  // play from the DASH manifest (authoritative), falling back to guessed candidate
+  // URLs. A truly silent clip (no audio track anywhere) just falls back to no audio.
   function wireRedditVideo(video) {
     if (!video || video.dataset.orrAudioWired) return;
     const cands = (video.getAttribute("data-audio-candidates") || "").split("|").filter(Boolean);
-    if (!cands.length) return;
+    const dashUrl = video.getAttribute("data-dash-url") || "";
+    if (!cands.length && !dashUrl) return;
     video.dataset.orrAudioWired = "1";
     const audio = document.createElement("audio");
     audio.preload = "none";
     audio.style.display = "none";
-    audio.src = cands[0];
     (video.parentNode || video).appendChild(audio);
 
-    let idx = 0, resolved = false, dead = false;
+    let idx = -1, resolved = false, dead = false, srcSet = false, resolving = false;
     const resync = () => { if (dead) return; try { if (Math.abs(audio.currentTime - video.currentTime) > 0.3) audio.currentTime = video.currentTime; } catch (e) {} };
-    const start = () => { if (dead) return; try { audio.currentTime = video.currentTime; } catch (e) {} audio.play().catch(() => {}); };
+    const play = () => { if (dead) return; try { audio.currentTime = video.currentTime; } catch (e) {} audio.play().catch(() => {}); };
+
+    // Choose the audio source: manifest first, then walk the candidate list.
+    async function ensureSrc(advance) {
+      if (dead) return;
+      if (!srcSet) {
+        if (resolving) return;
+        resolving = true;
+        const u = await audioUrlFromManifest(dashUrl);
+        resolving = false;
+        if (dead) return;
+        if (u) { audio.src = u; srcSet = true; }
+        else if (cands.length) { idx = 0; audio.src = cands[0]; srcSet = true; }
+        else { dead = true; return; }
+        if (!video.paused) play();
+        return;
+      }
+      if (advance) {
+        idx += 1;
+        if (idx >= cands.length) { dead = true; return; } // out of candidates → silent
+        audio.src = cands[idx];
+        if (!video.paused) play();
+      }
+    }
 
     audio.addEventListener("playing", () => { resolved = true; resync(); });
     audio.addEventListener("error", () => {
-      if (resolved || dead) return; // only advance while still probing candidates
-      idx += 1;
-      if (idx >= cands.length) { dead = true; return; } // no audio track — silent clip
-      audio.src = cands[idx];
-      if (!video.paused) start(); // retry the new candidate if we're mid-play
+      if (resolved || dead) return; // only fall through candidates while still probing
+      ensureSrc(true);
     });
 
-    video.addEventListener("play", start);
-    video.addEventListener("playing", start);
+    video.addEventListener("play", () => { if (srcSet) play(); else ensureSrc(false); });
+    video.addEventListener("playing", () => { if (srcSet) play(); });
     video.addEventListener("pause", () => audio.pause());
     video.addEventListener("waiting", () => audio.pause()); // buffering → hold audio
     video.addEventListener("seeking", resync);
