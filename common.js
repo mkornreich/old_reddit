@@ -13,7 +13,7 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
 
   // Rebuild is now the only mode.
-  const DEFAULTS = Object.freeze({ enabled: true, infiniteScroll: true, nightMode: false });
+  const DEFAULTS = Object.freeze({ enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: false });
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
   const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
@@ -22,7 +22,7 @@
   // userTags and the large per-device blobs stay in storage.local — userTags can
   // grow past storage.sync's ~8KB/item quota, and a quota failure must not risk
   // leaving a stale copy in sync that getData would then prefer.
-  const SYNC_KEYS = ["enabled", "infiniteScroll", "nightMode", "filters"];
+  const SYNC_KEYS = ["enabled", "infiniteScroll", "nightMode", "redirect", "videoMuted", "filters"];
 
   function syncArea() {
     return api.storage && api.storage.sync ? api.storage.sync : api.storage.local;
@@ -36,7 +36,7 @@
   }
 
   async function getPrefs() {
-    const want = { enabled: undefined, infiniteScroll: undefined, nightMode: undefined, mode: undefined };
+    const want = { enabled: undefined, infiniteScroll: undefined, nightMode: undefined, redirect: undefined, videoMuted: undefined, mode: undefined };
     const sync = await areaGet(syncArea(), want);
     const local = await areaGet(api.storage.local, want);
     // Per-key merge: sync wins where set, local fills the rest. (An all-or-nothing
@@ -49,6 +49,8 @@
       enabled: enabled !== false,
       infiniteScroll: stored.infiniteScroll !== false, // default on
       nightMode: stored.nightMode === true, // default off
+      redirect: stored.redirect !== false, // default on: send old.reddit/i.reddit → www
+      videoMuted: stored.videoMuted === true, // default off (sound on)
     };
   }
 
@@ -136,6 +138,14 @@
     return null;
   }
 
+  // Reddit Answers (/answers/…) — not an old-reddit feature and not rebuildable
+  // (it's a shadow-DOM app), but we frame it in an old-reddit-style top bar.
+  function isAnswersRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+    return segs[0] === "answers" ? { scope: "answers" } : null;
+  }
+
   // /search  or  /r/{sub}/search  (query params read at load time from the URL)
   function isSearchRoute(loc) {
     const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
@@ -148,6 +158,6 @@
 
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
-    getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute,
+    getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute,
   };
 })();

@@ -114,6 +114,12 @@
     if ((m = /imgur\.com\/(?:a|gallery)\/([A-Za-z0-9]+)/i.exec(url))) {
       return { type: "image", html: embedHtml("https://imgur.com/a/" + m[1] + "/embed?pub=true", "allowfullscreen", 640, 500) };
     }
+    if (/^https?:\/\//i.test(url) && /\.pdf(\?|#|$)/i.test(url)) {
+      return { type: "selftext", html: `<div class="expando-container"><iframe class="orr-embed orr-pdf" src="${esc(url)}" loading="lazy" referrerpolicy="no-referrer"></iframe></div>` };
+    }
+    if (/\.(mp3|ogg|oga|wav|m4a|flac|opus)(\?|#|$)/i.test(url)) {
+      return { type: "video", html: `<div class="expando-container"><audio class="orr-directaudio" controls preload="metadata" src="${esc(url)}"></audio></div>` };
+    }
     if (/\.gifv(\?|$)/i.test(url)) {
       return { type: "video", html: `<div class="expando-container"><video class="orr-directvideo" controls loop preload="metadata" width="640"><source src="${esc(url.replace(/\.gifv(\?|$)/i, ".mp4$1"))}" type="video/mp4"></video></div>` };
     }
@@ -200,7 +206,7 @@
     const exp = opts.expandText || opts.expandoButton ? postExpando(d) : null;
     const expBtn =
       opts.expandoButton && exp
-        ? `<div class="expando-button collapsed ${exp.type}" role="button" tabindex="0" aria-label="expand"></div>`
+        ? `<div class="expando-button collapsed ${exp.type}" role="button" tabindex="0" aria-expanded="false" aria-label="expand"></div>`
         : "";
     const blur = d.over_18 ? " orr-nsfw" : d.spoiler ? " orr-spoiler" : "";
     const expando = exp ? `<div class="expando${blur}"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
@@ -211,9 +217,9 @@
       ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
       `<div class="midcol unvoted">` +
-      `<div class="arrow up login-required" role="button" aria-label="upvote"></div>` +
+      `<div class="arrow up login-required" aria-hidden="true"></div>` +
       `<div class="score unvoted" title="${esc(d.score)}">${score}</div>` +
-      `<div class="arrow down login-required" role="button" aria-label="downvote"></div>` +
+      `<div class="arrow down login-required" aria-hidden="true"></div>` +
       `</div>` +
       thumbnailHtml(d, permalink) +
       `<div class="entry unvoted">` +
@@ -309,7 +315,7 @@
 
     const inner =
       buildHeader({ tabmenu: tabmenuHtml(route), pageName, pageHref: headerLink, me: opts.me, route }) +
-      `<div class="side">${sideSearchHtml(route)}</div>` +
+      `<div class="side" role="complementary">${sideSearchHtml(route)}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t) : "") +
@@ -405,10 +411,10 @@
     return (
       `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}" data-created="${esc(d.created_utc || 0)}">` +
       `<span class="rank"></span>` +
-      `<div class="midcol unvoted"><div class="arrow up login-required" role="button" aria-label="upvote"></div>` +
-      `<div class="arrow down login-required" role="button" aria-label="downvote"></div></div>` +
+      `<div class="midcol unvoted"><div class="arrow up login-required" aria-hidden="true"></div>` +
+      `<div class="arrow down login-required" aria-hidden="true"></div></div>` +
       `<div class="entry unvoted">` +
-      `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-label="collapse">[&ndash;]</a> ` +
+      `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-expanded="true" aria-label="collapse">[&ndash;]</a> ` +
       `<a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
       ` <span class="score unvoted">${pts}</span> ` +
       `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
@@ -452,7 +458,7 @@
         me: opts.me,
         route: { scope: "sub", sub },
       }) +
-      `<div class="side">${sideSearchHtml({ scope: "sub", sub })}</div>` +
+      `<div class="side" role="complementary">${sideSearchHtml({ scope: "sub", sub })}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       `<div id="siteTable" class="sitetable">${postHtml}</div>` +
@@ -487,8 +493,8 @@
     const sub = d.subreddit || "";
     return (
       `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}">` +
-      `<div class="midcol unvoted"><div class="arrow up login-required" role="button"></div>` +
-      `<div class="score unvoted">${esc(d.score)}</div><div class="arrow down login-required" role="button"></div></div>` +
+      `<div class="midcol unvoted"><div class="arrow up login-required" aria-hidden="true"></div>` +
+      `<div class="score unvoted">${esc(d.score)}</div><div class="arrow down login-required" aria-hidden="true"></div></div>` +
       `<div class="entry unvoted">` +
       `<p class="tagline"><a href="/user/${esc(d.author)}" class="author">${esc(d.author)}</a> ` +
       `<span class="score unvoted">${pts}</span> <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time> ` +
@@ -521,7 +527,7 @@
         me: opts.me,
         route: { scope: "user" },
       }) +
-      `<div class="side">${sideSearchHtml({ scope: "user" })}</div>` +
+      `<div class="side" role="complementary">${sideSearchHtml({ scope: "user" })}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       `<div id="siteTable" class="sitetable">` +
@@ -727,7 +733,7 @@
 
     const inner =
       buildHeader({ tabmenu, pageName, pageHref, me: opts.me, route, query: params.q }) +
-      `<div class="side"></div>` +
+      `<div class="side" role="complementary"></div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       `<div class="searchpane raisedbox">${searchFormHtml(route, params.q)}</div>` +
@@ -759,6 +765,10 @@
   const CACHE_TTL = 60000;
   let active = false; // rebuild currently owns the page
   let wired = false;
+
+  // Respect the OS "reduce motion" setting for our scrolling/animation.
+  const REDUCED_MOTION = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const SB = REDUCED_MOTION ? "auto" : "smooth";
 
   // Logged-in identity for the header (fetched once).
   let mePromise = null;
@@ -855,6 +865,8 @@
     if (nb) nb.style.display = "none";
     const sentinel = document.createElement("div");
     sentinel.className = "orr-inf-sentinel";
+    sentinel.setAttribute("role", "status");
+    sentinel.setAttribute("aria-live", "polite");
     sentinel.innerHTML = '<span class="orr-loading">loading more…</span>';
     st.parentNode.insertBefore(sentinel, st.nextSibling);
     infState = { fetchPage, after, count: count || 0, loading: false, sentinel, observer: null, attempt: 0, retryTimer: null, retryInterval: null };
@@ -977,6 +989,15 @@ a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 /* embeds + direct video */
 .orr-embed { width:640px; max-width:100%; height:360px; border:0; display:block; background:#000; }
 .orr-directvideo { max-width:100%; height:auto; display:block; background:#000; }
+/* reddit video wrapper + custom mute button (native volume control is hidden for
+   audio-less video, so we provide our own) */
+.orr-video-wrap { position:relative; display:inline-block; line-height:0; max-width:100%; }
+.orr-video-wrap video { max-width:100%; }
+button.orr-mute { position:absolute; top:8px; right:8px; z-index:6; background:rgba(0,0,0,.55); color:#fff;
+  border:none; border-radius:4px; padding:2px 7px; cursor:pointer; font-size:15px; line-height:1.5; }
+button.orr-mute:hover { background:rgba(0,0,0,.82); }
+.orr-pdf { width:100%; height:80vh; background:#fff; }
+.orr-directaudio { width:100%; max-width:640px; display:block; }
 /* drag-resizable images (RES-style); double-click to reset */
 .orr-resizable { display:inline-block; overflow:hidden; resize:both; max-width:100%; line-height:0; }
 .orr-resizable img.preview { width:100%; height:100%; object-fit:contain; display:block; max-width:none; max-height:none; }
@@ -1026,7 +1047,18 @@ a.orr-parent { color:#369; }
 #orr-skeleton .orr-sk-lines { flex:1; }
 #orr-skeleton .orr-sk-line { height:12px; margin:4px 0; border-radius:3px; background:linear-gradient(90deg,#ededed 25%,#f6f6f6 50%,#ededed 75%); background-size:400% 100%; animation:orr-sk-shim 1.3s infinite; }
 #orr-skeleton .orr-sk-line.w70 { width:70%; } #orr-skeleton .orr-sk-line.w40 { width:40%; }
-@keyframes orr-sk-shim { from { background-position:100% 0; } to { background-position:0 0; } }`;
+@keyframes orr-sk-shim { from { background-position:100% 0; } to { background-position:0 0; } }
+/* accessibility: skip link, visible focus, reduced motion */
+#orr-skip { position:fixed; left:8px; top:-48px; z-index:2147483600; background:#5f99cf; color:#fff;
+  padding:8px 14px; border-radius:0 0 4px 4px; font:bold 13px verdana; text-decoration:none; transition:top .15s ease; }
+#orr-skip:focus { top:0; outline:2px solid #ff4500; }
+.expando-button:focus-visible, a.expand:focus-visible, a.orr-parent:focus-visible, a.orr-gnav:focus-visible,
+#orr-cnav button:focus-visible, button.orr-mute:focus-visible, #orr-help-btn:focus-visible,
+#orr-top:focus-visible, .thing:focus-visible, a.orr-more:focus-visible {
+  outline:2px solid #ff4500; outline-offset:2px; }
+@media (prefers-reduced-motion: reduce) {
+  .orr-flash, #orr-skeleton .orr-sk-line, #orr-skip { animation:none !important; transition:none !important; }
+}`;
 
   const NIGHT_CSS = `
 html.orr-night, html.orr-night body, html.orr-night .content, html.orr-night #siteTable,
@@ -1079,11 +1111,23 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function ensureUiChrome() {
     if (!document.body) return;
+    if (!document.getElementById("orr-skip")) {
+      const sk = document.createElement("a");
+      sk.id = "orr-skip";
+      sk.href = "#siteTable";
+      sk.textContent = "Skip to content";
+      sk.addEventListener("click", (e) => {
+        e.preventDefault();
+        const t = document.getElementById("siteTable");
+        if (t) { t.setAttribute("tabindex", "-1"); t.focus(); t.scrollIntoView(); }
+      });
+      document.body.insertBefore(sk, document.body.firstChild);
+    }
     if (!document.getElementById("orr-top")) {
       const b = document.createElement("div");
       b.id = "orr-top";
       b.textContent = "↑ top";
-      b.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+      b.addEventListener("click", () => window.scrollTo({ top: 0, behavior: SB }));
       document.body.appendChild(b);
     }
     if (!document.getElementById("orr-hovercard")) {
@@ -1118,7 +1162,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     things.forEach((t) => t.classList.remove("orr-kb-sel"));
     const el = things[kbIdx];
     el.classList.add("orr-kb-sel");
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.scrollIntoView({ block: "center", behavior: SB });
     if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
     try { el.focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
   }
@@ -1173,6 +1217,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!thing) return;
     const collapsed = thing.classList.toggle("collapsed");
     expandLink.innerHTML = collapsed ? "[+]" : "[&ndash;]";
+    expandLink.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    expandLink.setAttribute("aria-label", collapsed ? "expand comment" : "collapse comment");
     persistCollapse(thing, collapsed);
   }
 
@@ -1320,7 +1366,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (thing && thing.classList.contains("comment") && !thing.classList.contains("collapsed")) {
         thing.classList.add("collapsed");
         const ex = thing.querySelector(":scope > .entry .expand");
-        if (ex) ex.innerHTML = "[+]";
+        if (ex) { ex.innerHTML = "[+]"; ex.setAttribute("aria-expanded", "false"); ex.setAttribute("aria-label", "expand comment"); }
       }
     });
   }
@@ -1468,6 +1514,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const img = e.target;
       if (img && img.tagName === "IMG" && /(?:external-)?preview\.redd\.it/i.test(img.src || "")) refreshPreviewUrl(img);
     }, true);
+    // Keyboard-activate our role="button" divs (e.g. the expando button) with Enter/Space.
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const t = e.target;
+      if (t && t.getAttribute && t.getAttribute("role") === "button" &&
+          !/^(?:BUTTON|A|INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) {
+        e.preventDefault();
+        t.click();
+      }
+    });
     document.addEventListener(
       "mouseover",
       (e) => {
@@ -1556,16 +1612,56 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // the native volume/mute controls work. The audio URL is resolved lazily on first
   // play from the DASH manifest (authoritative), falling back to guessed candidate
   // URLs. A truly silent clip (no audio track anywhere) just falls back to no audio.
+  // The audio for a reddit video is a separate hidden element, and Chrome hides the
+  // <video>'s native volume control because the video track has no audio — so we add
+  // our own mute button. Mute state is global + persisted (orrVideoMuted).
+  let orrVideoMuted = false;
+  function setVideoMuted(m) {
+    orrVideoMuted = !!m;
+    document.querySelectorAll("video.reddit-video").forEach((v) => {
+      if (v._orrAudio) v._orrAudio.muted = orrVideoMuted;
+      if (v._orrPaintMute) v._orrPaintMute();
+    });
+    ORR.setPrefs({ videoMuted: orrVideoMuted });
+  }
+
   function wireRedditVideo(video) {
     if (!video || video.dataset.orrAudioWired) return;
     const cands = (video.getAttribute("data-audio-candidates") || "").split("|").filter(Boolean);
     const dashUrl = video.getAttribute("data-dash-url") || "";
     if (!cands.length && !dashUrl) return;
     video.dataset.orrAudioWired = "1";
+
+    // Wrap the video so the mute button can overlay it precisely.
+    let wrap = video.closest(".orr-video-wrap");
+    if (!wrap) {
+      wrap = document.createElement("span");
+      wrap.className = "orr-video-wrap";
+      if (video.parentNode) video.parentNode.insertBefore(wrap, video);
+      wrap.appendChild(video);
+    }
     const audio = document.createElement("audio");
     audio.preload = "none";
     audio.style.display = "none";
-    (video.parentNode || video).appendChild(audio);
+    audio.muted = orrVideoMuted;
+    wrap.appendChild(audio);
+    video._orrAudio = audio;
+
+    // Custom, always-visible mute toggle (the native one is unavailable).
+    const muteBtn = document.createElement("button");
+    muteBtn.type = "button";
+    muteBtn.className = "orr-mute";
+    const paintMute = () => {
+      muteBtn.textContent = audio.muted ? "🔇" : "🔊";
+      const lbl = audio.muted ? "unmute video" : "mute video";
+      muteBtn.setAttribute("aria-label", lbl);
+      muteBtn.setAttribute("aria-pressed", audio.muted ? "true" : "false");
+      muteBtn.title = lbl;
+    };
+    video._orrPaintMute = paintMute;
+    paintMute();
+    muteBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); setVideoMuted(!audio.muted); });
+    wrap.appendChild(muteBtn);
 
     let idx = -1, resolved = false, dead = false, srcSet = false, resolving = false;
     const resync = () => { if (dead) return; try { if (Math.abs(audio.currentTime - video.currentTime) > 0.3) audio.currentTime = video.currentTime; } catch (e) {} };
@@ -1608,10 +1704,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     video.addEventListener("seeked", resync);
     video.addEventListener("timeupdate", resync);
     video.addEventListener("ratechange", () => { try { audio.playbackRate = video.playbackRate; } catch (e) {} });
-    video.addEventListener("volumechange", () => { audio.volume = video.volume; audio.muted = video.muted; });
-    // mirror the initial volume/mute state onto the audio track
+    // Volume slider (if the browser shows one) mirrors to the audio; mute is driven
+    // by our own button (orrVideoMuted), not the video, so we don't override it here.
+    video.addEventListener("volumechange", () => { audio.volume = video.volume; });
     audio.volume = video.volume;
-    audio.muted = video.muted;
   }
 
   function wireRedditVideos(scope) {
@@ -1701,7 +1797,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     else { for (let i = els.length - 1; i >= 0; i--) { if (els[i].getBoundingClientRect().top < -4) { target = els[i]; break; } } }
     if (!target) target = dir > 0 ? els[0] : els[els.length - 1];
     if (target.classList.contains("collapsed")) { const ex = target.querySelector(":scope > .entry .expand"); if (ex) ex.click(); }
-    target.scrollIntoView({ block: "start", behavior: "smooth" });
+    target.scrollIntoView({ block: "start", behavior: SB });
     flash(target);
   }
 
@@ -2392,7 +2488,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           e.stopPropagation();
           const c = parentLink.closest(".thing.comment");
           const p = c && parentOf(c);
-          if (p) { p.scrollIntoView({ block: "start", behavior: "smooth" }); flash(p); }
+          if (p) { p.scrollIntoView({ block: "start", behavior: SB }); flash(p); }
           hideHoverCard();
           return;
         }
@@ -2422,6 +2518,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           const collapse = !expBtn.classList.contains("collapsed");
           expBtn.classList.toggle("collapsed", collapse);
           expBtn.classList.toggle("expanded", !collapse);
+          expBtn.setAttribute("aria-expanded", collapse ? "false" : "true");
+          expBtn.setAttribute("aria-label", collapse ? "expand" : "collapse");
           if (expando) {
             expando.style.display = collapse ? "none" : "";
             if (collapse) {
@@ -2508,6 +2606,52 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     wireEnhancements();
   }
 
+  // Reddit Answers is a shadow-DOM app we can't rebuild — so we DON'T touch its
+  // content (it keeps working natively) and just add a self-contained old-reddit
+  // style top bar for visual consistency. Bar links do full navigations into the
+  // rebuilt UI. Uses its own CSS (not the 352KB bundle) so it can't restyle the app.
+  function loadAnswers() {
+    if (!document.getElementById("orr-answers-css")) {
+      const s = document.createElement("style");
+      s.id = "orr-answers-css";
+      s.textContent =
+        "body{padding-top:56px!important}" +
+        "#orr-answers-chrome{position:fixed;top:0;left:0;right:0;z-index:2147483000;font:12px Verdana,Arial,sans-serif}" +
+        "#orr-answers-chrome .ac-sr{background:#f0f3fc;border-bottom:1px solid #c7d7e8;padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+        "#orr-answers-chrome .ac-sr a{color:#369;text-decoration:none;margin-right:9px}" +
+        "#orr-answers-chrome .ac-sr .sep{color:#aaa;margin-right:9px}" +
+        "#orr-answers-chrome .ac-hd{background:#cee3f8;border-bottom:1px solid #5f99cf;padding:5px 12px;display:flex;align-items:center;gap:12px}" +
+        "#orr-answers-chrome .ac-logo{font:italic bold 22px Arial;color:#ff4500;text-decoration:none;letter-spacing:-1px}" +
+        "#orr-answers-chrome .ac-page{color:#369;font-weight:bold}" +
+        "#orr-answers-chrome .ac-search{margin-left:auto}" +
+        "#orr-answers-chrome .ac-search input{border:1px solid #5f99cf;padding:3px 6px;width:220px;font-size:12px}" +
+        "#orr-answers-chrome.ac-night .ac-sr{background:#20303f;border-color:#14202b}" +
+        "#orr-answers-chrome.ac-night .ac-sr a{color:#cfe0f0}" +
+        "#orr-answers-chrome.ac-night .ac-hd{background:#223244;border-color:#14202b}" +
+        "#orr-answers-chrome.ac-night .ac-search input{background:#111;color:#d7dadc;border-color:#474748}";
+      (document.head || document.documentElement).appendChild(s);
+    }
+    const build = () => {
+      if (!document.body || document.getElementById("orr-answers-chrome")) return;
+      const bar = document.createElement("div");
+      bar.id = "orr-answers-chrome";
+      bar.setAttribute("role", "navigation");
+      bar.setAttribute("aria-label", "old reddit");
+      if (nightModeOn) bar.classList.add("ac-night");
+      const subs = ["AskReddit", "funny", "pics", "gaming", "worldnews", "videos", "science"];
+      bar.innerHTML =
+        '<div class="ac-sr"><a href="/">reddit</a><span class="sep">|</span>' +
+        '<a href="/">front</a><a href="/r/all/">all</a><a href="/r/popular/">popular</a><span class="sep">-</span>' +
+        subs.map((s) => '<a href="/r/' + s + '/">' + s + "</a>").join("") +
+        "</div>" +
+        '<div class="ac-hd"><a class="ac-logo" href="/">reddit</a><span class="ac-page">answers</span>' +
+        '<form class="ac-search" action="/search" method="get"><input name="q" placeholder="search" aria-label="search reddit"></form></div>';
+      document.body.insertBefore(bar, document.body.firstChild);
+    };
+    if (document.body) build();
+    else document.addEventListener("DOMContentLoaded", build, { once: true });
+  }
+
   async function start() {
     let prefs;
     try {
@@ -2518,12 +2662,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!prefs.enabled) return; // extension off → leave new Reddit alone
     infiniteOn = prefs.infiniteScroll !== false;
     nightModeOn = prefs.nightMode !== false;
+    orrVideoMuted = prefs.videoMuted === true;
     try {
       dataCache = await ORR.getData();
     } catch (e) {
       /* keep defaults */
     }
     const url = new URL(location.href);
+    if (ORR.isAnswersRoute && ORR.isAnswersRoute(url)) {
+      loadAnswers(); // frame Reddit Answers in old-reddit chrome; leave the app itself
+      return;
+    }
     if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url))
       return; // unsupported route → leave it to new Reddit
     wireNav();
@@ -2537,6 +2686,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     api.storage.onChanged.addListener((changes, area) => {
       // settings/filters live in sync, big blobs in local — react to either.
       if (changes.infiniteScroll) infiniteOn = changes.infiniteScroll.newValue !== false;
+      if (changes.videoMuted && active) {
+        const m = changes.videoMuted.newValue === true;
+        if (m !== orrVideoMuted) {
+          orrVideoMuted = m;
+          document.querySelectorAll("video.reddit-video").forEach((v) => {
+            if (v._orrAudio) v._orrAudio.muted = orrVideoMuted;
+            if (v._orrPaintMute) v._orrPaintMute();
+          });
+        }
+      }
       if (changes.nightMode) {
         nightModeOn = changes.nightMode.newValue !== false;
         if (active) applyNight();

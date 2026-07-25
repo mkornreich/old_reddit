@@ -9,6 +9,7 @@
   const enabledEl = document.getElementById("enabled");
   const nightEl = document.getElementById("night");
   const infiniteEl = document.getElementById("infinite");
+  const redirectEl = document.getElementById("redirect");
   const statusEl = document.getElementById("status");
 
   // Filter lists (options page only).
@@ -27,6 +28,10 @@
       infiniteEl.checked = p.infiniteScroll;
       infiniteEl.disabled = !p.enabled;
     }
+    if (redirectEl) {
+      redirectEl.checked = p.redirect;
+      redirectEl.disabled = !p.enabled;
+    }
     document.body.classList.toggle("is-off", !p.enabled);
     if (statusEl) statusEl.textContent = p.enabled ? "Old Reddit is ON" : "Off — new Reddit shows as-is";
   }
@@ -39,6 +44,7 @@
   if (enabledEl) enabledEl.addEventListener("change", () => update({ enabled: enabledEl.checked }));
   if (nightEl) nightEl.addEventListener("change", () => update({ nightMode: nightEl.checked }));
   if (infiniteEl) infiniteEl.addEventListener("change", () => update({ infiniteScroll: infiniteEl.checked }));
+  if (redirectEl) redirectEl.addEventListener("change", () => update({ redirect: redirectEl.checked }));
 
   // ---- filters (options page) ----
   const toArr = (s) => s.split("\n").map((x) => x.trim()).filter(Boolean);
