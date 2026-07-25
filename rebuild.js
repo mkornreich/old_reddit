@@ -717,31 +717,56 @@
     });
   }
 
+  // --- Rate-limit handling: backoff + retry ----------------------------
+  const MAX_RETRY = 8; // auto-retries before falling back to a manual "click to retry"
+  const MIN_GAP = 900; // ms between consecutive auto page-loads (~1/sec — the safe zone)
+
+  function isTransient(status) {
+    // 429 = rate limit, 5xx = server hiccup, 0/null = network error. NOT 403:
+    // a 403 is either a logged-out session or a network-security block — retrying
+    // either only makes it worse, so we surface it instead.
+    return status === 429 || status === 503 || status === 500 || status == null || status === 0;
+  }
+  function jitter() {
+    return Math.floor((typeof Math.random === "function" ? Math.random() : 0.5) * 800);
+  }
+  function backoffMs(attempt, retryAfterSec) {
+    // Honor Retry-After when Reddit sends it, but cap it (a hostile value can't
+    // freeze the UI) and add jitter so parallel stubs don't retry in lockstep.
+    if (retryAfterSec && retryAfterSec > 0) return Math.min(retryAfterSec * 1000, 60000) + jitter();
+    const base = Math.min(1500 * Math.pow(2, attempt - 1), 60000); // 1.5, 3, 6, 12, 24, 48, 60…
+    return base + jitter();
+  }
+  function retryAfterOf(res) {
+    try {
+      const ra = res.headers.get("retry-after");
+      if (ra) { const n = parseInt(ra, 10); if (!isNaN(n)) return n; }
+      const reset = res.headers.get("x-ratelimit-reset");
+      if (reset) { const n = parseInt(reset, 10); if (!isNaN(n)) return n; }
+    } catch (e) {
+      /* headers not readable */
+    }
+    return 0;
+  }
+
   // --- Infinite scroll (RES "never-ending reddit") ---------------------
   let infiniteOn = false;
-  let infState = null; // { fetchPage, after, count, loading, sentinel, observer }
-  let rateLimited = false; // set when Reddit returns 429; halts all auto-loading
+  let infState = null; // { fetchPage, after, count, loading, sentinel, observer, attempt, retryTimer, retryInterval }
 
-  // Stop auto-loading but keep the sentinel visible with a message.
-  function stopInfinite(msg) {
-    if (!infState) return;
-    if (infState.observer) {
-      infState.observer.disconnect();
-      infState.observer = null;
-    }
-    infState.after = null;
-    if (infState.sentinel) {
-      const m = infState.sentinel.querySelector(".orr-loading");
-      if (m) {
-        m.textContent = msg;
-        m.classList.add("orr-error");
-      }
+  function setInfMsg(st, text, isError) {
+    if (!st || !st.sentinel) return;
+    const m = st.sentinel.querySelector(".orr-loading");
+    if (m) {
+      m.textContent = text;
+      m.classList.toggle("orr-error", !!isError);
     }
   }
 
   function teardownInfinite() {
     if (infState) {
       if (infState.observer) infState.observer.disconnect();
+      if (infState.retryTimer) clearTimeout(infState.retryTimer);
+      if (infState.retryInterval) clearInterval(infState.retryInterval);
       if (infState.sentinel && infState.sentinel.remove) infState.sentinel.remove();
     }
     infState = null;
@@ -758,7 +783,7 @@
     sentinel.className = "orr-inf-sentinel";
     sentinel.innerHTML = '<span class="orr-loading">loading more…</span>';
     st.parentNode.insertBefore(sentinel, st.nextSibling);
-    infState = { fetchPage, after, count: count || 0, loading: false, sentinel, observer: null };
+    infState = { fetchPage, after, count: count || 0, loading: false, sentinel, observer: null, attempt: 0, retryTimer: null, retryInterval: null };
     if (typeof IntersectionObserver === "undefined") return;
     const obs = new IntersectionObserver(
       (entries) => {
@@ -768,33 +793,79 @@
     );
     obs.observe(sentinel);
     infState.observer = obs;
+    scheduleFill(infState); // in case the first page didn't fill the viewport
   }
 
-  async function loadMoreInfinite() {
+  function loadMoreInfinite() {
     const st = infState;
-    if (!st || st.loading || !st.after || rateLimited) return;
+    if (!st || st.loading || st.retryTimer || !st.after) return;
+    attemptInfinite(st);
+  }
+
+  async function attemptInfinite(st) {
+    if (infState !== st || !st.after) return;
     st.loading = true;
+    setInfMsg(st, "loading more…", false);
+    let res = null, status = null, retryAfter = 0;
     try {
-      const res = await st.fetchPage(st.after, st.count);
-      if (infState !== st) return; // navigated away mid-fetch
+      res = await st.fetchPage(st.after, st.count);
+    } catch (e) {
+      status = e && e.status != null ? e.status : 0;
+      retryAfter = (e && e.retryAfter) || 0;
+    }
+    if (infState !== st) return; // navigated away
+    if (res) {
       const table = document.getElementById("siteTable");
-      if (table && res && res.itemsHtml) {
+      if (table && res.itemsHtml) {
         table.insertAdjacentHTML("beforeend", res.itemsHtml);
         enhanceNewItems(table);
       }
-      st.count += (res && res.addedCount) || 0;
-      st.after = (res && res.after) || null;
-      if (!st.after) teardownInfinite();
-    } catch (e) {
-      if (e && e.status === 429) {
-        rateLimited = true;
-        stopInfinite("⚠ Reddit is rate-limiting — auto-load stopped. Reload the page to resume.");
-      } else {
-        teardownInfinite(); // stop on error rather than hammer the API
+      st.count += res.addedCount || 0;
+      st.after = res.after || null;
+      st.attempt = 0;
+      st.loading = false;
+      if (!st.after) {
+        teardownInfinite(); // no more pages → remove the sentinel
+        return;
       }
-    } finally {
-      if (infState === st) st.loading = false;
+      setInfMsg(st, "loading more…", false);
+      scheduleFill(st); // keep filling if the sentinel is still on screen
+      return;
     }
+    // error → retry with backoff on transient failures
+    st.loading = false;
+    if (isTransient(status)) {
+      st.attempt = (st.attempt || 0) + 1;
+      if (st.attempt > MAX_RETRY) {
+        setInfMsg(st, "⚠ Reddit keeps rate-limiting — scroll up then back down to retry.", true);
+        st.attempt = 0;
+        return;
+      }
+      const ms = backoffMs(st.attempt, retryAfter);
+      let remain = Math.ceil(ms / 1000);
+      const tick = () => setInfMsg(st, "rate-limited — retrying in " + remain + "s… (try " + st.attempt + "/" + MAX_RETRY + ")", true);
+      tick();
+      st.retryInterval = setInterval(() => { remain -= 1; if (remain <= 0) clearInterval(st.retryInterval); else tick(); }, 1000);
+      st.retryTimer = setTimeout(() => {
+        if (st.retryInterval) clearInterval(st.retryInterval);
+        st.retryTimer = null;
+        attemptInfinite(st);
+      }, ms);
+    } else {
+      setInfMsg(st, "⚠ couldn't load more (error " + status + ")", true);
+    }
+  }
+
+  // If the sentinel is still near the viewport (short page), auto-load the next
+  // page after a small gap so the feed fills — but never in a tight burst.
+  function scheduleFill(st) {
+    if (!st || !st.sentinel) return;
+    setTimeout(() => {
+      if (infState !== st || st.loading || st.retryTimer || !st.after) return;
+      let r;
+      try { r = st.sentinel.getBoundingClientRect(); } catch (e) { return; }
+      if (r.top < (window.innerHeight || 800) + 200) attemptInfinite(st);
+    }, MIN_GAP);
   }
 
   // ==================== RES-style enhancements ==========================
@@ -1205,6 +1276,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     if (!res.ok) {
       const err = new Error("HTTP " + res.status);
       err.status = res.status;
+      err.retryAfter = retryAfterOf(res);
       throw err;
     }
     const json = await res.json();
@@ -1215,7 +1287,6 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
   function replaceBody(body, title) {
     teardownInfinite();
     teardownMores();
-    rateLimited = false; // new page → try again
     const fresh = document.createElement("body");
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
@@ -1425,7 +1496,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       async (after, count) => {
         const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
         const r2 = await fetch(location.origin + ur.basePath + "/.json?" + q.toString(), { credentials: "include", headers: { Accept: "application/json" } });
-        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; throw e; }
+        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
         const j2 = await r2.json();
         const kids = ((j2 && j2.data) || {}).children || [];
         const html = kids
@@ -1512,7 +1583,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       async (after, count) => {
         const u = searchJsonUrl(route, Object.assign({}, params, { after, before: null, count }));
         const r2 = await fetch(u, { credentials: "include", headers: { Accept: "application/json" } });
-        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; throw e; }
+        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
         const j2 = await r2.json();
         const kids = (((j2 && j2.data) || {}).children || []).filter((c) => c.kind === "t3");
         const html = kids
@@ -1534,8 +1605,9 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
 
   // Expand a "load more comments" stub via the morechildren API, re-nesting the
   // returned comments under their parent by parent_id. Best-effort (experimental).
+  const moreTimers = new Set(); // pending comment-retry timers, cleared on navigation
+
   async function handleMore(el, auto) {
-    if (auto && rateLimited) return; // don't auto-load while rate-limited
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
@@ -1549,6 +1621,7 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
     const rest = allIds.slice(100);
     const left = parseInt(el.getAttribute("data-count") || String(allIds.length), 10) || allIds.length;
     el.textContent = "loading more comments… (" + left + (left === 1 ? " reply" : " replies") + " left)";
+    let status = 0, retryAfter = 0, things = null;
     try {
       const q = new URLSearchParams({
         api_type: "json", link_id: linkId, children: batch.join(","), raw_json: "1", limit_children: "false",
@@ -1556,21 +1629,57 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       const res = await fetch(location.origin + "/api/morechildren.json?" + q.toString(), {
         credentials: "include", headers: { Accept: "application/json" },
       });
-      if (res.status === 429) {
-        rateLimited = true;
-        teardownMores(); // halt further auto-loads
-        el.dataset.orrLoading = "";
-        el.textContent = "⚠ Reddit is rate-limiting — click to retry loading comments";
-        return;
+      status = res.status;
+      retryAfter = retryAfterOf(res);
+      if (res.ok) {
+        const j = await res.json();
+        const errs = (j && j.json && j.json.errors) || [];
+        // morechildren sometimes returns 200 with a RATELIMIT error body.
+        if (errs.some((x) => Array.isArray(x) && /RATELIMIT/i.test(String(x[0])))) status = 429;
+        else things = (j && j.json && j.json.data && j.json.data.things) || [];
       }
-      const j = await res.json();
-      const things = (j && j.json && j.json.data && j.json.data.things) || [];
-      rateLimited = false; // a successful call clears the rate-limit state
-      insertMoreThings(el, things, linkId, rest);
     } catch (e) {
-      el.textContent = "load more comments — failed, click to retry";
-      el.dataset.orrLoading = "";
+      status = 0; // network error → treat as transient
     }
+    if (things) {
+      el.dataset.orrAttempt = "";
+      insertMoreThings(el, things, linkId, rest);
+      return;
+    }
+    if (isTransient(status)) {
+      scheduleMoreRetry(el, auto, retryAfter);
+    } else {
+      el.textContent = "load more comments — failed (" + status + "), click to retry";
+      el.dataset.orrLoading = "";
+      el.dataset.orrAttempt = "";
+    }
+  }
+
+  function scheduleMoreRetry(el, auto, retryAfterSec) {
+    const attempt = (parseInt(el.dataset.orrAttempt || "0", 10) || 0) + 1;
+    if (attempt > MAX_RETRY) {
+      el.textContent = "⚠ rate-limited — click to retry loading comments";
+      el.dataset.orrLoading = "";
+      el.dataset.orrAttempt = "";
+      return;
+    }
+    el.dataset.orrAttempt = String(attempt);
+    el.dataset.orrLoading = "1"; // stay locked through the backoff
+    const ms = backoffMs(attempt, retryAfterSec);
+    let remain = Math.ceil(ms / 1000);
+    const render = () => { el.textContent = "rate-limited — retrying in " + remain + "s… (try " + attempt + "/" + MAX_RETRY + ")"; };
+    render();
+    const iv = setInterval(() => { remain -= 1; if (remain <= 0) clearInterval(iv); else render(); }, 1000);
+    moreTimers.add(iv);
+    const to = setTimeout(() => {
+      clearInterval(iv);
+      moreTimers.delete(iv);
+      moreTimers.delete(to);
+      if (!el.isConnected) return; // navigated away
+      el.dataset.orrLoading = "";
+      handleMore(el, auto);
+    }, ms);
+    moreTimers.add(to);
   }
 
   function insertMoreThings(moreEl, things, linkId, rest) {
@@ -1608,7 +1717,6 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
   // Auto-load "load more comments" stubs when they scroll into view.
   let commentMoreObserver = null;
   function observeMores() {
-    if (rateLimited) return;
     if (typeof IntersectionObserver === "undefined") return;
     if (!commentMoreObserver) {
       commentMoreObserver = new IntersectionObserver(
@@ -1634,6 +1742,8 @@ html.orr-night #search input[type=submit] { filter:invert(0.85); }`;
       commentMoreObserver.disconnect();
       commentMoreObserver = null;
     }
+    moreTimers.forEach((id) => { clearTimeout(id); clearInterval(id); });
+    moreTimers.clear();
   }
 
   function wireNav() {
