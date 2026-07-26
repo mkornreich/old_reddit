@@ -2482,8 +2482,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const st = document.getElementById("siteTable");
     const msg =
       status === 403
-        ? "Old Reddit Skin: the Reddit JSON API returned 403 (are you logged in? Reddit blocks logged-out .json). Turn off Rebuild mode to use normal Reddit."
-        : "Old Reddit Skin: couldn't load this page from the Reddit API (" + status + ").";
+        ? "Classic Layout for Reddit: the Reddit JSON API returned 403 (are you logged in? Reddit blocks logged-out .json). Turn off Rebuild mode to use normal Reddit."
+        : "Classic Layout for Reddit: couldn't load this page from the Reddit API (" + status + ").";
     if (st) st.innerHTML = `<div class="thing"><div class="entry"><p>${esc(msg)}</p></div></div>`;
   }
 

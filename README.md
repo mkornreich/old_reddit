@@ -1,4 +1,4 @@
-# Old Reddit
+# Classic Layout for Reddit
 
 A dependency-free browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
 Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches each page

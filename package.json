@@ -1,7 +1,7 @@
 {
-  "name": "old-reddit-skin",
-  "version": "3.10.1",
-  "description": "Firefox extension that repaints new Reddit to look like old Reddit.",
+  "name": "classic-layout-for-reddit",
+  "version": "3.11.0",
+  "description": "Browser extension that rebuilds Reddit into its classic (old) layout.",
   "private": true,
   "scripts": {
     "lint": "web-ext lint",

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Old Reddit",
-  "version": "3.10.1",
+  "name": "Classic Layout for Reddit",
+  "version": "3.11.0",
   "description": "Rebuilds Reddit into old Reddit's classic UI from its API: infinite scroll, keyboard nav, collapse, night mode, filters.",
   "browser_specific_settings": {
     "gecko": {
@@ -55,7 +55,7 @@
     }
   ],
   "action": {
-    "default_title": "Old Reddit",
+    "default_title": "Classic Layout for Reddit",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",

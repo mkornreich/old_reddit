@@ -37,7 +37,7 @@
       if (el) { el.checked = p[TOGGLES[id]] === true; el.disabled = !p.enabled; }
     });
     document.body.classList.toggle("is-off", !p.enabled);
-    if (statusEl) statusEl.textContent = p.enabled ? "Old Reddit is ON" : "Off — new Reddit shows as-is";
+    if (statusEl) statusEl.textContent = p.enabled ? "Classic Layout is ON" : "Off — new Reddit shows as-is";
   }
 
   async function update(patch) {
