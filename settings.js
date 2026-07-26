@@ -7,31 +7,35 @@
   const { getPrefs, setPrefs, getData } = globalThis.ORR;
 
   const enabledEl = document.getElementById("enabled");
-  const nightEl = document.getElementById("night");
-  const infiniteEl = document.getElementById("infinite");
-  const redirectEl = document.getElementById("redirect");
   const statusEl = document.getElementById("status");
 
-  // Filter lists (options page only).
+  // element id -> pref key for every boolean toggle
+  const TOGGLES = {
+    night: "nightMode", infinite: "infiniteScroll", redirect: "redirect",
+    subredditCss: "subredditCss", autoplay: "autoplayMedia", hideRead: "hideRead",
+    autoCollapseBots: "autoCollapseBots", compact: "compactView", nightAuto: "nightAuto",
+    highContrast: "highContrast", dyslexia: "dyslexiaFont",
+  };
+
+  // Filter lists / advanced (options page only).
   const fSubs = document.getElementById("filter-subreddits");
   const fUsers = document.getElementById("filter-users");
   const fDomains = document.getElementById("filter-domains");
   const fKeywords = document.getElementById("filter-keywords");
+  const fFlairs = document.getElementById("filter-flairs");
+  const fHighlights = document.getElementById("filter-highlights");
+  const fMinScore = document.getElementById("filter-minscore");
+  const fMaxAge = document.getElementById("filter-maxage");
+  const fHideNsfw = document.getElementById("filter-nsfw");
+  const fHidePromoted = document.getElementById("filter-promoted");
+  const fFavorites = document.getElementById("favorite-subs");
 
   function render(p) {
     if (enabledEl) enabledEl.checked = p.enabled;
-    if (nightEl) {
-      nightEl.checked = p.nightMode;
-      nightEl.disabled = !p.enabled;
-    }
-    if (infiniteEl) {
-      infiniteEl.checked = p.infiniteScroll;
-      infiniteEl.disabled = !p.enabled;
-    }
-    if (redirectEl) {
-      redirectEl.checked = p.redirect;
-      redirectEl.disabled = !p.enabled;
-    }
+    Object.keys(TOGGLES).forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) { el.checked = p[TOGGLES[id]] === true; el.disabled = !p.enabled; }
+    });
     document.body.classList.toggle("is-off", !p.enabled);
     if (statusEl) statusEl.textContent = p.enabled ? "Old Reddit is ON" : "Off — new Reddit shows as-is";
   }
@@ -42,34 +46,52 @@
   }
 
   if (enabledEl) enabledEl.addEventListener("change", () => update({ enabled: enabledEl.checked }));
-  if (nightEl) nightEl.addEventListener("change", () => update({ nightMode: nightEl.checked }));
-  if (infiniteEl) infiniteEl.addEventListener("change", () => update({ infiniteScroll: infiniteEl.checked }));
-  if (redirectEl) redirectEl.addEventListener("change", () => update({ redirect: redirectEl.checked }));
+  Object.keys(TOGGLES).forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", () => update({ [TOGGLES[id]]: el.checked }));
+  });
 
   // ---- filters (options page) ----
   const toArr = (s) => s.split("\n").map((x) => x.trim()).filter(Boolean);
   const toLines = (a) => (a || []).join("\n");
+  const numOrNull = (v) => { const n = parseInt(v, 10); return isNaN(n) ? null : n; };
   function saveFilters() {
+    if (!fSubs) return;
     setPrefs({
       filters: {
         subreddits: toArr(fSubs.value),
         users: toArr(fUsers.value),
         domains: toArr(fDomains.value),
         keywords: toArr(fKeywords.value),
-        flairs: [],
+        flairs: fFlairs ? toArr(fFlairs.value) : [],
+        highlights: fHighlights ? toArr(fHighlights.value) : [],
+        minScore: fMinScore ? numOrNull(fMinScore.value) : null,
+        maxAgeHours: fMaxAge ? numOrNull(fMaxAge.value) : null,
+        hideNsfw: fHideNsfw ? fHideNsfw.checked : false,
+        hidePromoted: fHidePromoted ? fHidePromoted.checked : false,
       },
     });
+    if (fFavorites) setPrefs({ favoriteSubs: toArr(fFavorites.value) });
   }
   function loadFilters(d) {
     if (!fSubs) return;
-    fSubs.value = toLines(d.filters.subreddits);
-    fUsers.value = toLines(d.filters.users);
-    fDomains.value = toLines(d.filters.domains);
-    fKeywords.value = toLines(d.filters.keywords);
+    const f = d.filters || {};
+    fSubs.value = toLines(f.subreddits);
+    fUsers.value = toLines(f.users);
+    fDomains.value = toLines(f.domains);
+    fKeywords.value = toLines(f.keywords);
+    if (fFlairs) fFlairs.value = toLines(f.flairs);
+    if (fHighlights) fHighlights.value = toLines(f.highlights);
+    if (fMinScore) fMinScore.value = f.minScore != null ? f.minScore : "";
+    if (fMaxAge) fMaxAge.value = f.maxAgeHours != null ? f.maxAgeHours : "";
+    if (fHideNsfw) fHideNsfw.checked = !!f.hideNsfw;
+    if (fHidePromoted) fHidePromoted.checked = !!f.hidePromoted;
+    if (fFavorites) fFavorites.value = toLines(d.favoriteSubs);
   }
   if (fSubs && getData) {
     getData().then(loadFilters);
-    [fSubs, fUsers, fDomains, fKeywords].forEach((el) => el.addEventListener("change", saveFilters));
+    [fSubs, fUsers, fDomains, fKeywords, fFlairs, fHighlights, fMinScore, fMaxAge, fHideNsfw, fHidePromoted, fFavorites]
+      .forEach((el) => el && el.addEventListener("change", saveFilters));
   }
 
   // ---- export / import (options page) ----

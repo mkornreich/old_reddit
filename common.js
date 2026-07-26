@@ -13,7 +13,16 @@
   const api = typeof browser !== "undefined" ? browser : chrome;
 
   // Rebuild is now the only mode.
-  const DEFAULTS = Object.freeze({ enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: false });
+  const DEFAULTS = Object.freeze({
+    enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: false,
+    subredditCss: true, autoplayMedia: false, hideRead: false, autoCollapseBots: false,
+    compactView: false, nightAuto: false, highContrast: false, dyslexiaFont: false,
+  });
+  const BOOL_PREFS = [
+    "enabled", "infiniteScroll", "nightMode", "redirect", "videoMuted",
+    "subredditCss", "autoplayMedia", "hideRead", "autoCollapseBots",
+    "compactView", "nightAuto", "highContrast", "dyslexiaFont",
+  ];
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
   const SORTS_FRONT = ["hot", "new", "rising", "controversial", "top", "best"];
@@ -22,7 +31,7 @@
   // userTags and the large per-device blobs stay in storage.local — userTags can
   // grow past storage.sync's ~8KB/item quota, and a quota failure must not risk
   // leaving a stale copy in sync that getData would then prefer.
-  const SYNC_KEYS = ["enabled", "infiniteScroll", "nightMode", "redirect", "videoMuted", "filters"];
+  const SYNC_KEYS = BOOL_PREFS.concat(["filters", "favoriteSubs"]);
 
   function syncArea() {
     return api.storage && api.storage.sync ? api.storage.sync : api.storage.local;
@@ -36,7 +45,8 @@
   }
 
   async function getPrefs() {
-    const want = { enabled: undefined, infiniteScroll: undefined, nightMode: undefined, redirect: undefined, videoMuted: undefined, mode: undefined };
+    const want = { mode: undefined };
+    BOOL_PREFS.forEach((k) => { want[k] = undefined; });
     const sync = await areaGet(syncArea(), want);
     const local = await areaGet(api.storage.local, want);
     // Per-key merge: sync wins where set, local fills the rest. (An all-or-nothing
@@ -45,27 +55,31 @@
     Object.keys(want).forEach((k) => { stored[k] = sync[k] !== undefined ? sync[k] : local[k]; });
     let enabled = stored.enabled;
     if (enabled === undefined) enabled = stored.mode === "off" ? false : true;
-    return {
-      enabled: enabled !== false,
-      infiniteScroll: stored.infiniteScroll !== false, // default on
-      nightMode: stored.nightMode === true, // default off
-      redirect: stored.redirect !== false, // default on: send old.reddit/i.reddit → www
-      videoMuted: stored.videoMuted === true, // default off (sound on)
-    };
+    const out = { enabled: enabled !== false };
+    // Each toggle uses its DEFAULTS value when unset (default-on prefs check !== false).
+    BOOL_PREFS.forEach((k) => {
+      if (k === "enabled") return;
+      out[k] = DEFAULTS[k] ? stored[k] !== false : stored[k] === true;
+    });
+    return out;
   }
 
   // Larger data blobs (kept out of getPrefs). All default to empty.
   async function getData() {
-    const s = await areaGet(syncArea(), { filters: null });
+    const s = await areaGet(syncArea(), { filters: null, favoriteSubs: null });
     const l = await areaGet(api.storage.local, {
-      filters: null, userTags: null, threadVisits: null, visitedPosts: null, collapsedComments: null,
+      filters: null, favoriteSubs: null, userTags: null, threadVisits: null, visitedPosts: null, collapsedComments: null,
+      commentSorts: null, recentSubs: null,
     });
     return {
-      filters: s.filters || l.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [] },
+      filters: s.filters || l.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [], highlights: [] },
+      favoriteSubs: s.favoriteSubs || l.favoriteSubs || [], // dual-read (sync-quota fallback writes to local)
       userTags: l.userTags || {},
       threadVisits: l.threadVisits || {},
       visitedPosts: l.visitedPosts || {},
       collapsedComments: l.collapsedComments || {},
+      commentSorts: l.commentSorts || {},
+      recentSubs: l.recentSubs || [],
     };
   }
 
@@ -96,14 +110,39 @@
     const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
     const segs = pathname.split("/").filter(Boolean);
 
-    if (segs.length === 0) return { scope: "front", sub: null, sort: "hot", basePath: "" };
+    if (segs.length === 0) return { scope: "front", sub: null, sort: "hot", basePath: "", homeBase: "" };
     if (segs.length === 1 && SORTS_FRONT.includes(segs[0]))
-      return { scope: "front", sub: null, sort: segs[0], basePath: "/" + segs[0] };
+      return { scope: "front", sub: null, sort: segs[0], basePath: "/" + segs[0], homeBase: "" };
+    // custom multireddit: /user/{owner}/m/{name}[/{sort}]  (or /u/ alias)
+    if ((segs[0] === "user" || segs[0] === "u") && segs[2] === "m" && segs[3]) {
+      const home = "/user/" + segs[1] + "/m/" + segs[3];
+      if (segs.length === 4)
+        return { scope: "multi", sub: segs[3], owner: segs[1], sort: "hot", basePath: home, homeBase: home };
+      if (segs.length === 5 && SORTS_SUB.includes(segs[4]))
+        return { scope: "multi", sub: segs[3], owner: segs[1], sort: segs[4], basePath: home + "/" + segs[4], homeBase: home };
+    }
     if (segs[0] === "r" && segs.length === 2)
-      return { scope: "sub", sub: segs[1], sort: "hot", basePath: "/r/" + segs[1] };
+      return { scope: "sub", sub: segs[1], sort: "hot", basePath: "/r/" + segs[1], homeBase: "/r/" + segs[1], combined: segs[1].indexOf("+") >= 0 };
     if (segs[0] === "r" && segs.length === 3 && SORTS_SUB.includes(segs[2]))
-      return { scope: "sub", sub: segs[1], sort: segs[2], basePath: "/r/" + segs[1] + "/" + segs[2] };
-    return null; // user pages, search, wiki, etc. — not rebuilt
+      return { scope: "sub", sub: segs[1], sort: segs[2], basePath: "/r/" + segs[1] + "/" + segs[2], homeBase: "/r/" + segs[1], combined: segs[1].indexOf("+") >= 0 };
+    return null; // user pages, search, etc.
+  }
+
+  // Reddit's non-content wiki endpoints — leave these to native Reddit.
+  const WIKI_RESERVED = ["pages", "revisions", "edit", "settings", "create", "discussions", "config"];
+  // Wiki content pages: /r/{sub}/wiki/{page…} or /wiki/{page…}. Rendered old-reddit style.
+  function isWikiRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+    if (segs[0] === "r" && segs[2] === "wiki") {
+      if (segs[3] && WIKI_RESERVED.indexOf(segs[3]) >= 0) return null;
+      return { scope: "wiki", sub: segs[1], page: segs.slice(3).join("/") || "index", basePath: pathname };
+    }
+    if (segs[0] === "wiki") {
+      if (segs[1] && WIKI_RESERVED.indexOf(segs[1]) >= 0) return null;
+      return { scope: "wiki", sub: null, page: segs.slice(1).join("/") || "index", basePath: pathname };
+    }
+    return null;
   }
 
   // Returns a comments-route descriptor for a post permalink, else null.
@@ -158,6 +197,6 @@
 
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
-    getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute,
+    getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute, isWikiRoute,
   };
 })();

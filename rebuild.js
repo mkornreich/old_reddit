@@ -111,6 +111,15 @@
     if ((m = /(?:twitter\.com|x\.com)\/[^/]+\/status\/(\d+)/i.exec(url))) {
       return { type: "video", html: embedHtml("https://platform.twitter.com/embed/Tweet.html?id=" + m[1], "", 550, 500) };
     }
+    if ((m = /(?:tiktok\.com\/@[^/]+\/video\/|tiktok\.com\/v\/|vm\.tiktok\.com\/)(\d+)/i.exec(url))) {
+      return { type: "video", html: embedHtml("https://www.tiktok.com/embed/v2/" + m[1], "allowfullscreen", 340, 560) };
+    }
+    if ((m = /clips\.twitch\.tv\/([A-Za-z0-9-]+)/i.exec(url)) || (m = /twitch\.tv\/[^/]+\/clip\/([A-Za-z0-9-]+)/i.exec(url))) {
+      return { type: "video", html: embedHtml("https://clips.twitch.tv/embed?clip=" + m[1] + "&parent=www.reddit.com&parent=reddit.com&autoplay=false", "allowfullscreen") };
+    }
+    if ((m = /bsky\.app\/profile\/([^/]+)\/post\/([A-Za-z0-9]+)/i.exec(url))) {
+      return { type: "video", html: embedHtml("https://embed.bsky.app/embed/" + encodeURIComponent(m[1]) + "/app.bsky.feed.post/" + m[2], "", 550, 400) };
+    }
     if ((m = /imgur\.com\/(?:a|gallery)\/([A-Za-z0-9]+)/i.exec(url))) {
       return { type: "image", html: embedHtml("https://imgur.com/a/" + m[1] + "/embed?pub=true", "allowfullscreen", 640, 500) };
     }
@@ -210,11 +219,17 @@
         : "";
     const blur = d.over_18 ? " orr-nsfw" : d.spoiler ? " orr-spoiler" : "";
     const expando = exp ? `<div class="expando${blur}"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
+    const flairText = d.link_flair_text || (Array.isArray(d.link_flair_richtext) ? d.link_flair_richtext.map((x) => x.t || "").join("") : "");
+    const flairHtml = flairText ? ` <span class="linkflairlabel" title="${esc(flairText)}">${esc(flairText)}</span>` : "";
+    const spoilerTag = d.spoiler ? ` <span class="linkflairlabel" style="background:#000;color:#fff">spoiler</span>` : "";
+    const nsfwTag = d.over_18 ? ` <span class="linkflairlabel" style="background:#c00;color:#fff">NSFW</span>` : "";
 
     return (
       `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw} link" id="thing_${esc(d.name)}"` +
       ` data-fullname="${esc(d.name)}" data-permalink="${esc(permalink)}" data-subreddit="${esc(d.subreddit)}"` +
-      ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}">` +
+      ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}"` +
+      ` data-flair="${esc(flairText)}" data-score="${esc(typeof d.score === "number" ? d.score : "")}" data-created="${esc(d.created_utc || 0)}"` +
+      ` data-promoted="${d.promoted || d.is_created_from_ads_ui ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
       `<div class="midcol unvoted">` +
       `<div class="arrow up login-required" aria-hidden="true"></div>` +
@@ -227,6 +242,7 @@
       `<div class="top-matter">` +
       `<p class="title">` +
       `<a class="title may-blank" href="${esc(linkHref)}" tabindex="1">${esc(d.title)}</a>` +
+      flairHtml + spoilerTag + nsfwTag +
       ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` +
       `</p>` +
       `<p class="tagline">submitted <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` +
@@ -250,7 +266,7 @@
   ];
 
   function tabmenuHtml(route) {
-    const base = route.scope === "front" ? "" : "/r/" + route.sub;
+    const base = route.homeBase != null ? route.homeBase : (route.scope === "front" ? "" : "/r/" + route.sub);
     const lis = TABS.map(([name, seg]) => {
       const href = base + "/" + (seg ? seg + "/" : "");
       const sel = route.sort === name ? " selected" : "";
@@ -300,7 +316,8 @@
     opts = opts || {};
     const listing = (json && json.data) || {};
     const children = (listing.children || []).filter((c) => c.kind === "t3");
-    const showSub = route.scope === "front" || route.sub === "all" || route.sub === "popular";
+    // multireddits and combined (r/a+b+c) listings mix subs → show each post's sub
+    const showSub = route.scope === "front" || route.scope === "multi" || route.combined || route.sub === "all" || route.sub === "popular";
     const startRank = (opts.startCount || 0) + 1;
 
     const items = children
@@ -310,8 +327,9 @@
       .join("");
 
     const count = (startRank - 1) + children.length;
-    const pageName = route.scope === "front" ? "reddit.com" : "r/" + route.sub;
-    const headerLink = route.scope === "front" ? "/" : "/r/" + route.sub + "/";
+    const homeBase = route.homeBase != null ? route.homeBase : "/r/" + route.sub;
+    const pageName = route.scope === "front" ? "reddit.com" : route.scope === "multi" ? "m/" + route.sub : "r/" + route.sub;
+    const headerLink = route.scope === "front" ? "/" : homeBase + "/";
 
     const inner =
       buildHeader({ tabmenu: tabmenuHtml(route), pageName, pageHref: headerLink, me: opts.me, route }) +
@@ -335,6 +353,28 @@
     } catch (e) {
       return String(n);
     }
+  }
+
+  // Render a wiki page (/r/{sub}/wiki/{page}) in old-reddit style. content_html is
+  // Reddit's own sanitized HTML (raw_json=1).
+  function buildWikiPage(route, json, opts) {
+    opts = opts || {};
+    const d = (json && json.data) || {};
+    const contentHtml = d.content_html || (d.content_md ? "<pre>" + esc(d.content_md) + "</pre>" : "<p>(this wiki page is empty)</p>");
+    const sub = route.sub;
+    const pageName = sub ? "r/" + sub : "reddit.com";
+    const homeBase = sub ? "/r/" + sub : "";
+    const headerRoute = { scope: sub ? "sub" : "front", sub, homeBase };
+    const inner =
+      buildHeader({
+        tabmenu: `<ul class="tabmenu"><li class="selected"><a class="choice" href="${esc(route.basePath)}">wiki</a></li></ul>`,
+        pageName, pageHref: homeBase + "/", me: opts.me, route: headerRoute,
+      }) +
+      `<div class="side" role="complementary">${sideSearchHtml(headerRoute)}</div>` +
+      `<a name="content"></a><div class="content" role="main">` +
+      `<div id="siteTable" class="sitetable"><div class="wiki-page-content"><h1 class="wiki-page-title">${esc(route.page.replace(/_/g, " "))}</h1>` +
+      `<div class="usertext-body"><div class="md">${contentHtml}</div></div></div></div></div>`;
+    return { className: "wiki-page", inner };
   }
 
   // Build old reddit's right sidebar (.side) from /about.json + /about/rules.json.
@@ -416,6 +456,7 @@
       `<div class="entry unvoted">` +
       `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-expanded="true" aria-label="collapse">[&ndash;]</a> ` +
       `<a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
+      (d.author_flair_text ? ` <span class="flair" title="${esc(d.author_flair_text)}">${esc(d.author_flair_text)}</span>` : "") +
       ` <span class="score unvoted">${pts}</span> ` +
       `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
@@ -753,7 +794,7 @@
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
-    searchJsonUrl, searchHref, buildSearchPage,
+    searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -957,8 +998,57 @@
   // ==================== RES-style enhancements ==========================
 
   let nightModeOn = true;
+  // issue #6 toggles (set from prefs in start())
+  let subredditCssOn = true, autoplayOn = false, hideReadOn = false, autoCollapseBotsOn = false, nightAutoOn = false;
   let dataCache = { filters: { subreddits: [], users: [], domains: [], keywords: [], flairs: [] }, userTags: {}, threadVisits: {} };
   const enhanceCache = new Map();
+
+  // Compact / high-contrast / dyslexia-font are html-level classes (persist across
+  // body replacement). CSS for each lives in ENHANCE_CSS.
+  function applyBodyFlags(p) {
+    const el = document.documentElement;
+    if (!el) return;
+    el.classList.toggle("orr-compact", p.compactView === true);
+    el.classList.toggle("orr-contrast", p.highContrast === true);
+    el.classList.toggle("orr-dyslexic", p.dyslexiaFont === true);
+  }
+  // Auto night mode on a simple local-time schedule (dark 8pm–7am).
+  function applyNightSchedule() {
+    if (!nightAutoOn) return;
+    const h = new Date().getHours();
+    nightModeOn = h >= 20 || h < 7;
+  }
+
+  // Subreddit custom CSS (old-reddit's signature feature). Fetched per sub and
+  // injected AFTER our CSS so it themes the reproduced old-reddit DOM.
+  let navGen = 0; // bumped on every navigation; guards async subreddit-CSS fetches
+  function removeSubredditCss() {
+    document.querySelectorAll("#orr-subreddit-css").forEach((n) => n.remove());
+  }
+  async function applySubredditCss(sub) {
+    removeSubredditCss();
+    if (!subredditCssOn || !sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
+    const gen = navGen;
+    try {
+      const res = await fetch(location.origin + "/r/" + encodeURIComponent(sub) + "/about/stylesheet.json?raw_json=1",
+        { credentials: "include", headers: { Accept: "application/json" } });
+      if (gen !== navGen || !res.ok) return; // navigated away → drop this sub's CSS
+      const j = await res.json();
+      if (gen !== navGen) return;
+      let css = j && j.data && j.data.stylesheet;
+      if (!css) return;
+      const imgs = (j.data && j.data.images) || [];
+      // Reddit stylesheets reference uploaded images as url(%%name%%).
+      css = css.replace(/%%([\w-]+)%%/g, (m, name) => {
+        const im = imgs.find((x) => x.name === name);
+        return im && im.url ? im.url : m;
+      });
+      const s = document.createElement("style");
+      s.id = "orr-subreddit-css";
+      s.textContent = css;
+      document.head.appendChild(s);
+    } catch (e) { /* ignore */ }
+  }
 
   const ENHANCE_CSS = `
 .thing.comment.collapsed > .child, .thing.comment.collapsed > .entry .usertext-body,
@@ -1041,7 +1131,8 @@ a.orr-parent { color:#369; }
 /* loading skeleton */
 #orr-skeleton { position:fixed; inset:0; background:#fff; z-index:2147483500; overflow:hidden; padding:0; }
 #orr-skeleton .orr-sk-head { height:38px; background:#cee3f8; border-bottom:1px solid #5f99cf; }
-#orr-skeleton .orr-sk-body { padding:14px 18px; max-width:800px; }
+#orr-skeleton .orr-sk-msg { padding:8px 18px 0; color:#888; font:italic 13px verdana; min-height:16px; }
+#orr-skeleton .orr-sk-body { padding:10px 18px; max-width:800px; }
 #orr-skeleton .orr-sk-row { display:flex; gap:10px; margin:0 0 16px; }
 #orr-skeleton .orr-sk-thumb { width:70px; height:50px; border-radius:3px; background:#e6e6e6; flex:0 0 auto; }
 #orr-skeleton .orr-sk-lines { flex:1; }
@@ -1058,7 +1149,50 @@ a.orr-parent { color:#369; }
   outline:2px solid #ff4500; outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) {
   .orr-flash, #orr-skeleton .orr-sk-line, #orr-skip { animation:none !important; transition:none !important; }
-}`;
+}
+/* flair */
+.linkflairlabel { display:inline-block; background:#ddd; border:1px solid #ccc; border-radius:3px; padding:0 4px; margin:0 2px; font-size:x-small; color:#555; vertical-align:middle; }
+.tagline .flair { display:inline-block; background:#eef; border:1px solid #ccd; border-radius:3px; padding:0 4px; font-size:x-small; color:#556; }
+/* keyword highlight */
+.thing.orr-highlight > .entry { box-shadow:-4px 0 0 #ffb000; background:rgba(255,224,130,.16); }
+/* download button */
+a.orr-dl { position:absolute; top:8px; left:8px; z-index:6; background:rgba(0,0,0,.55); color:#fff; border-radius:4px; padding:1px 7px; font-size:14px; line-height:1.5; text-decoration:none; }
+a.orr-dl:hover { background:rgba(0,0,0,.82); }
+/* inline spoiler tags (>!…!<) */
+.md-spoiler-text:not(.orr-revealed) { background:#000 !important; color:transparent !important; border-radius:2px; cursor:pointer; }
+.md-spoiler-text:not(.orr-revealed) * { color:transparent !important; }
+.md-spoiler-text.orr-revealed { background:rgba(0,0,0,.08); }
+/* compact / density view */
+html.orr-compact .thing .entry { line-height:1.2; }
+html.orr-compact .thing.link { padding:1px 0; }
+html.orr-compact .thing.link .expando { margin-top:3px; }
+html.orr-compact .thing.link .tagline, html.orr-compact .thing.comment .tagline { font-size:x-small; }
+html.orr-compact .thing.comment .child { margin-left:10px; }
+html.orr-compact .midcol { margin-right:4px; }
+/* high-contrast mode */
+html.orr-contrast, html.orr-contrast .content, html.orr-contrast #siteTable, html.orr-contrast body { background:#fff !important; color:#000 !important; }
+html.orr-contrast a, html.orr-contrast a * { color:#0000cc !important; }
+html.orr-contrast a:visited { color:#551a8b !important; }
+html.orr-contrast .tagline, html.orr-contrast .domain, html.orr-contrast .score, html.orr-contrast .md { color:#000 !important; }
+html.orr-contrast .thing { border:1px solid #000 !important; }
+html.orr-contrast.orr-night, html.orr-contrast.orr-night body, html.orr-contrast.orr-night .content, html.orr-contrast.orr-night #siteTable { background:#000 !important; color:#fff !important; }
+html.orr-contrast.orr-night a, html.orr-contrast.orr-night a * { color:#7fd0ff !important; }
+/* dyslexia-friendly font + spacing */
+html.orr-dyslexic body, html.orr-dyslexic .md, html.orr-dyslexic .usertext-body, html.orr-dyslexic .title, html.orr-dyslexic .tagline {
+  font-family:"Comic Sans MS","Trebuchet MS",Verdana,sans-serif !important; letter-spacing:.03em; word-spacing:.08em; line-height:1.6; }
+html.orr-dyslexic .md p { margin-bottom:.7em; }
+/* quick subreddit switcher */
+#orr-qs { position:fixed; inset:0; z-index:2147483600; background:rgba(0,0,0,.45); display:flex; align-items:flex-start; justify-content:center; }
+#orr-qs .orr-qs-box { margin-top:16vh; background:#fff; border-radius:8px; padding:14px; box-shadow:0 8px 30px rgba(0,0,0,.4); width:340px; max-width:90vw; }
+#orr-qs input { width:100%; box-sizing:border-box; font:15px verdana; padding:8px 10px; border:1px solid #5f99cf; border-radius:5px; }
+#orr-qs .orr-qs-hint { color:#888; font:11px verdana; margin-top:8px; }
+html.orr-night #orr-qs .orr-qs-box { background:#242526; }
+html.orr-night #orr-qs input { background:#111; color:#d7dadc; border-color:#474748; }
+/* other discussions */
+.orr-other-box { margin:10px; padding:8px 12px; background:#f6f7f8; border:1px solid #ddd; border-radius:4px; font-size:12px; }
+.orr-other-box h4 { margin:0 0 6px; }
+.orr-other-box ul { margin:0; padding-left:18px; }
+html.orr-night .orr-other-box { background:#242526; border-color:#343536; }`;
 
   const NIGHT_CSS = `
 html.orr-night, html.orr-night body, html.orr-night .content, html.orr-night #siteTable,
@@ -1200,6 +1334,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         if (a) a.click();
         break;
       }
+      case "g": openQuickSwitch(); e.preventDefault(); break;
       case "ArrowLeft": if (hoverGallery) { navGallery(hoverGallery, -1); e.preventDefault(); } else return; break;
       case "ArrowRight": if (hoverGallery) { navGallery(hoverGallery, 1); e.preventDefault(); } else return; break;
       case "?": toggleHelp(); e.preventDefault(); break;
@@ -1279,22 +1414,58 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     hideHoverCard();
   }
 
-  // ---- filters ----
+  // ---- filters + highlights ----
+  function compileRegexes(list) {
+    return (list || []).map((k) => {
+      if (!k) return null;
+      const m = /^\/(.+)\/([a-z]*)$/i.exec(k); // /pattern/flags → real regex
+      if (m && /^[dgimsuvy]*$/i.test(m[2])) {
+        // Reject nested quantifiers (catastrophic backtracking / ReDoS) → treat literally.
+        if (/\([^)]*[+*][^)]*\)[+*?]/.test(m[1])) return { plain: k.toLowerCase() };
+        try {
+          let flags = m[2].replace(/[gy]/gi, ""); // g/y carry lastIndex state → drop them
+          if (flags.indexOf("i") < 0) flags += "i";
+          return new RegExp(m[1], flags);
+        } catch (e) { return { plain: k.toLowerCase() }; } // bad regex → literal, don't drop
+      }
+      return { plain: k.toLowerCase() }; // plain substring (may contain slashes)
+    }).filter(Boolean);
+  }
+  function matchAny(compiled, text) {
+    const lower = text.toLowerCase();
+    return compiled.some((c) => (c.plain != null ? lower.indexOf(c.plain) >= 0 : c.test(text)));
+  }
   function applyFilters(scope) {
     const f = dataCache.filters || {};
+    const kw = compileRegexes(f.keywords);
+    const hl = compileRegexes(f.highlights);
+    const now = Math.floor(nowMsNow() / 1000);
     const root = scope && scope.querySelectorAll ? scope : document;
     root.querySelectorAll("#siteTable .thing.link").forEach((p) => {
       const sub = (p.getAttribute("data-subreddit") || "").toLowerCase();
       const author = (p.getAttribute("data-author") || "").toLowerCase();
       const domain = (p.getAttribute("data-domain") || "").toLowerCase();
+      const flair = (p.getAttribute("data-flair") || "").toLowerCase();
       const titleEl = p.querySelector(".title a");
-      const title = (titleEl ? titleEl.textContent : "").toLowerCase();
+      const title = titleEl ? titleEl.textContent : "";
+      const score = parseInt(p.getAttribute("data-score") || "", 10);
+      const created = parseInt(p.getAttribute("data-created") || "0", 10);
+      const nsfw = p.getAttribute("data-nsfw") === "true";
+      const promoted = p.getAttribute("data-promoted") === "true";
+      const read = p.classList.contains("orr-visited");
       const hide =
         (f.subreddits || []).some((s) => s && s.toLowerCase() === sub) ||
         (f.users || []).some((u) => u && u.toLowerCase() === author) ||
         (f.domains || []).some((d) => d && domain.indexOf(d.toLowerCase()) >= 0) ||
-        (f.keywords || []).some((k) => k && title.indexOf(k.toLowerCase()) >= 0);
+        (f.flairs || []).some((fl) => fl && flair.indexOf(fl.toLowerCase()) >= 0) ||
+        (kw.length && matchAny(kw, title)) ||
+        (promoted && f.hidePromoted) ||
+        (nsfw && f.hideNsfw) ||
+        (f.minScore != null && !isNaN(score) && score < f.minScore) ||
+        (f.maxAgeHours != null && created && (now - created) > f.maxAgeHours * 3600) ||
+        (hideReadOn && read);
       p.classList.toggle("orr-filtered", hide);
+      p.classList.toggle("orr-highlight", !hide && hl.length > 0 && matchAny(hl, title));
     });
   }
 
@@ -1399,6 +1570,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     ["j / k", "next / previous item"],
     ["o / Enter", "open selected item"],
     ["c", "open comments (on a listing)"],
+    ["g", "go to subreddit (quick switcher)"],
     ["x", "expand media / collapse comment"],
     ["← / →", "gallery previous / next (while hovering a gallery)"],
     ["comment nav", "▲▼ top comments, OP, new (widget, top-right)"],
@@ -1886,30 +2058,232 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     addParentLinks();
     ensureCommentNav();
     applyCollapsedState();
+    autoCollapseBots();
     expandCommentMedia(scope || document);
+    addDownloadButtons(scope || document);
   }
+
+  // Auto-collapse AutoModerator / bot comments (heuristic: AutoModerator or a name
+  // ending in "bot" / "-bot").
+  const BOT_AUTHORS = ["automoderator"];
+  function autoCollapseBots() {
+    if (!autoCollapseBotsOn) return;
+    document.querySelectorAll(".commentarea .thing.comment:not([data-orr-botchecked])").forEach((c) => {
+      c.setAttribute("data-orr-botchecked", "1");
+      const author = (c.getAttribute("data-author") || "").toLowerCase();
+      const isBot = BOT_AUTHORS.indexOf(author) >= 0 || /[-_]?bot$/.test(author);
+      if (isBot && !c.classList.contains("collapsed")) {
+        c.classList.add("collapsed");
+        const ex = c.querySelector(":scope > .entry .expand");
+        if (ex) { ex.innerHTML = "[+]"; ex.setAttribute("aria-expanded", "false"); ex.setAttribute("aria-label", "expand comment"); }
+      }
+    });
+  }
+
+  // Autoplay muted reddit videos/gifs in listings as they scroll into view (RES).
+  let autoplayObserver = null;
+  function autoplayMedia(scope) {
+    if (!autoplayOn || typeof IntersectionObserver === "undefined") return;
+    if (document.querySelector(".commentarea")) return; // listings only
+    const root = scope && scope.querySelectorAll ? scope : document;
+    if (!autoplayObserver) {
+      autoplayObserver = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          const btn = en.target;
+          if (!en.isIntersecting) return;
+          autoplayObserver.unobserve(btn);
+          if (btn.classList.contains("collapsed")) btn.click(); // expand
+          const entry = btn.closest(".entry");
+          const v = entry && entry.querySelector(":scope > .expando video");
+          if (v) {
+            v.muted = true;
+            // Reddit videos have a SEPARATE audio element — mute it too, else autoplay
+            // blasts sound (v.muted only mutes the video-only track).
+            if (v._orrAudio) { v._orrAudio.muted = true; if (v._orrPaintMute) v._orrPaintMute(); }
+            try { v.play().catch(() => {}); } catch (e) {}
+          }
+        });
+      }, { rootMargin: "0px" });
+    }
+    root.querySelectorAll(".thing.link .expando-button.video:not([data-orr-ap]), .thing.link .expando-button.video-muted:not([data-orr-ap])").forEach((b) => {
+      b.setAttribute("data-orr-ap", "1");
+      autoplayObserver.observe(b);
+    });
+  }
+
+  // Download buttons on expanded images and videos.
+  function dlLink(url, kind) {
+    const a = document.createElement("a");
+    a.className = "orr-dl";
+    a.href = url;
+    a.setAttribute("download", "");
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = "⤓";
+    a.title = "download " + kind + (kind === "video" ? " (video only — reddit stores audio separately)" : "");
+    a.setAttribute("aria-label", "download " + kind);
+    a.addEventListener("click", (e) => e.stopPropagation());
+    return a;
+  }
+  function addDownloadButtons(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll(".expando .preview:not([data-orr-dl]), .orr-inline-img img:not([data-orr-dl])").forEach((img) => {
+      img.dataset.orrDl = "1";
+      const wrap = img.closest(".orr-resizable, .orr-inline-img") || img.parentNode;
+      if (!wrap) return;
+      if (!wrap.style.position) wrap.style.position = "relative";
+      wrap.appendChild(dlLink(img.currentSrc || img.src, "image"));
+    });
+    root.querySelectorAll(".orr-video-wrap:not([data-orr-dl])").forEach((w) => {
+      w.dataset.orrDl = "1";
+      const v = w.querySelector("video");
+      const src = v && (v.currentSrc || (v.querySelector("source") && v.querySelector("source").src));
+      if (src) w.appendChild(dlLink(src, "video"));
+    });
+  }
+
+  // ---- issue #6: recent subs, favorites bar, sort memory, other discussions,
+  //      quick switcher, scroll restore ----
+  const scrollPositions = {};
+  let pendingScrollRestore = null;
+  function scrollKey() { return location.pathname + location.search; }
+
+  function rememberSub(sub) {
+    if (!sub || /[+\-]/.test(sub) || sub === "all" || sub === "popular") return;
+    let r = (dataCache.recentSubs || []).filter((s) => s && s.toLowerCase() !== sub.toLowerCase());
+    r.unshift(sub);
+    r = r.slice(0, 12);
+    dataCache.recentSubs = r;
+    ORR.setPrefs({ recentSubs: r });
+  }
+  function rememberCommentSort(sub, sort) {
+    if (!sub || !sort) return;
+    if (!dataCache.commentSorts) dataCache.commentSorts = {};
+    if (dataCache.commentSorts[sub.toLowerCase()] === sort) return;
+    dataCache.commentSorts[sub.toLowerCase()] = sort;
+    ORR.setPrefs({ commentSorts: dataCache.commentSorts });
+  }
+  // Fill the header subreddit shortcut bar from favorites (if set) + recent subs.
+  function patchSrBar() {
+    const bar = document.querySelector("#sr-header-area .sr-bar");
+    if (!bar) return;
+    const fav = (dataCache.favoriteSubs || []).filter(Boolean);
+    const recent = (dataCache.recentSubs || []).filter(Boolean);
+    const subs = fav.length ? fav.slice() : DEFAULT_SRBAR.slice();
+    const seen = subs.map((x) => x.toLowerCase());
+    recent.forEach((s) => { if (seen.indexOf(s.toLowerCase()) < 0) { subs.push(s); seen.push(s.toLowerCase()); } });
+    bar.innerHTML = subs.slice(0, 16).map((s) => `<a href="/r/${esc(s)}/" class="choice">${esc(s)}</a>`).join("\n");
+  }
+
+  // "other discussions" — crossposts / duplicate submissions of the same link.
+  function addOtherDiscussions(data) {
+    const post = data && data[0] && data[0].data && data[0].data.children && data[0].data.children[0] && data[0].data.children[0].data;
+    if (!post || post.is_self) return; // self posts have no duplicates
+    const buttons = document.querySelector("#siteTable .thing.link .flat-list.buttons");
+    if (!buttons || buttons.querySelector(".orr-other")) return;
+    const li = document.createElement("li");
+    li.innerHTML = '<a href="javascript:void(0)" class="orr-other">other discussions</a>';
+    buttons.appendChild(li);
+    li.querySelector("a").addEventListener("click", async (e) => {
+      e.preventDefault();
+      const link = li.querySelector("a");
+      if (link.dataset.loading) return;
+      link.dataset.loading = "1";
+      link.textContent = "loading other discussions…";
+      try {
+        const id = (post.name || "").replace(/^t3_/, "");
+        const res = await fetch(location.origin + "/duplicates/" + id + "/.json?raw_json=1", { credentials: "include", headers: { Accept: "application/json" } });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const j = await res.json();
+        const dups = (j && j[1] && j[1].data && j[1].data.children) || [];
+        const st = document.querySelector("#siteTable");
+        const box = document.createElement("div");
+        box.className = "orr-other-box";
+        box.innerHTML =
+          "<h4>Other discussions (" + dups.length + ")</h4>" +
+          (dups.length
+            ? "<ul>" + dups.map((c) => { const p = c.data; return '<li><a href="' + esc(p.permalink) + '">r/' + esc(p.subreddit) + "</a> — " + esc(p.num_comments || 0) + " comments · " + esc(p.score) + " points</li>"; }).join("") + "</ul>"
+            : "<p>No other discussions found.</p>");
+        if (st) st.appendChild(box);
+        link.textContent = "other discussions (" + dups.length + ")";
+        link.dataset.loading = "";
+      } catch (err) {
+        link.textContent = "other discussions — failed";
+        link.dataset.loading = "";
+      }
+    });
+  }
+
+  // Quick subreddit switcher (RES-style go-to), opened with `g`.
+  function navigateTo(path) {
+    const u = new URL(path, location.origin);
+    scrollPositions[scrollKey()] = window.scrollY;
+    history.pushState(null, "", u.pathname + u.search);
+    window.scrollTo(0, 0);
+    loadPage(u, false);
+  }
+  function openQuickSwitch() {
+    if (document.getElementById("orr-qs")) return;
+    const ov = document.createElement("div");
+    ov.id = "orr-qs";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-label", "go to subreddit");
+    const list = (dataCache.favoriteSubs || []).concat(dataCache.recentSubs || []);
+    const seen = {};
+    const opts = list.filter((s) => s && !seen[s.toLowerCase()] && (seen[s.toLowerCase()] = 1)).slice(0, 15);
+    ov.innerHTML =
+      '<div class="orr-qs-box"><input id="orr-qs-input" placeholder="go to r/…  (Enter)" autocomplete="off" list="orr-qs-list" aria-label="subreddit name">' +
+      '<datalist id="orr-qs-list">' + opts.map((s) => '<option value="' + esc(s) + '">').join("") + "</datalist>" +
+      '<div class="orr-qs-hint">Enter to go &middot; Esc to close</div></div>';
+    ov.addEventListener("click", (e) => { if (e.target === ov) closeQuickSwitch(); });
+    document.body.appendChild(ov);
+    const input = document.getElementById("orr-qs-input");
+    input.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter") {
+        const v = input.value.trim().replace(/^\/?(r\/)?/i, "").replace(/\/.*$/, "");
+        closeQuickSwitch();
+        if (v) navigateTo("/r/" + encodeURIComponent(v) + "/");
+      } else if (e.key === "Escape") {
+        closeQuickSwitch();
+      }
+    });
+    input.focus();
+  }
+  function closeQuickSwitch() { const o = document.getElementById("orr-qs"); if (o) o.remove(); }
 
   function afterRender() {
     injectStaticCss();
+    applyNightSchedule(); // re-evaluate the time-of-day schedule as you browse
     applyNight();
     ensureUiChrome();
+    patchSrBar();
+    if (pendingScrollRestore != null) {
+      const y = pendingScrollRestore;
+      pendingScrollRestore = null;
+      setTimeout(() => window.scrollTo(0, y), 0);
+    }
     kbIdx = -1;
+    markVisited(document); // before applyFilters so "hide read" can act
     applyFilters(document);
     patchTags(document);
     markNewComments();
-    markVisited(document);
     inlineImages(document);
     wireRedditVideos(document);
+    addDownloadButtons(document);
     enhanceComments(document);
+    autoplayMedia(document);
     if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
   }
   function enhanceNewItems(scope) {
+    markVisited(scope || document);
     applyFilters(scope || document);
     patchTags(scope || document);
-    markVisited(scope || document);
     inlineImages(scope || document);
     wireRedditVideos(scope || document);
+    addDownloadButtons(scope || document);
+    autoplayMedia(scope || document);
   }
 
   function hideGuard() {
@@ -1935,13 +2309,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let rows = "";
     for (let i = 0; i < 9; i++)
       rows += '<div class="orr-sk-row"><div class="orr-sk-thumb"></div><div class="orr-sk-lines"><div class="orr-sk-line w70"></div><div class="orr-sk-line w40"></div></div></div>';
-    sk.innerHTML = '<div class="orr-sk-head"></div><div class="orr-sk-body">' + rows + "</div>";
+    sk.innerHTML = '<div class="orr-sk-head"></div><div class="orr-sk-msg" role="status" aria-live="polite"></div><div class="orr-sk-body">' + rows + "</div>";
     document.body.appendChild(sk);
+  }
+  function setSkeletonMsg(text) {
+    const m = document.querySelector("#orr-skeleton .orr-sk-msg");
+    if (m) m.textContent = text || "";
   }
   function hideSkeleton() {
     const sk = document.getElementById("orr-skeleton");
     if (sk) sk.remove();
   }
+  function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
   async function ensureCss() {
     if (document.getElementById(CSS_ID)) return;
@@ -2010,10 +2389,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const sub = route.scope === "front" ? "reddit" : "r/" + route.sub;
     replaceBody(body, sub + " — old reddit");
     patchHeader();
+    if (route.scope === "sub") rememberSub(route.sub);
     loadSidebar(route); // async, fills .side when about/rules arrive
 
     const l0 = (json && json.data) || {};
-    const showSub = route.scope === "front" || route.sub === "all" || route.sub === "popular";
+    const showSub = route.scope === "front" || route.scope === "multi" || route.combined || route.sub === "all" || route.sub === "popular";
     const count0 = startCount + (l0.children || []).filter((c) => c.kind === "t3").length;
     setupInfinite(
       async (after, count) => {
@@ -2055,6 +2435,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const sub = route.sub;
     // No single sidebar for aggregate/multireddit listings.
     if (!sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
+    applySubredditCss(sub); // theme with the subreddit's own stylesheet (async)
     let v;
     try {
       v = await fetchAboutRules(sub);
@@ -2067,6 +2448,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   function renderError(status) {
+    pendingScrollRestore = null; // a failed nav must not scroll the error/old page
     const st = document.getElementById("siteTable");
     const msg =
       status === 403
@@ -2085,36 +2467,50 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       t: url.searchParams.get("t"),
     };
     hideGuard();
-    // Safety: if the fetch hangs on first load, never leave the page blank —
-    // reveal new Reddit after a timeout.
-    let watchdog = null;
-    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
-    let json;
-    try {
-      json = await fetchListing(route, params);
-    } catch (err) {
-      if (watchdog) clearTimeout(watchdog);
-      if (firstLoad) {
-        // Never blank the page: let new Reddit render instead.
-        active = false;
-        unhideGuard();
-      } else {
-        renderError(err.status || 0);
-        unhideGuard();
+    // Safety: if a fetch truly hangs on first load, never leave the page blank —
+    // reveal new Reddit after a timeout (generous, since we retry rate-limits).
+    let watchdog = null, gaveUp = false;
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) { gaveUp = true; unhideGuard(); } }, 25000);
+    // On first load, retry transient failures (429/5xx/network) with backoff instead
+    // of immediately falling back to new Reddit — that fallback was the main cause of
+    // "sometimes I still see the new stuff" when Reddit rate-limits the .json.
+    let json = null, lastStatus = 0;
+    for (let attempt = 0; ; attempt++) {
+      if (gaveUp) return; // watchdog already revealed new Reddit
+      try {
+        json = await fetchListing(route, params);
+        break;
+      } catch (err) {
+        lastStatus = err.status || 0;
+        if (!firstLoad || !isTransient(lastStatus) || attempt >= 3) break;
+        setSkeletonMsg("Reddit is busy — retrying… (" + (attempt + 1) + "/3)");
+        await sleep(backoffMs(attempt + 1, err.retryAfter));
       }
-      return;
     }
     if (watchdog) clearTimeout(watchdog);
+    if (gaveUp) return;
+    if (!json) {
+      if (firstLoad) { active = false; unhideGuard(); } // give up → new Reddit
+      else { renderError(lastStatus); unhideGuard(); }
+      return;
+    }
     await ensureCss();
-    renderInto(route, json, params);
-    active = true;
+    // Never leave the page hidden if a render helper throws on some odd payload.
+    try {
+      renderInto(route, json, params);
+      active = true;
+    } catch (e) {
+      active = false; // fall back to new Reddit rather than a blank page
+    }
     unhideGuard();
   }
 
   async function loadComments(url, firstLoad) {
     const cr = ORR.isCommentsRoute(url);
     if (!cr) return;
-    const sort = url.searchParams.get("sort");
+    // per-subreddit comment-sort memory: fall back to the sub's remembered sort.
+    let sort = url.searchParams.get("sort");
+    if (!sort && cr.sub && dataCache.commentSorts) sort = dataCache.commentSorts[cr.sub.toLowerCase()] || null;
     hideGuard();
     let watchdog = null;
     if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
@@ -2148,7 +2544,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     active = true;
     unhideGuard();
     patchHeader();
-    loadSidebar({ scope: "sub", sub: body.sub || cr.sub });
+    const realSub = body.sub || cr.sub;
+    rememberSub(realSub);
+    rememberCommentSort(realSub, sort);
+    addOtherDiscussions(data);
+    loadSidebar({ scope: "sub", sub: realSub });
   }
 
   async function loadUser(url, firstLoad) {
@@ -2305,12 +2705,42 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // fire after we've moved on and refetch the old page into the new/error DOM.
     // (replaceBody also tears down on the success path; this covers the case
     // where the new load errors out and never reaches replaceBody.)
+    navGen++; // invalidate any in-flight subreddit-CSS fetch from the previous page
     teardownInfinite();
     teardownMores();
+    if (autoplayObserver) { autoplayObserver.disconnect(); autoplayObserver = null; }
+    removeSubredditCss(); // clear the previous sub's theme; loadSidebar re-applies
     if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
     if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
     if (ORR.isUserRoute(url)) return loadUser(url, firstLoad);
     if (ORR.isSearchRoute(url)) return loadSearch(url, firstLoad);
+    if (ORR.isWikiRoute && ORR.isWikiRoute(url)) return loadWiki(url, firstLoad);
+  }
+
+  async function loadWiki(url, firstLoad) {
+    const route = ORR.isWikiRoute(url);
+    if (!route) return;
+    hideGuard();
+    let watchdog = null;
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
+    let json;
+    try {
+      const base = route.sub ? "/r/" + route.sub + "/wiki/" + route.page : "/wiki/" + route.page;
+      const res = await fetch(location.origin + base + ".json?raw_json=1", { credentials: "include", headers: { Accept: "application/json" } });
+      if (!res.ok) { const e = new Error("HTTP " + res.status); e.status = res.status; throw e; }
+      json = await res.json();
+    } catch (err) {
+      if (watchdog) clearTimeout(watchdog);
+      if (firstLoad) { active = false; unhideGuard(); } else { renderError(err.status || 0); unhideGuard(); }
+      return;
+    }
+    if (watchdog) clearTimeout(watchdog);
+    await ensureCss();
+    replaceBody(buildWikiPage(route, json, { me: meCached }), (route.sub ? "r/" + route.sub : "reddit") + " wiki — old reddit");
+    active = true;
+    unhideGuard();
+    patchHeader();
+    if (route.sub) loadSidebar({ scope: "sub", sub: route.sub });
   }
 
   // Expand a "load more comments" stub via the morechildren API, re-nesting the
@@ -2473,6 +2903,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           blurEl.classList.add("orr-revealed");
           return;
         }
+        // Reveal an inline spoiler tag (>!…!<) in comment/post text.
+        const spoiler = e.target.closest && e.target.closest(".md-spoiler-text:not(.orr-revealed)");
+        if (spoiler) {
+          e.preventDefault();
+          e.stopPropagation();
+          spoiler.classList.add("orr-revealed");
+          return;
+        }
         // Comment collapse toggle.
         const expandLink = e.target.closest && e.target.closest("a.expand");
         if (expandLink) {
@@ -2537,6 +2975,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
                 if (f.dataset.orrSrc) { f.src = f.dataset.orrSrc; delete f.dataset.orrSrc; }
               });
               wireRedditVideos(expando); // give the video its sound
+              addDownloadButtons(expando);
             }
           }
           return;
@@ -2551,6 +2990,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         }
         const a = e.target.closest && e.target.closest("a[href]");
         if (!a) return;
+        // Modified / non-left click, or target=_blank → let the browser open a new
+        // tab instead of hijacking it into same-tab SPA navigation.
+        if (e.ctrlKey || e.metaKey || e.shiftKey || (e.button && e.button !== 0) || a.target === "_blank") return;
         const href = a.getAttribute("href");
         if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
         let url;
@@ -2561,9 +3003,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         }
         if (url.origin !== location.origin) return; // external link → normal nav
         // Only intercept routes we rebuild; let wiki/etc navigate normally.
-        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url)) return;
+        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url) && !ORR.isWikiRoute(url)) return;
         e.preventDefault();
         e.stopPropagation();
+        scrollPositions[scrollKey()] = window.scrollY; // remember where we were
         history.pushState(null, "", url.pathname + url.search);
         window.scrollTo(0, 0);
         loadPage(url, false);
@@ -2589,6 +3032,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         usp.set("q", q); // encodes & etc. so queries aren't split
         if (restrict && restrict.checked) usp.set("restrict_sr", "1");
         const target = action + "?" + usp.toString();
+        scrollPositions[scrollKey()] = window.scrollY; // so Back restores the listing
         history.pushState(null, "", target);
         window.scrollTo(0, 0);
         loadPage(new URL(target, location.origin), false);
@@ -2599,8 +3043,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     window.addEventListener("popstate", () => {
       if (!active) return;
       const url = new URL(location.href);
-      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url) || ORR.isSearchRoute(url))
+      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url) || ORR.isSearchRoute(url) || (ORR.isWikiRoute && ORR.isWikiRoute(url))) {
+        pendingScrollRestore = scrollPositions[scrollKey()] != null ? scrollPositions[scrollKey()] : 0;
         loadPage(url, false);
+      }
     });
 
     wireEnhancements();
@@ -2616,6 +3062,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       s.id = "orr-answers-css";
       s.textContent =
         "body{padding-top:56px!important}" +
+        // Hide Reddit's native left sidebar (the "Join the most real place…" login
+        // prompt / new-reddit nav) — we provide navigation via the old-reddit bar.
+        "#left-sidebar-container{display:none!important}" +
         "#orr-answers-chrome{position:fixed;top:0;left:0;right:0;z-index:2147483000;font:12px Verdana,Arial,sans-serif}" +
         "#orr-answers-chrome .ac-sr{background:#f0f3fc;border-bottom:1px solid #c7d7e8;padding:2px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
         "#orr-answers-chrome .ac-sr a{color:#369;text-decoration:none;margin-right:9px}" +
@@ -2653,16 +3102,34 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   async function start() {
+    // Hide the page SYNCHRONOUSLY at document_start (before the async prefs read),
+    // on a route we're going to rebuild — otherwise new Reddit flashes through
+    // during the storage reads. Every early-return below must unhide.
+    let preSupported = false;
+    try {
+      const preUrl = new URL(location.href);
+      preSupported = !!(ORR.isListingRoute(preUrl) || ORR.isCommentsRoute(preUrl) || ORR.isUserRoute(preUrl) ||
+        ORR.isSearchRoute(preUrl) || (ORR.isWikiRoute && ORR.isWikiRoute(preUrl)));
+      if (preSupported) hideGuard();
+    } catch (e) { /* ignore */ }
     let prefs;
     try {
       prefs = await ORR.getPrefs();
     } catch (e) {
+      unhideGuard();
       return;
     }
-    if (!prefs.enabled) return; // extension off → leave new Reddit alone
+    if (!prefs.enabled) { unhideGuard(); return; } // extension off → leave new Reddit alone
     infiniteOn = prefs.infiniteScroll !== false;
     nightModeOn = prefs.nightMode !== false;
     orrVideoMuted = prefs.videoMuted === true;
+    subredditCssOn = prefs.subredditCss !== false;
+    autoplayOn = prefs.autoplayMedia === true;
+    hideReadOn = prefs.hideRead === true;
+    autoCollapseBotsOn = prefs.autoCollapseBots === true;
+    nightAutoOn = prefs.nightAuto === true;
+    applyBodyFlags(prefs);
+    applyNightSchedule(); // may override nightModeOn based on time of day
     try {
       dataCache = await ORR.getData();
     } catch (e) {
@@ -2670,11 +3137,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     const url = new URL(location.href);
     if (ORR.isAnswersRoute && ORR.isAnswersRoute(url)) {
+      unhideGuard();
       loadAnswers(); // frame Reddit Answers in old-reddit chrome; leave the app itself
       return;
     }
-    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url))
+    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url) && !(ORR.isWikiRoute && ORR.isWikiRoute(url))) {
+      unhideGuard();
       return; // unsupported route → leave it to new Reddit
+    }
+    try { history.scrollRestoration = "manual"; } catch (e) {} // we restore scroll ourselves
     wireNav();
     showSkeleton(); // visible placeholder while the first page loads
     fetchMe(); // prime the identity so the header usually renders logged-in on first paint
@@ -2698,12 +3169,28 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       }
       if (changes.nightMode) {
         nightModeOn = changes.nightMode.newValue !== false;
-        if (active) applyNight();
+        if (active && !nightAutoOn) applyNight();
       }
-      if ((changes.filters || changes.userTags || changes.threadVisits) && active) {
+      // New issue-#6 toggles: apply live where cheap (a reload also works).
+      if (active && (changes.subredditCss || changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
+                     changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont)) {
+        ORR.getPrefs().then((p) => {
+          subredditCssOn = p.subredditCss !== false;
+          autoplayOn = p.autoplayMedia === true;
+          hideReadOn = p.hideRead === true;
+          autoCollapseBotsOn = p.autoCollapseBots === true;
+          nightAutoOn = p.nightAuto === true;
+          applyBodyFlags(p);
+          applyNightSchedule();
+          applyNight();
+          applyFilters(document); // hideRead / re-filter
+        });
+      }
+      if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits) && active) {
         ORR.getData().then((d) => {
           dataCache = d;
           applyFilters(document);
+          patchSrBar();
           document.querySelectorAll("a.author[data-orr-tagged]").forEach((a) => delete a.dataset.orrTagged);
           document.querySelectorAll(".orr-usertag").forEach((s) => s.remove());
           patchTags(document);

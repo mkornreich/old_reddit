@@ -60,13 +60,100 @@
     <span class="orr-switch" aria-hidden="true"></span>
   </label>
 
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Subreddit themes (custom CSS)</span>
+      <span class="orr-row-sub">Apply each subreddit's own stylesheet (banners, colors)</span>
+    </span>
+    <input type="checkbox" id="subredditCss">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Autoplay videos in listings</span>
+      <span class="orr-row-sub">Muted auto-play as videos/GIFs scroll into view</span>
+    </span>
+    <input type="checkbox" id="autoplay">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Hide already-read posts</span>
+      <span class="orr-row-sub">Remove posts whose comments you've opened</span>
+    </span>
+    <input type="checkbox" id="hideRead">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Auto-collapse bot comments</span>
+      <span class="orr-row-sub">Collapse AutoModerator and *-bot comments</span>
+    </span>
+    <input type="checkbox" id="autoCollapseBots">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Compact view</span>
+      <span class="orr-row-sub">Denser spacing for listings and comments</span>
+    </span>
+    <input type="checkbox" id="compact">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Auto night mode (8pm–7am)</span>
+      <span class="orr-row-sub">Switch to night mode on a local-time schedule</span>
+    </span>
+    <input type="checkbox" id="nightAuto">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">High-contrast mode</span>
+      <span class="orr-row-sub">Maximum-contrast colors for readability</span>
+    </span>
+    <input type="checkbox" id="highContrast">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Dyslexia-friendly font</span>
+      <span class="orr-row-sub">Rounder font with wider letter/line spacing</span>
+    </span>
+    <input type="checkbox" id="dyslexia">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
   <section class="orr-filters">
     <h2>Filters — hide posts matching…</h2>
     <p class="orr-filters-hint">One per line. Applied to listings, search and profiles.</p>
     <label class="orr-field"><span>Subreddits</span><textarea id="filter-subreddits" rows="3" placeholder="AskReddit&#10;announcements"></textarea></label>
     <label class="orr-field"><span>Users</span><textarea id="filter-users" rows="3" placeholder="spez"></textarea></label>
     <label class="orr-field"><span>Domains</span><textarea id="filter-domains" rows="3" placeholder="twitter.com&#10;x.com"></textarea></label>
-    <label class="orr-field"><span>Title keywords</span><textarea id="filter-keywords" rows="3" placeholder="politics&#10;spoiler"></textarea></label>
+    <label class="orr-field"><span>Title keywords</span><textarea id="filter-keywords" rows="3" placeholder="politics&#10;/breaking.*news/i"></textarea></label>
+    <label class="orr-field"><span>Post flair</span><textarea id="filter-flairs" rows="2" placeholder="Meme&#10;Shitpost"></textarea></label>
+    <p class="orr-filters-hint">Keywords &amp; highlights also accept <code>/regex/flags</code>.</p>
+    <label class="orr-field"><span>Highlight keywords</span><textarea id="filter-highlights" rows="2" placeholder="release&#10;/\\bAMA\\b/"></textarea></label>
+    <div class="orr-field-row">
+      <label class="orr-field-inline"><span>Min score</span><input type="number" id="filter-minscore" placeholder="e.g. 50"></label>
+      <label class="orr-field-inline"><span>Max age (hours)</span><input type="number" id="filter-maxage" placeholder="e.g. 24"></label>
+    </div>
+    <label class="orr-check"><input type="checkbox" id="filter-nsfw"> Hide NSFW posts</label>
+    <label class="orr-check"><input type="checkbox" id="filter-promoted"> Hide promoted / ad posts</label>
+  </section>
+
+  <section class="orr-filters">
+    <h2>Subreddit shortcut bar</h2>
+    <p class="orr-filters-hint">Favorite subreddits shown in the top bar (one per line). Recently-visited subs are appended automatically.</p>
+    <label class="orr-field"><span>Favorites</span><textarea id="favorite-subs" rows="3" placeholder="AskReddit&#10;programming"></textarea></label>
   </section>
 
   <section class="orr-data">

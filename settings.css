@@ -232,3 +232,10 @@ body.options { max-width: 460px; margin: 0 auto; padding-bottom: 8px; }
   background: var(--orr-btn-bg, #f6f8fa); color: var(--orr-fg, #1f2328);
 }
 .orr-btn:hover { background: var(--orr-btn-hover, #eaeef2); }
+
+/* advanced filter fields */
+.orr-field-row { display: flex; gap: 14px; margin-top: 10px; }
+.orr-field-inline { display: flex; flex-direction: column; gap: 4px; flex: 1; font-size: 13px; }
+.orr-field-inline input { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--orr-border, #d0d7de);
+  background: var(--orr-bg, #fff); color: var(--orr-text, #1f2328); }
+.orr-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; cursor: pointer; }
