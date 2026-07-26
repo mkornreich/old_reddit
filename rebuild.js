@@ -1282,6 +1282,31 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
   }
 
+  // Keep OUR #orr-top the only back-to-top: hide any rival floating "back to top"
+  // control (from RES, a subreddit stylesheet, or a new-Reddit remnant) so there
+  // aren't two. Conservative: only fixed/sticky floating chrome named exactly like a
+  // back-to-top; never our own elements or in-content sort links.
+  function hideRivalBackToTop() {
+    let els;
+    try { els = document.querySelectorAll("body > *, body > * > *, body > * > * > *"); } catch (e) { return; }
+    els.forEach((el) => {
+      const id = el.id || "";
+      if (id === "orr-top" || id.indexOf("orr-") === 0) return; // our chrome
+      if (el.dataset && el.dataset.orrRivalHidden) return;
+      if (el.closest && el.closest("#siteTable, .commentarea, .content, .side, #header, #sr-header-area")) return;
+      const cs = getComputedStyle(el);
+      if (cs.position !== "fixed" && cs.position !== "sticky") return;
+      const name = (((el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("title"))) || "") + " " +
+        (el.childElementCount === 0 ? (el.textContent || "") : "")).trim();
+      const arrowsOnly = /[↑⬆▲🔝]/.test(name) && /^[↑⬆▲🔝^\s]+$/.test(name);
+      const clean = name.replace(/[↑⬆▲🔝^]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+      if (arrowsOnly || /^(?:back to top|scroll to top|to top|top)$/.test(clean)) {
+        el.style.setProperty("display", "none", "important");
+        if (el.dataset) el.dataset.orrRivalHidden = "1";
+      }
+    });
+  }
+
   // ---- keyboard navigation ----
   let kbIdx = -1;
   function kbThings() {
@@ -1668,9 +1693,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function wireEnhancements() {
     document.addEventListener("keydown", handleKeydown, true);
+    let rivalScrollTimer = null;
     window.addEventListener("scroll", () => {
       const b = document.getElementById("orr-top");
       if (b) b.classList.toggle("show", window.scrollY > 500);
+      // a rival back-to-top often only appears once you scroll — sweep occasionally
+      if (!rivalScrollTimer) rivalScrollTimer = setTimeout(() => { rivalScrollTimer = null; hideRivalBackToTop(); }, 400);
     });
     // Track the gallery under the pointer so arrow keys can page through it.
     document.addEventListener("mouseover", (e) => {
@@ -2257,6 +2285,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     applyNightSchedule(); // re-evaluate the time-of-day schedule as you browse
     applyNight();
     ensureUiChrome();
+    hideRivalBackToTop();
+    setTimeout(hideRivalBackToTop, 1500); // catch rivals added late (RES etc.)
     patchSrBar();
     if (pendingScrollRestore != null) {
       const y = pendingScrollRestore;
