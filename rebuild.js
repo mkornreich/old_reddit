@@ -1160,10 +1160,10 @@ a.orr-parent { color:#369; }
 /* download button */
 a.orr-dl { position:absolute; top:8px; left:8px; z-index:6; background:rgba(0,0,0,.55); color:#fff; border-radius:4px; padding:1px 7px; font-size:14px; line-height:1.5; text-decoration:none; }
 a.orr-dl:hover { background:rgba(0,0,0,.82); }
-/* inline spoiler tags (>!…!<) */
-.md-spoiler-text:not(.orr-revealed) { background:#000 !important; color:transparent !important; border-radius:2px; cursor:pointer; }
-.md-spoiler-text:not(.orr-revealed) * { color:transparent !important; }
-.md-spoiler-text.orr-revealed { background:rgba(0,0,0,.08); }
+/* inline spoiler tags: the bundled old-reddit CSS already hides
+   .md-spoiler-text:not(.revealed) and reveals .revealed itself — the click handler
+   just adds the .revealed class (old reddit's own JS isn't present). */
+.md-spoiler-text:not(.revealed) { cursor:pointer; }
 /* compact / density view */
 html.orr-compact .thing .entry { line-height:1.2; }
 html.orr-compact .thing.link { padding:1px 0; }
@@ -2935,12 +2935,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           blurEl.classList.add("orr-revealed");
           return;
         }
-        // Reveal an inline spoiler tag (>!…!<) in comment/post text.
-        const spoiler = e.target.closest && e.target.closest(".md-spoiler-text:not(.orr-revealed)");
+        // Reveal an inline spoiler tag (>!…!<) in comment/post text. Use the
+        // `.revealed` class the bundled old-reddit CSS expects (NOT orr-revealed).
+        const spoiler = e.target.closest && e.target.closest(".md-spoiler-text:not(.revealed)");
         if (spoiler) {
           e.preventDefault();
           e.stopPropagation();
-          spoiler.classList.add("orr-revealed");
+          spoiler.classList.add("revealed");
           return;
         }
         // Comment collapse toggle.
