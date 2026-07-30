@@ -1,5 +1,7 @@
 # Classic Layout for Reddit
 
+**[▶ Install for Firefox (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)** &nbsp;·&nbsp; Chrome/Edge: [load unpacked](#install-on-chrome-and-edge--brave--opera)
+
 A dependency-free browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
 Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches each page
 from Reddit's JSON API and renders old Reddit's *real* archived HTML + CSS, then
@@ -75,27 +77,39 @@ exactly. It is inherently fragile:
 
 ## Install on Firefox
 
-### Option 1 — Permanent, from the signed `.xpi` (recommended)
+### Option 1 — Firefox Add-ons store (recommended, one click)
 
-1. Download the latest **`old-reddit-skin-*.xpi`** from the
+**[▶ Install from Firefox Add-ons (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)**
+
+1. Open the link above **in Firefox**.
+2. Click **Add to Firefox** → **Add**.
+3. **Log in to Reddit** (the extension reads Reddit's own API, which requires being
+   signed in), then open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it
+   renders in the classic layout.
+4. Manage it any time from the toolbar button (quick toggles) or
+   `about:addons` → **Classic Layout for Reddit** → **Preferences** (all settings + filters).
+
+It's reviewed and signed by Mozilla, so it installs permanently and auto-updates.
+
+### Option 2 — From the signed `.xpi` (GitHub Releases)
+
+1. Download the latest **`.xpi`** from the
    [**Releases**](https://github.com/mkornreich/old_reddit/releases/latest) page.
-2. Install it, either way:
+2. Install it either way:
    - **Drag** the `.xpi` onto any Firefox window → click **Add**, or
    - `about:addons` → the gear ⚙️ → **Install Add-on From File…** → pick the `.xpi`.
-3. Open `https://www.reddit.com/r/pics` — it should be restyled. Toggle the skin
-   on/off from the toolbar button or `about:addons` → **Preferences**.
 
 The `.xpi` is signed by Mozilla, so it installs permanently on regular Firefox and
 survives restarts.
 
-### Option 2 — Temporary, from source (no signing, great for hacking)
+### Option 3 — Temporary, from source (no signing, great for hacking)
 
 1. Clone this repo.
 2. Open **`about:debugging`** → **This Firefox** → **Load Temporary Add-on…**.
 3. Select **`manifest.json`** in the repo.
 4. It runs until you restart Firefox.
 
-### Option 3 — Build & sign it yourself
+### Option 4 — Build & sign it yourself
 
 Firefox only installs a *permanent* add-on if it's signed by Mozilla. To produce
 your own signed `.xpi` with [`web-ext`](https://extensionworkshop.com/documentation/develop/getting-started-with-web-ext/):

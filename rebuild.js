@@ -217,7 +217,9 @@
       opts.expandoButton && exp
         ? `<div class="expando-button collapsed ${exp.type}" role="button" tabindex="0" aria-expanded="false" aria-label="expand"></div>`
         : "";
-    const blur = d.over_18 ? " orr-nsfw" : d.spoiler ? " orr-spoiler" : "";
+    // NSFW always blurs; a spoiler blurs only in listings — on a comments page you
+    // deliberately opened the post, so show it (issue #7: spoilers in one click).
+    const blur = d.over_18 ? " orr-nsfw" : d.spoiler && !opts.expandText ? " orr-spoiler" : "";
     const expando = exp ? `<div class="expando${blur}"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
     const flairText = d.link_flair_text || (Array.isArray(d.link_flair_richtext) ? d.link_flair_richtext.map((x) => x.t || "").join("") : "");
     const flairHtml = flairText ? ` <span class="linkflairlabel" title="${esc(flairText)}">${esc(flairText)}</span>` : "";
@@ -3001,6 +3003,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
                 f.src = "about:blank";
               });
             } else {
+              // Expanding a spoiler/NSFW post is a deliberate "show me" action —
+              // reveal it in this one click instead of requiring a second (issue #7).
+              if (expando.classList.contains("orr-spoiler") || expando.classList.contains("orr-nsfw")) expando.classList.add("orr-revealed");
               expando.querySelectorAll("iframe.orr-embed").forEach((f) => {
                 if (f.dataset.orrSrc) { f.src = f.dataset.orrSrc; delete f.dataset.orrSrc; }
               });
