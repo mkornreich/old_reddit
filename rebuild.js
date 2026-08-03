@@ -1024,10 +1024,12 @@
   // Subreddit custom CSS (old-reddit's signature feature). Fetched per sub and
   // injected AFTER our CSS so it themes the reproduced old-reddit DOM.
   let navGen = 0; // bumped on every navigation; guards async subreddit-CSS fetches
+  let curSub = null; // subreddit of the current page (null when off-sub); lets the toggle apply live
   function removeSubredditCss() {
     document.querySelectorAll("#orr-subreddit-css").forEach((n) => n.remove());
   }
   async function applySubredditCss(sub) {
+    curSub = sub || null; // remember the page's sub even when disabled, so re-enabling can re-apply
     removeSubredditCss();
     if (!subredditCssOn || !sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
     const gen = navGen;
@@ -2741,6 +2743,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     teardownInfinite();
     teardownMores();
     if (autoplayObserver) { autoplayObserver.disconnect(); autoplayObserver = null; }
+    curSub = null; // off-sub until loadSidebar sets it again; keeps the live CSS toggle accurate
     removeSubredditCss(); // clear the previous sub's theme; loadSidebar re-applies
     if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
     if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
@@ -3212,6 +3215,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
                      changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont)) {
         ORR.getPrefs().then((p) => {
           subredditCssOn = p.subredditCss !== false;
+          if (changes.subredditCss) applySubredditCss(curSub); // apply/remove the sub's CSS live
           autoplayOn = p.autoplayMedia === true;
           hideReadOn = p.hideRead === true;
           autoCollapseBotsOn = p.autoCollapseBots === true;
