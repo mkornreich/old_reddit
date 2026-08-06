@@ -1,6 +1,6 @@
 # Classic Layout for Reddit
 
-**[▶ Install for Firefox (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)** &nbsp;·&nbsp; Chrome/Edge: [load unpacked](#install-on-chrome-and-edge--brave--opera)
+**[▶ Install for Firefox (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)** &nbsp;·&nbsp; **[▶ Install for Edge (Microsoft Store)](https://microsoftedge.microsoft.com/addons/detail/classic-layout-for-reddit/jpccopdjifaoidblbnhaeobelcldnoop)** &nbsp;·&nbsp; Chrome/Brave/Opera: [load unpacked](#install-on-chrome-and-edge--brave--opera)
 
 A dependency-free browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
 Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches each page
@@ -131,8 +131,14 @@ resulting `.xpi` as in Option 1.
 
 ## Install on Chrome (and Edge / Brave / Opera)
 
-There's no Chrome Web Store listing yet, so install it **unpacked** from a clone of
-this repo. Chrome, Edge, Brave, and Opera are all Chromium-based, so the **same
+**Microsoft Edge — one-click install** from the official store:
+
+**[▶ Install from the Microsoft Edge Add-ons store](https://microsoftedge.microsoft.com/addons/detail/classic-layout-for-reddit/jpccopdjifaoidblbnhaeobelcldnoop)**
+
+It's reviewed by Microsoft, installs permanently, and auto-updates — no Developer mode needed.
+
+For **Chrome, Brave, and Opera** there's no Chrome Web Store listing yet, so install it
+**unpacked** from a clone of this repo. All three are Chromium-based, so the **same
 folder** loads in every one of them — no separate build.
 
 1. Clone or download this repo to a folder you'll **keep in place** (Chrome

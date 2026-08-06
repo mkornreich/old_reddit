@@ -304,20 +304,48 @@
     ["all", "all time"],
   ];
 
-  function timeMenuHtml(route, currentT) {
-    const t = currentT || "day"; // reddit's default for top/controversial
+  // Reddit's `t` only has fixed buckets; for a custom "last N days" we fetch the
+  // smallest bucket that fully contains N days, then filter client-side to the
+  // exact window (see daysSince + the sinceUtc filter in buildBody).
+  function bucketForDays(days) {
+    const d = parseInt(days, 10);
+    if (!(d > 0)) return null;
+    if (d <= 1) return "day";
+    if (d <= 7) return "week";
+    if (d <= 31) return "month";
+    if (d <= 366) return "year";
+    return "all";
+  }
+  function daysSince(days) {
+    const d = parseInt(days, 10);
+    return d > 0 ? Math.floor(Date.now() / 1000) - d * 86400 : null;
+  }
+
+  function timeMenuHtml(route, currentT, currentDays) {
+    const customDays = parseInt(currentDays, 10);
+    const custom = customDays > 0;
+    const t = custom ? null : (currentT || "day"); // reddit's default for top/controversial
+    const boldSel = ' style="font-weight:bold;text-decoration:underline"';
     const links = TIMES.map(([val, label]) => {
       const sel = val === t;
-      return `<a href="${route.basePath}/?t=${val}"${sel ? ' style="font-weight:bold;text-decoration:underline"' : ""}>${label}</a>`;
+      return `<a href="${route.basePath}/?t=${val}"${sel ? boldSel : ""}>${label}</a>`;
     }).join(' <span class="separator">&middot;</span> ');
-    return `<div class="menuarea" style="padding:5px 5px 5px 10px;font-size:small">links from: ${links}</div>`;
+    // Custom "last N days" window — filtered client-side from the nearest bucket.
+    const customField =
+      ` <span class="separator">&middot;</span> ` +
+      `<span class="orr-custom-top"${custom ? boldSel : ""}>last ` +
+        `<input type="number" min="1" max="3650" class="orr-days-input" value="${custom ? esc(String(customDays)) : ""}" ` +
+          `placeholder="N" style="width:48px" aria-label="custom number of days"> days ` +
+        `<a href="#" class="orr-days-go">go</a></span>`;
+    return `<div class="menuarea" style="padding:5px 5px 5px 10px;font-size:small">links from: ${links}${customField}</div>`;
   }
 
   // Build the full old-reddit page body (className + innerHTML) for a listing.
   function buildBody(route, json, opts) {
     opts = opts || {};
     const listing = (json && json.data) || {};
-    const children = (listing.children || []).filter((c) => c.kind === "t3");
+    let children = (listing.children || []).filter((c) => c.kind === "t3");
+    if (opts.sinceUtc) children = children.filter((c) => (c.data.created_utc || 0) >= opts.sinceUtc);
     // multireddits and combined (r/a+b+c) listings mix subs → show each post's sub
     const showSub = route.scope === "front" || route.scope === "multi" || route.combined || route.sub === "all" || route.sub === "popular";
     const startRank = (opts.startCount || 0) + 1;
@@ -338,7 +366,7 @@
       `<div class="side" role="complementary">${sideSearchHtml(route)}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
-      (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t) : "") +
+      (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t, opts.days) : "") +
       `<div id="siteTable" class="sitetable linklisting">` +
       (items || `<div class="thing">Nothing here.</div>`) +
       `</div>` +
@@ -793,6 +821,7 @@
 
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
+    bucketForDays, daysSince, shareLinkFor, buildSharePanel,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
@@ -2254,6 +2283,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     window.scrollTo(0, 0);
     loadPage(u, false);
   }
+  // Custom "top of last N days": read the days input from the time menu and
+  // navigate to ?days=N (jsonUrlFor maps it to a bucket; buildBody filters to the window).
+  function submitCustomDays(fromEl) {
+    const area = fromEl.closest(".menuarea") || document;
+    const input = area.querySelector(".orr-days-input");
+    const n = input ? parseInt(input.value, 10) : NaN;
+    if (!(n > 0)) { if (input) input.focus(); return; }
+    const r = ORR.isListingRoute(new URL(location.href));
+    if (!r) return;
+    navigateTo(r.basePath + "/?days=" + Math.min(n, 3650));
+  }
+
   function openQuickSwitch() {
     if (document.getElementById("orr-qs")) return;
     const ov = document.createElement("div");
@@ -2380,7 +2421,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       q.set("before", params.before);
       q.set("count", params.count || "25");
     }
-    if ((route.sort === "top" || route.sort === "controversial") && params.t) q.set("t", params.t);
+    if (route.sort === "top" || route.sort === "controversial") {
+      // custom "last N days" → fetch the smallest bucket covering N days, then filter
+      const bucket = params.days ? bucketForDays(params.days) : params.t;
+      if (bucket) q.set("t", bucket);
+    }
     return location.origin + route.basePath + "/.json?" + q.toString();
   }
 
@@ -2419,7 +2464,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function renderInto(route, json, params) {
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
-    const body = buildBody(route, json, { startCount, t: params.t, me: meCached });
+    const sinceUtc = daysSince(params.days); // custom "last N days" window (null otherwise)
+    const body = buildBody(route, json, { startCount, t: params.t, days: params.days, sinceUtc, me: meCached });
     const sub = route.scope === "front" ? "reddit" : "r/" + route.sub;
     replaceBody(body, sub + " — old reddit");
     patchHeader();
@@ -2428,11 +2474,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
     const l0 = (json && json.data) || {};
     const showSub = route.scope === "front" || route.scope === "multi" || route.combined || route.sub === "all" || route.sub === "popular";
-    const count0 = startCount + (l0.children || []).filter((c) => c.kind === "t3").length;
+    let kids0 = (l0.children || []).filter((c) => c.kind === "t3");
+    if (sinceUtc) kids0 = kids0.filter((c) => (c.data.created_utc || 0) >= sinceUtc);
+    const count0 = startCount + kids0.length; // match buildBody's displayed count so ranks stay continuous
     setupInfinite(
       async (after, count) => {
-        const j = await fetchListing(route, { after, count, t: params.t });
-        const kids = (((j && j.data) || {}).children || []).filter((c) => c.kind === "t3");
+        const j = await fetchListing(route, { after, count, t: params.t, days: params.days });
+        let kids = (((j && j.data) || {}).children || []).filter((c) => c.kind === "t3");
+        if (sinceUtc) kids = kids.filter((c) => (c.data.created_utc || 0) >= sinceUtc);
         const html = kids
           .map((c, i) => buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub, expandoButton: true }))
           .join("");
@@ -2499,6 +2548,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       before: url.searchParams.get("before"),
       count: url.searchParams.get("count"),
       t: url.searchParams.get("t"),
+      days: url.searchParams.get("days"),
     };
     hideGuard();
     // Safety: if a fetch truly hangs on first load, never leave the page blank —
@@ -2922,6 +2972,71 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     moreTimers.clear();
   }
 
+  // ---------- post "share" panel (old-reddit's inline sharing) ----------
+  // Clicking "share" opens the same .post-sharing panel old reddit used: a
+  // readonly, auto-selected Link input plus Facebook/Twitter/Tumblr popups. The
+  // bundled 2019 stylesheet already styles .post-sharing (the social icons are
+  // baked in as data-URIs), so mirroring the DOM gives an authentic panel.
+  // Email / reddit-PM sharing is omitted — it needs a write-scoped token this
+  // read-only extension doesn't have.
+  const SHARE_NETS = [["facebook", "Facebook"], ["twitter", "Twitter"], ["tumblr", "Tumblr"]];
+  function shareLinkFor(permalink, source) {
+    const sep = permalink.indexOf("?") >= 0 ? "&" : "?";
+    return location.origin + permalink + sep + "ref=share&ref_source=" + source;
+  }
+  function buildSharePanel(permalink) {
+    const opts = SHARE_NETS.map(([name, label]) =>
+      `<div class="post-sharing-option post-sharing-option-${name}" data-post-sharing-option="${name}" role="button" tabindex="0">` +
+        `<div class="c-tooltip" role="tooltip"><div class="tooltip-arrow bottom"></div>` +
+        `<div class="tooltip-inner">Share to ${label}</div></div></div>`
+    ).join("");
+    return (
+      `<div class="post-sharing" style="display:block">` +
+        `<a href="#" class="c-close c-hide-text" aria-label="close">close this window</a>` +
+        `<div class="post-sharing-main post-sharing-form" style="display:block">` +
+          `<div class="c-form-group"><div class="post-sharing-label">Share with:</div>` +
+            `<div class="post-sharing-options">${opts}</div></div>` +
+          `<div class="c-form-group"><div class="post-sharing-label">Link:</div>` +
+            `<input class="post-sharing-link-input c-form-control" name="link" type="text" readonly ` +
+              `value="${esc(shareLinkFor(permalink, "link"))}"></div>` +
+        `</div>` +
+      `</div>`
+    );
+  }
+  function closeSharePanels() {
+    document.querySelectorAll(".post-sharing").forEach((p) => p.remove());
+  }
+  function toggleSharePanel(shareBtn) {
+    const thing = shareBtn.closest(".thing");
+    const buttons = shareBtn.closest("ul.buttons") || (thing && thing.querySelector(".entry .buttons"));
+    if (!buttons) return;
+    const hadOwn = !!(thing && thing.querySelector(".post-sharing"));
+    closeSharePanels(); // only one open at a time
+    if (hadOwn) return; // clicking share again on the same post just closes it
+    const permalink = shareBtn.getAttribute("href") || (thing && thing.querySelector(".entry a.comments") &&
+      thing.querySelector(".entry a.comments").getAttribute("href"));
+    if (!permalink) return;
+    buttons.insertAdjacentHTML("afterend", buildSharePanel(permalink));
+    const input = buttons.parentElement.querySelector(".post-sharing .post-sharing-link-input");
+    if (input) { input.focus(); input.select(); }
+  }
+  function openShareIntent(optEl) {
+    const thing = optEl.closest(".thing");
+    const shareBtn = thing && thing.querySelector("a.post-sharing-button");
+    const permalink = shareBtn && shareBtn.getAttribute("href");
+    if (!permalink) return;
+    const net = optEl.getAttribute("data-post-sharing-option");
+    const titleEl = thing.querySelector(".entry a.title");
+    const title = titleEl ? titleEl.textContent : "";
+    const url = shareLinkFor(permalink, net);
+    let intent = "";
+    if (net === "facebook") intent = "https://www.facebook.com/sharer/sharer.php?u=" + encodeURIComponent(url);
+    else if (net === "twitter") intent = "https://twitter.com/intent/tweet?url=" + encodeURIComponent(url) + "&text=" + encodeURIComponent(title) + "&via=reddit";
+    else if (net === "tumblr") intent = "https://www.tumblr.com/widgets/share/tool?canonicalUrl=" + encodeURIComponent(url) + "&posttype=link&title=" + encodeURIComponent(title);
+    else return;
+    window.open(intent, net, "width=550,height=420,noopener");
+  }
+
   function wireNav() {
     if (wired) return;
     wired = true;
@@ -2947,6 +3062,20 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           spoiler.classList.add("revealed");
           return;
         }
+        // "share" button → toggle the inline share panel (copyable link + socials).
+        const shareBtn = e.target.closest && e.target.closest("a.post-sharing-button");
+        if (shareBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleSharePanel(shareBtn);
+          return;
+        }
+        const shareClose = e.target.closest && e.target.closest(".post-sharing .c-close");
+        if (shareClose) { e.preventDefault(); e.stopPropagation(); closeSharePanels(); return; }
+        const shareOpt = e.target.closest && e.target.closest(".post-sharing-option");
+        if (shareOpt) { e.preventDefault(); e.stopPropagation(); openShareIntent(shareOpt); return; }
+        const shareInput = e.target.closest && e.target.closest(".post-sharing-link-input");
+        if (shareInput) { shareInput.focus(); shareInput.select(); return; } // re-select for easy copy
         // Comment collapse toggle.
         const expandLink = e.target.closest && e.target.closest("a.expand");
         if (expandLink) {
@@ -3027,6 +3156,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           handleMore(moreEl);
           return;
         }
+        // Custom "last N days" top filter → read the input and navigate to ?days=N.
+        const daysGo = e.target.closest && e.target.closest("a.orr-days-go");
+        if (daysGo) {
+          e.preventDefault();
+          e.stopPropagation();
+          submitCustomDays(daysGo);
+          return;
+        }
         const a = e.target.closest && e.target.closest("a[href]");
         if (!a) return;
         // Modified / non-left click, or target=_blank → let the browser open a new
@@ -3078,6 +3215,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       },
       true
     );
+
+    // Enter inside the custom "last N days" input submits it.
+    document.addEventListener("keydown", (e) => {
+      if (!active) return;
+      const t = e.target;
+      if (e.key === "Enter" && t && t.classList && t.classList.contains("orr-days-input")) {
+        e.preventDefault();
+        e.stopPropagation();
+        submitCustomDays(t);
+      }
+    }, true);
 
     window.addEventListener("popstate", () => {
       if (!active) return;
