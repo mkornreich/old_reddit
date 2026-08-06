@@ -1,6 +1,6 @@
 # Classic Layout for Reddit
 
-**[▶ Install for Firefox (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)** &nbsp;·&nbsp; **[▶ Install for Edge (Microsoft Store)](https://microsoftedge.microsoft.com/addons/detail/classic-layout-for-reddit/jpccopdjifaoidblbnhaeobelcldnoop)** &nbsp;·&nbsp; Chrome/Brave/Opera: [load unpacked](#install-on-chrome-and-edge--brave--opera)
+**[▶ Install for Firefox (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)** &nbsp;·&nbsp; **[▶ Install for Edge (Microsoft Store)](https://microsoftedge.microsoft.com/addons/detail/classic-layout-for-reddit/jpccopdjifaoidblbnhaeobelcldnoop)** &nbsp;·&nbsp; Chrome/Brave/Opera: [load unpacked](#install-on-chrome-brave-and-opera)
 
 A dependency-free browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
 Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches each page
@@ -129,17 +129,30 @@ resulting `.xpi` as in Option 1.
 
 ---
 
-## Install on Chrome (and Edge / Brave / Opera)
-
-**Microsoft Edge — one-click install** from the official store:
+## Install on Microsoft Edge
 
 **[▶ Install from the Microsoft Edge Add-ons store](https://microsoftedge.microsoft.com/addons/detail/classic-layout-for-reddit/jpccopdjifaoidblbnhaeobelcldnoop)**
 
-It's reviewed by Microsoft, installs permanently, and auto-updates — no Developer mode needed.
+One-click install, reviewed by Microsoft — it installs permanently and auto-updates, with no Developer mode needed.
 
-For **Chrome, Brave, and Opera** there's no Chrome Web Store listing yet, so install it
-**unpacked** from a clone of this repo. All three are Chromium-based, so the **same
-folder** loads in every one of them — no separate build.
+1. Open the link above **in Microsoft Edge**.
+2. Click **Get** → **Add extension**.
+3. **Log in to Reddit** (the extension reads Reddit's own API, which requires being
+   signed in), then open any subreddit — e.g. `https://www.reddit.com/r/pics` — and it
+   renders in the classic layout.
+4. Manage it any time from the toolbar button (quick toggles) or
+   `edge://extensions` → **Details** → **Extension options** (all settings + filters).
+
+> Edge is Chromium-based, so you can alternatively load it **unpacked** for development
+> (see the Chrome steps below) — but the store is the easy path.
+
+---
+
+## Install on Chrome, Brave, and Opera
+
+There's no Chrome Web Store listing yet, so install it **unpacked** from a clone of
+this repo. All three are Chromium-based, so the **same folder** loads in every one of
+them — no separate build.
 
 1. Clone or download this repo to a folder you'll **keep in place** (Chrome
    remembers the path; if you move or delete the folder, the extension breaks on
@@ -163,7 +176,8 @@ folder** loads in every one of them — no separate build.
 >
 > **Polished option:** publishing to the Chrome Web Store ($5 one-time developer
 > fee) gives one-click installs that survive updates and need no Developer mode.
-> Edge, Brave, and Opera can all install from the Chrome Web Store too.
+> Brave and Opera can install from the Chrome Web Store too. (Edge already has its
+> own one-click store listing — see above.)
 
 ### Publishing to the Chrome Web Store
 
