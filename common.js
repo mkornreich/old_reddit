@@ -17,11 +17,12 @@
     enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: false,
     subredditCss: true, autoplayMedia: false, hideRead: false, autoCollapseBots: false,
     compactView: false, nightAuto: false, highContrast: false, dyslexiaFont: false,
+    videoLoop: false, hoverPreview: true,
   });
   const BOOL_PREFS = [
     "enabled", "infiniteScroll", "nightMode", "redirect", "videoMuted",
     "subredditCss", "autoplayMedia", "hideRead", "autoCollapseBots",
-    "compactView", "nightAuto", "highContrast", "dyslexiaFont",
+    "compactView", "nightAuto", "highContrast", "dyslexiaFont", "videoLoop", "hoverPreview",
   ];
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];
@@ -69,7 +70,7 @@
     const s = await areaGet(syncArea(), { filters: null, favoriteSubs: null });
     const l = await areaGet(api.storage.local, {
       filters: null, favoriteSubs: null, userTags: null, threadVisits: null, visitedPosts: null, collapsedComments: null,
-      commentSorts: null, recentSubs: null,
+      commentSorts: null, recentSubs: null, subPrefs: null, keyBindings: null, ui: null,
     });
     return {
       filters: s.filters || l.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [], highlights: [] },
@@ -80,6 +81,9 @@
       collapsedComments: l.collapsedComments || {},
       commentSorts: l.commentSorts || {},
       recentSubs: l.recentSubs || [],
+      subPrefs: l.subPrefs || {},       // per-subreddit overrides: sub -> {night,sort,t,autoExpand}
+      keyBindings: l.keyBindings || {}, // action -> key (overrides defaults)
+      ui: l.ui || {},                   // numeric UI prefs: {contentWidth,fontSize,videoSpeed,videoVolume}
     };
   }
 

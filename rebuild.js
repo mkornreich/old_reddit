@@ -197,6 +197,14 @@
   }
 
   // Build one old-reddit listing item (.thing.link) from a post's `data` object.
+  // Coarse post type for the post-type filter (image / video / text / link).
+  function postType(d) {
+    if (d.is_self) return "text";
+    if (d.is_video || (d.media && d.media.reddit_video) || d.post_hint === "hosted:video" || d.post_hint === "rich:video") return "video";
+    if (d.is_gallery || d.post_hint === "image" || isImageUrl(d.url || "")) return "image";
+    return "link";
+  }
+
   function buildItem(d, opts) {
     opts = opts || {};
     const permalink = d.permalink || "/comments/" + (d.id || "");
@@ -231,7 +239,8 @@
       ` data-fullname="${esc(d.name)}" data-permalink="${esc(permalink)}" data-subreddit="${esc(d.subreddit)}"` +
       ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}"` +
       ` data-flair="${esc(flairText)}" data-score="${esc(typeof d.score === "number" ? d.score : "")}" data-created="${esc(d.created_utc || 0)}"` +
-      ` data-promoted="${d.promoted || d.is_created_from_ads_ui ? "true" : "false"}">` +
+      ` data-promoted="${d.promoted || d.is_created_from_ads_ui ? "true" : "false"}"` +
+      ` data-ptype="${postType(d)}" data-crosspost="${d.crosspost_parent || (d.crosspost_parent_list && d.crosspost_parent_list.length) ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
       `<div class="midcol unvoted">` +
       `<div class="arrow up login-required" aria-hidden="true"></div>` +
@@ -821,7 +830,7 @@
 
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
-    bucketForDays, daysSince, shareLinkFor, buildSharePanel,
+    bucketForDays, daysSince, shareLinkFor, buildSharePanel, postType,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
@@ -848,7 +857,7 @@
 
   function fetchMe() {
     if (mePromise) return mePromise;
-    mePromise = fetch(location.origin + "/api/me.json", { credentials: "include", headers: { Accept: "application/json" } })
+    mePromise = redditFetch(location.origin + "/api/me.json")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         meCached = j && (j.name || (j.data && j.data.name)) ? j : null;
@@ -903,6 +912,37 @@
       /* headers not readable */
     }
     return 0;
+  }
+
+  // Global post-429 cooldown: after Reddit rate-limits us, remember it and grow
+  // the minimum gap enforced before EVERY subsequent API call, so we stop
+  // hammering. The gap escalates on repeated 429s and resets after a quiet spell.
+  const DEFAULT_FETCH_OPTS = { credentials: "include", headers: { Accept: "application/json" } };
+  const RL_STEP = 4000;    // first gap after a 429
+  const RL_CAP = 20000;    // never space calls more than this
+  const RL_DECAY = 90000;  // no 429 for this long → drop back to full speed
+  let rlGap = 0;           // current min ms between reddit API calls
+  let rlNextAt = 0;        // earliest timestamp the next call may run
+  let rlLast429 = 0;       // remembered time of the most recent 429
+  function noteRateLimit(retryAfterSec) {
+    const now = nowMsNow();
+    rlLast429 = now;
+    rlGap = Math.min(Math.max(rlGap ? rlGap * 2 : RL_STEP, (retryAfterSec || 0) * 1000), RL_CAP);
+    rlNextAt = now + rlGap;
+    try { api.storage.local.set({ rl429: { at: now, gap: rlGap } }); } catch (e) {} // survive reloads
+  }
+  async function rlWait() {
+    if (rlGap && nowMsNow() - rlLast429 > RL_DECAY) { rlGap = 0; rlNextAt = 0; } // quiet → reset
+    const now = nowMsNow();
+    if (rlNextAt > now) await sleep(rlNextAt - now);
+    if (rlGap) rlNextAt = nowMsNow() + rlGap; // reserve the next slot so calls stay spaced
+  }
+  async function redditFetch(url, opts) {
+    await rlWait();
+    const o = opts || DEFAULT_FETCH_OPTS;
+    const res = await fetch(url, o);
+    if (res && res.status === 429) noteRateLimit(retryAfterOf(res));
+    return res;
   }
 
   // --- Infinite scroll (RES "never-ending reddit") ---------------------
@@ -1043,6 +1083,19 @@
     el.classList.toggle("orr-contrast", p.highContrast === true);
     el.classList.toggle("orr-dyslexic", p.dyslexiaFont === true);
   }
+  // Content-width / font-size sliders: drive CSS custom properties on <html>.
+  function applyLayoutVars(ui) {
+    const el = document.documentElement;
+    if (!el) return;
+    ui = ui || {};
+    const w = parseInt(ui.contentWidth, 10);
+    const fs = parseInt(ui.fontSize, 10);
+    const customFont = fs > 0 && fs !== 100;
+    el.style.setProperty("--orr-content-width", w > 0 ? w + "px" : "");
+    el.style.setProperty("--orr-font-scale", customFont ? String(fs / 100) : "");
+    el.classList.toggle("orr-custom-width", w > 0);
+    el.classList.toggle("orr-custom-font", customFont);
+  }
   // Auto night mode on a simple local-time schedule (dark 8pm–7am).
   function applyNightSchedule() {
     if (!nightAutoOn) return;
@@ -1063,8 +1116,7 @@
     if (!subredditCssOn || !sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
     const gen = navGen;
     try {
-      const res = await fetch(location.origin + "/r/" + encodeURIComponent(sub) + "/about/stylesheet.json?raw_json=1",
-        { credentials: "include", headers: { Accept: "application/json" } });
+      const res = await redditFetch(location.origin + "/r/" + encodeURIComponent(sub) + "/about/stylesheet.json?raw_json=1");
       if (gen !== navGen || !res.ok) return; // navigated away → drop this sub's CSS
       const j = await res.json();
       if (gen !== navGen) return;
@@ -1090,6 +1142,9 @@
 a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:pointer; margin-right:2px; }
 .thing.orr-kb-sel > .entry { outline:2px solid #ff4500; outline-offset:1px; }
 .thing.orr-filtered { display:none !important; }
+#siteTable.orr-reveal-filtered .thing.orr-filtered { display:block !important; opacity:.5; outline:1px dashed #c33; }
+#orr-filtered-bar { margin:0 5px 6px; padding:4px 8px; font-size:12px; color:#555; background:#f6f6f6; border:1px solid #e0e0e0; border-radius:3px; }
+#orr-filtered-bar a.orr-filtered-toggle { color:#369; font-weight:bold; cursor:pointer; }
 /* Old-reddit's archived sprite dropped the image expando icon, so image/gallery
    posts rendered an invisible (icon-less) expando box. Restore a visible icon. */
 .expando-button.image { background-repeat:no-repeat; background-position:center center; }
@@ -1119,10 +1174,32 @@ a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 button.orr-mute { position:absolute; top:8px; right:8px; z-index:6; background:rgba(0,0,0,.55); color:#fff;
   border:none; border-radius:4px; padding:2px 7px; cursor:pointer; font-size:15px; line-height:1.5; }
 button.orr-mute:hover { background:rgba(0,0,0,.82); }
+/* video niceties: playback-speed + loop controls, shown below the player */
+.orr-vctl { line-height:normal; margin-top:3px; display:flex; gap:5px; }
+.orr-vctl button { background:#eee; color:#333; border:1px solid #ccc; border-radius:3px; font:11px verdana,sans-serif; padding:2px 7px; cursor:pointer; }
+.orr-vctl button:hover { background:#e2e2e2; }
+.orr-vctl .orr-vloop.on { background:#ff4500; color:#fff; border-color:#ff4500; }
+/* content-width & font-size sliders (Options) */
+html.orr-custom-width body { max-width:var(--orr-content-width); margin-left:auto; margin-right:auto; }
+html.orr-custom-font #siteTable, html.orr-custom-font .commentarea { zoom:var(--orr-font-scale); }
+/* image lightbox */
+html.orr-lb-open { overflow:hidden; }
+#orr-lightbox { position:fixed; inset:0; z-index:2147483640; background:rgba(0,0,0,.9); display:flex; align-items:center; justify-content:center; }
+#orr-lightbox #orr-lb-img { max-width:95vw; max-height:92vh; transform-origin:center; user-select:none; box-shadow:0 4px 40px rgba(0,0,0,.6); }
+#orr-lightbox .orr-lb-bar { position:absolute; top:0; left:0; right:0; height:38px; display:flex; align-items:center; gap:14px; padding:0 14px; color:#fff; font:13px verdana,sans-serif; background:linear-gradient(rgba(0,0,0,.55),transparent); }
+#orr-lightbox #orr-lb-count { margin-right:auto; }
+#orr-lightbox .orr-lb-bar a { color:#8cf; text-decoration:none; }
+#orr-lightbox .orr-lb-close { background:none; border:none; color:#fff; font-size:20px; cursor:pointer; line-height:1; }
+#orr-lightbox .orr-lb-prev, #orr-lightbox .orr-lb-next { position:absolute; top:50%; transform:translateY(-50%); background:rgba(0,0,0,.4); color:#fff; border:none; font-size:40px; width:52px; height:82px; cursor:pointer; }
+#orr-lightbox .orr-lb-prev { left:0; } #orr-lightbox .orr-lb-next { right:0; }
+#orr-lightbox .orr-lb-prev:hover, #orr-lightbox .orr-lb-next:hover { background:rgba(0,0,0,.7); }
+/* RES-style hover preview */
+#orr-hoverimg { position:fixed; z-index:2147483630; display:none; pointer-events:none; background:#fff; border:1px solid #888; box-shadow:0 4px 20px rgba(0,0,0,.4); padding:2px; }
+#orr-hoverimg img { display:block; max-width:44vw; max-height:80vh; }
 .orr-pdf { width:100%; height:80vh; background:#fff; }
 .orr-directaudio { width:100%; max-width:640px; display:block; }
 /* drag-resizable images (RES-style); double-click to reset */
-.orr-resizable { display:inline-block; overflow:hidden; resize:both; max-width:100%; line-height:0; }
+.orr-resizable { display:inline-block; overflow:hidden; max-width:100%; line-height:0; cursor:zoom-in; }
 .orr-resizable img.preview { width:100%; height:100%; object-fit:contain; display:block; max-width:none; max-height:none; }
 /* NSFW / spoiler blur with click-to-reveal */
 .expando.orr-nsfw, .expando.orr-spoiler { position:relative; }
@@ -1366,42 +1443,20 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!active || e.ctrlKey || e.metaKey || e.altKey) return;
     const tag = (document.activeElement && document.activeElement.tagName) || "";
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    switch (e.key) {
-      case "j": kbSelect(kbIdx + 1); e.preventDefault(); break;
-      case "k": kbSelect(kbIdx - 1); e.preventDefault(); break;
-      case "o":
-      case "Enter": {
-        const c = kbCurrent();
-        const a = c && c.querySelector(".title a, a.bylink");
-        if (a) a.click();
-        break;
-      }
-      case "x": {
-        const c = kbCurrent();
-        const btn = c && c.querySelector(".expando-button");
-        if (btn) btn.click();
-        else if (c && c.classList.contains("comment")) {
-          const ex = c.querySelector(":scope > .entry .expand");
-          if (ex) ex.click();
-        }
-        break;
-      }
-      case "c": {
-        const c = kbCurrent();
-        const a = c && c.querySelector("a.comments, a.bylink.comments");
-        if (a) a.click();
-        break;
-      }
-      case "g": openQuickSwitch(); e.preventDefault(); break;
-      case "ArrowLeft": if (hoverGallery) { navGallery(hoverGallery, -1); e.preventDefault(); } else return; break;
-      case "ArrowRight": if (hoverGallery) { navGallery(hoverGallery, 1); e.preventDefault(); } else return; break;
-      case "?": toggleHelp(); e.preventDefault(); break;
-      case "Escape":
-        if (document.getElementById("orr-help")) { closeHelp(); e.preventDefault(); }
-        else hideHoverCard();
-        return;
-      default: return;
+    if (document.getElementById("orr-lightbox")) return; // the lightbox owns its own keys
+    // Special / contextual keys (not remappable).
+    if (e.key === "Enter") { runKeyAction("open"); return; }
+    if (e.key === "Escape") {
+      if (document.getElementById("orr-help")) { closeHelp(); e.preventDefault(); }
+      else hideHoverCard();
+      return;
     }
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if (hoverGallery) { navGallery(hoverGallery, e.key === "ArrowRight" ? 1 : -1); e.preventDefault(); }
+      return;
+    }
+    const action = keyToActionMap()[e.key];
+    if (action) { runKeyAction(action); e.preventDefault(); }
   }
 
   // ---- collapse comments ----
@@ -1494,11 +1549,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return compiled.some((c) => (c.plain != null ? lower.indexOf(c.plain) >= 0 : c.test(text)));
   }
   function applyFilters(scope) {
+    // Never filter on a comments page — the single #siteTable .thing.link is the
+    // post the user deliberately opened; hiding it (and a "1 hidden" banner) is wrong.
+    if (document.querySelector(".commentarea")) { const b = document.getElementById("orr-filtered-bar"); if (b) b.remove(); return; }
     const f = dataCache.filters || {};
     const kw = compileRegexes(f.keywords);
     const hl = compileRegexes(f.highlights);
     const now = Math.floor(nowMsNow() / 1000);
     const root = scope && scope.querySelectorAll ? scope : document;
+    const types = Array.isArray(f.postTypes) && f.postTypes.length ? f.postTypes : null; // types to HIDE
     root.querySelectorAll("#siteTable .thing.link").forEach((p) => {
       const sub = (p.getAttribute("data-subreddit") || "").toLowerCase();
       const author = (p.getAttribute("data-author") || "").toLowerCase();
@@ -1510,6 +1569,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const created = parseInt(p.getAttribute("data-created") || "0", 10);
       const nsfw = p.getAttribute("data-nsfw") === "true";
       const promoted = p.getAttribute("data-promoted") === "true";
+      const ptype = p.getAttribute("data-ptype") || "";
+      const crosspost = p.getAttribute("data-crosspost") === "true";
       const read = p.classList.contains("orr-visited");
       const hide =
         (f.subreddits || []).some((s) => s && s.toLowerCase() === sub) ||
@@ -1519,12 +1580,32 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         (kw.length && matchAny(kw, title)) ||
         (promoted && f.hidePromoted) ||
         (nsfw && f.hideNsfw) ||
+        (types && types.indexOf(ptype) >= 0) ||
+        (crosspost && f.hideCrossposts) ||
         (f.minScore != null && !isNaN(score) && score < f.minScore) ||
         (f.maxAgeHours != null && created && (now - created) > f.maxAgeHours * 3600) ||
         (hideReadOn && read);
       p.classList.toggle("orr-filtered", hide);
       p.classList.toggle("orr-highlight", !hide && hl.length > 0 && matchAny(hl, title));
     });
+    updateFilteredBanner();
+  }
+
+  // "N posts hidden — show" banner above the listing, so filters aren't silent.
+  function updateFilteredBanner() {
+    const st = document.getElementById("siteTable");
+    if (!st || !st.parentNode) return;
+    const n = st.querySelectorAll(".thing.link.orr-filtered").length;
+    let bar = document.getElementById("orr-filtered-bar");
+    if (!n) { if (bar) bar.remove(); st.classList.remove("orr-reveal-filtered"); return; }
+    const revealing = st.classList.contains("orr-reveal-filtered");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "orr-filtered-bar";
+      st.parentNode.insertBefore(bar, st);
+    }
+    bar.innerHTML = `${n} post${n === 1 ? "" : "s"} hidden by your filters — ` +
+      `<a href="#" class="orr-filtered-toggle">${revealing ? "re-hide" : "show"}</a>`;
   }
 
   // ---- new comments since last visit ----
@@ -1609,7 +1690,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     try { path = new URL(img.getAttribute("src") || img.src, location.origin).pathname; } catch (e) { return; }
     if (!previewJsonPromise) {
       const jsonUrl = location.origin + location.pathname.replace(/\/$/, "") + "/.json?raw_json=1";
-      previewJsonPromise = fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } })
+      previewJsonPromise = redditFetch(jsonUrl)
         .then((res) => (res.ok ? res.text() : ""))
         .catch(() => "");
       setTimeout(() => { previewJsonPromise = null; }, 30000); // allow a fresh fetch later
@@ -1624,17 +1705,51 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   // ---- keyboard-shortcuts help overlay ----
-  const SHORTCUTS = [
-    ["j / k", "next / previous item"],
-    ["o / Enter", "open selected item"],
-    ["c", "open comments (on a listing)"],
-    ["g", "go to subreddit (quick switcher)"],
-    ["x", "expand media / collapse comment"],
-    ["← / →", "gallery previous / next (while hovering a gallery)"],
-    ["comment nav", "▲▼ top comments, OP, new (widget, top-right)"],
-    ["?", "toggle this help"],
-    ["Esc", "close popups"],
-  ];
+  // Remappable keyboard actions: default key + label. User overrides live in
+  // dataCache.keyBindings (action -> key), edited on the Options page.
+  const KEY_ACTIONS = {
+    next:        { def: "j", label: "next item" },
+    prev:        { def: "k", label: "previous item" },
+    open:        { def: "o", label: "open selected item (or Enter)" },
+    expand:      { def: "x", label: "expand media / collapse comment" },
+    comments:    { def: "c", label: "open comments (on a listing)" },
+    goto:        { def: "g", label: "go to subreddit (quick switcher)" },
+    nextNew:     { def: "n", label: "next new comment (since last visit)" },
+    prevNew:     { def: "p", label: "previous new comment" },
+    collapseTop: { def: "[", label: "collapse / expand all top-level threads" },
+    focusThread: { def: "]", label: "collapse other threads (focus this one)" },
+    help:        { def: "?", label: "toggle this help" },
+  };
+  const KEY_ACTION_ORDER = ["next", "prev", "open", "expand", "comments", "goto", "nextNew", "prevNew", "collapseTop", "focusThread", "help"];
+  function keyForAction(name) {
+    const kb = (dataCache && dataCache.keyBindings) || {};
+    return kb[name] || (KEY_ACTIONS[name] && KEY_ACTIONS[name].def);
+  }
+  function keyToActionMap() {
+    const m = {};
+    KEY_ACTION_ORDER.forEach((name) => { const k = keyForAction(name); if (k) m[k] = name; });
+    return m;
+  }
+  function runKeyAction(name) {
+    switch (name) {
+      case "next": kbSelect(kbIdx + 1); break;
+      case "prev": kbSelect(kbIdx - 1); break;
+      case "open": { const c = kbCurrent(); const a = c && c.querySelector(".title a, a.bylink"); if (a) a.click(); break; }
+      case "expand": { const c = kbCurrent(); const btn = c && c.querySelector(".expando-button"); if (btn) btn.click(); else if (c && c.classList.contains("comment")) { const ex = c.querySelector(":scope > .entry .expand"); if (ex) ex.click(); } break; }
+      case "comments": { const c = kbCurrent(); const a = c && c.querySelector("a.comments, a.bylink.comments"); if (a) a.click(); break; }
+      case "goto": openQuickSwitch(); break;
+      case "nextNew": jumpComment(1, newComments()); break;
+      case "prevNew": jumpComment(-1, newComments()); break;
+      case "collapseTop": collapseAllTop(); break;
+      case "focusThread": focusThread(); break;
+      case "help": toggleHelp(); break;
+    }
+  }
+  function buildShortcuts() {
+    const key = (a) => { const k = keyForAction(a); return k === " " ? "Space" : k; };
+    return KEY_ACTION_ORDER.map((a) => [key(a), KEY_ACTIONS[a].label])
+      .concat([["← / →", "gallery / lightbox previous / next"], ["Esc", "close popups / lightbox"]]);
+  }
   let helpPrevFocus = null;
   function toggleHelp() {
     if (document.getElementById("orr-help")) { closeHelp(); return; }
@@ -1646,8 +1761,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     ov.tabIndex = -1;
     ov.innerHTML =
       '<div class="orr-help-box"><h2>Keyboard shortcuts</h2><table>' +
-      SHORTCUTS.map((s) => '<tr><td class="k">' + esc(s[0]) + "</td><td>" + esc(s[1]) + "</td></tr>").join("") +
-      '</table><p class="orr-help-close">press <b>?</b> or <b>Esc</b> to close</p></div>';
+      buildShortcuts().map((s) => '<tr><td class="k">' + esc(s[0]) + "</td><td>" + esc(s[1]) + "</td></tr>").join("") +
+      '</table><p class="orr-help-close">press <b>?</b> or <b>Esc</b> to close · remap keys in Options</p></div>';
     ov.addEventListener("click", (e) => { if (e.target === ov) closeHelp(); });
     document.body.appendChild(ov);
     helpPrevFocus = document.activeElement;
@@ -1717,7 +1832,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function fetchJsonCached(url) {
     if (enhanceCache.has(url)) return enhanceCache.get(url);
-    const p = fetch(url, { credentials: "include", headers: { Accept: "application/json" } })
+    const p = redditFetch(url)
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
     enhanceCache.set(url, p);
@@ -1737,9 +1852,32 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     document.addEventListener("mouseover", (e) => {
       hoverGallery = (e.target.closest && e.target.closest(".orr-gallery")) || null;
     }, true);
-    // Double-click a resized image to reset it to its natural size.
+    // RES-style hover preview: peek an image/gif by hovering a post link (no click).
+    document.addEventListener("mouseover", (e) => {
+      if (!hoverPreviewOn) return;
+      const a = e.target.closest && e.target.closest(".thing.link a.title, .thing.link a.thumbnail");
+      if (!a) return;
+      const src = hoverPreviewSrc(a.closest(".thing.link"));
+      if (!src) return;
+      clearTimeout(hoverImgTimer);
+      hoverImgTimer = setTimeout(() => showHoverImg(src), 200);
+    }, true);
+    document.addEventListener("mousemove", (e) => {
+      lastMouseX = e.clientX; lastMouseY = e.clientY;
+      const el = document.getElementById("orr-hoverimg");
+      if (el && el.style.display === "block") positionHoverImg(el, e.clientX, e.clientY);
+    }, true);
+    document.addEventListener("mouseout", (e) => {
+      const a = e.target.closest && e.target.closest(".thing.link a.title, .thing.link a.thumbnail");
+      if (!a) return;
+      const to = e.relatedTarget;
+      if (to && to.closest && to.closest(".thing.link a.title, .thing.link a.thumbnail") === a) return;
+      hideHoverImg();
+    }, true);
+    // Double-click a resized inline comment image to reset it. (Post expando
+    // images open the lightbox on click instead of resizing in-place.)
     document.addEventListener("dblclick", (e) => {
-      const r = e.target.closest && e.target.closest(".orr-resizable, .orr-inline-img");
+      const r = e.target.closest && e.target.closest(".orr-inline-img");
       if (r) { r.style.width = ""; r.style.height = ""; }
     });
     // Refetch reddit preview images whose signed URL has expired (403).
@@ -1849,6 +1987,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // <video>'s native volume control because the video track has no audio — so we add
   // our own mute button. Mute state is global + persisted (orrVideoMuted).
   let orrVideoMuted = false;
+  let videoLoopOn = false, videoSpeed = 1, videoVolume = null; // remembered video prefs (ui blob + videoLoop bool)
+  let hoverPreviewOn = true, lastMouseX = 0, lastMouseY = 0;
+  function updateUi(patch) { dataCache.ui = Object.assign({}, dataCache.ui, patch); ORR.setPrefs({ ui: dataCache.ui }); }
   function setVideoMuted(m) {
     orrVideoMuted = !!m;
     document.querySelectorAll("video.reddit-video").forEach((v) => {
@@ -1877,6 +2018,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     audio.preload = "none";
     audio.style.display = "none";
     audio.muted = orrVideoMuted;
+    audio.loop = videoLoopOn; // loop the synced audio when the video is set to loop
     wrap.appendChild(audio);
     video._orrAudio = audio;
 
@@ -1948,6 +2090,182 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let vids;
     try { vids = root.querySelectorAll("video.reddit-video[data-audio-candidates]"); } catch (e) { return; }
     vids.forEach(wireRedditVideo);
+  }
+
+  // ---- video niceties: playback speed, loop, remembered volume ----
+  const VIDEO_SPEEDS = [1, 1.25, 1.5, 2, 0.5];
+  function setVideoLoop(on) {
+    videoLoopOn = !!on;
+    document.querySelectorAll(".orr-video-wrap video, video.orr-directvideo, .expando video").forEach((v) => {
+      v.loop = videoLoopOn;
+      if (v._orrAudio) v._orrAudio.loop = videoLoopOn; // reddit videos loop their synced audio too
+      if (v._orrPaintLoop) v._orrPaintLoop();
+    });
+    ORR.setPrefs({ videoLoop: videoLoopOn });
+  }
+  function addVideoControls(video) {
+    if (!video || video.dataset.orrVctl) return;
+    video.dataset.orrVctl = "1";
+    const isReddit = video.classList.contains("reddit-video"); // reddit videos carry sound on a separate <audio>
+    video.loop = videoLoopOn;
+    if (video._orrAudio) video._orrAudio.loop = videoLoopOn; // keep the synced audio looping in step
+    try { if (videoSpeed && videoSpeed !== 1) video.playbackRate = videoSpeed; } catch (e) {}
+    if (!isReddit && videoVolume != null) { try { video.volume = videoVolume; } catch (e) {} }
+    let wrap = video.closest(".orr-video-wrap");
+    if (!wrap) {
+      wrap = document.createElement("span");
+      wrap.className = "orr-video-wrap";
+      if (video.parentNode) video.parentNode.insertBefore(wrap, video);
+      wrap.appendChild(video);
+    }
+    if (wrap.querySelector(":scope > .orr-vctl")) return; // controls already present
+    const bar = document.createElement("div");
+    bar.className = "orr-vctl";
+    const speedBtn = document.createElement("button");
+    speedBtn.type = "button"; speedBtn.className = "orr-vspeed";
+    const paintSpeed = () => { const r = video.playbackRate || 1; speedBtn.textContent = (r % 1 ? r.toFixed(2).replace(/0$/, "") : r) + "×"; speedBtn.title = "playback speed (click to change)"; };
+    paintSpeed();
+    speedBtn.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      let i = VIDEO_SPEEDS.indexOf(video.playbackRate || 1);
+      try { video.playbackRate = VIDEO_SPEEDS[(i + 1) % VIDEO_SPEEDS.length]; } catch (err) {}
+    });
+    const loopBtn = document.createElement("button");
+    loopBtn.type = "button"; loopBtn.className = "orr-vloop"; loopBtn.textContent = "↻ loop";
+    const paintLoop = () => { loopBtn.classList.toggle("on", !!video.loop); loopBtn.setAttribute("aria-pressed", video.loop ? "true" : "false"); loopBtn.title = video.loop ? "loop on" : "loop off"; };
+    paintLoop();
+    video._orrPaintLoop = paintLoop;
+    loopBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); setVideoLoop(!video.loop); });
+    bar.appendChild(speedBtn); bar.appendChild(loopBtn);
+    wrap.appendChild(bar);
+    video.addEventListener("ratechange", () => {
+      paintSpeed();
+      const r = video.playbackRate || 1;
+      if (r !== videoSpeed) { videoSpeed = r; updateUi({ videoSpeed: r }); }
+    });
+    if (!isReddit) video.addEventListener("volumechange", () => {
+      if (video.volume !== videoVolume) { videoVolume = video.volume; updateUi({ videoVolume: video.volume }); }
+    });
+  }
+  function enhanceVideoControls(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    try { root.querySelectorAll(".expando video, video.reddit-video, video.orr-directvideo").forEach(addVideoControls); } catch (e) {}
+  }
+
+  // ---- image lightbox (click an expanded image → fullscreen zoom / pan / paging) ----
+  let lightboxState = null, lightboxKey = null, lightboxDragMove = null, lightboxDragUp = null;
+  function closeLightbox() {
+    const lb = document.getElementById("orr-lightbox");
+    if (lb) lb.remove();
+    if (lightboxKey) document.removeEventListener("keydown", lightboxKey, true);
+    if (lightboxDragMove) window.removeEventListener("mousemove", lightboxDragMove);
+    if (lightboxDragUp) window.removeEventListener("mouseup", lightboxDragUp);
+    lightboxState = lightboxKey = lightboxDragMove = lightboxDragUp = null;
+    document.documentElement.classList.remove("orr-lb-open");
+  }
+  function lightboxRender() {
+    const s = lightboxState; if (!s) return;
+    const img = document.getElementById("orr-lb-img"); if (!img) return;
+    if (img.getAttribute("src") !== s.srcs[s.idx]) {
+      img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); };
+      img.src = s.srcs[s.idx];
+    }
+    img.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
+    img.style.cursor = s.scale > 1 ? "grab" : "zoom-in";
+    const c = document.getElementById("orr-lb-count");
+    if (c) c.textContent = s.srcs.length > 1 ? `${s.idx + 1} / ${s.srcs.length}` : "";
+    const link = document.getElementById("orr-lb-open");
+    if (link) link.href = s.srcs[s.idx];
+  }
+  function lightboxTo(delta) {
+    const s = lightboxState; if (!s || s.srcs.length < 2) return;
+    s.idx = (s.idx + delta + s.srcs.length) % s.srcs.length;
+    s.scale = 1; s.tx = 0; s.ty = 0;
+    lightboxRender();
+  }
+  function openLightbox(srcs, idx) {
+    srcs = (srcs || []).filter(Boolean);
+    if (!srcs.length) return;
+    closeLightbox();
+    lightboxState = { srcs, idx: Math.min(Math.max(idx || 0, 0), srcs.length - 1), scale: 1, tx: 0, ty: 0 };
+    const lb = document.createElement("div");
+    lb.id = "orr-lightbox";
+    const multi = srcs.length > 1;
+    lb.innerHTML =
+      `<div class="orr-lb-bar"><span id="orr-lb-count"></span>` +
+        `<a id="orr-lb-open" target="_blank" rel="noopener noreferrer">open image ↗</a>` +
+        `<button type="button" class="orr-lb-close" aria-label="close">✕</button></div>` +
+      (multi ? `<button type="button" class="orr-lb-prev" aria-label="previous">‹</button>` : "") +
+      `<img id="orr-lb-img" alt="" draggable="false">` +
+      (multi ? `<button type="button" class="orr-lb-next" aria-label="next">›</button>` : "");
+    document.body.appendChild(lb);
+    document.documentElement.classList.add("orr-lb-open");
+    lightboxRender();
+    const img = document.getElementById("orr-lb-img");
+    img.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const s = lightboxState; if (!s) return;
+      s.scale = Math.min(8, Math.max(1, s.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+      if (s.scale === 1) { s.tx = 0; s.ty = 0; }
+      lightboxRender();
+    }, { passive: false });
+    let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    img.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (moved) { moved = false; return; } // this click ended a pan-drag → don't toggle zoom
+      const s = lightboxState; if (!s) return;
+      s.scale = s.scale > 1 ? 1 : 2; s.tx = 0; s.ty = 0; lightboxRender();
+    });
+    img.addEventListener("mousedown", (e) => {
+      if (!lightboxState || lightboxState.scale <= 1) return;
+      dragging = true; moved = false; sx = e.clientX; sy = e.clientY; ox = lightboxState.tx; oy = lightboxState.ty; e.preventDefault();
+    });
+    lightboxDragMove = (e) => {
+      if (!dragging || !lightboxState) return;
+      if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 3) moved = true;
+      lightboxState.tx = ox + (e.clientX - sx); lightboxState.ty = oy + (e.clientY - sy); lightboxRender();
+    };
+    lightboxDragUp = () => { dragging = false; };
+    window.addEventListener("mousemove", lightboxDragMove);
+    window.addEventListener("mouseup", lightboxDragUp);
+    lb.addEventListener("click", (e) => {
+      if (moved) { moved = false; return; } // a drag that ended on the backdrop → don't close
+      if (e.target.closest(".orr-lb-prev")) { lightboxTo(-1); return; }
+      if (e.target.closest(".orr-lb-next")) { lightboxTo(1); return; }
+      if (e.target.closest(".orr-lb-open")) return; // let the link open
+      if (e.target.closest(".orr-lb-close") || e.target === lb || e.target.closest(".orr-lb-bar")) closeLightbox();
+    });
+    lightboxKey = (e) => {
+      if (!lightboxState) return;
+      if (e.key === "Escape") { closeLightbox(); e.preventDefault(); e.stopPropagation(); }
+      else if (e.key === "ArrowRight") { lightboxTo(1); e.preventDefault(); e.stopPropagation(); }
+      else if (e.key === "ArrowLeft") { lightboxTo(-1); e.preventDefault(); e.stopPropagation(); }
+    };
+    document.addEventListener("keydown", lightboxKey, true);
+  }
+
+  // ---- RES-style hover preview (peek an image/gif without clicking) ----
+  let hoverImgTimer = null;
+  function hideHoverImg() { clearTimeout(hoverImgTimer); const el = document.getElementById("orr-hoverimg"); if (el) el.style.display = "none"; }
+  function positionHoverImg(el, x, y) {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const w = el.offsetWidth || 400, h = el.offsetHeight || 300;
+    let left = x + 18; if (left + w > vw - 8) left = x - w - 18; if (left < 8) left = 8;
+    let top = y - h / 2; if (top < 8) top = 8; if (top + h > vh - 8) top = Math.max(8, vh - h - 8);
+    el.style.left = left + "px"; el.style.top = top + "px";
+  }
+  function hoverPreviewSrc(thing) {
+    if (!thing) return null;
+    const gi = thing.querySelector(".expando .orr-gimg, .expando img.preview, .expando-container img");
+    return gi && gi.getAttribute("src") ? gi.getAttribute("src") : null; // only image/gallery posts
+  }
+  function showHoverImg(src) {
+    let el = document.getElementById("orr-hoverimg");
+    if (!el) { el = document.createElement("div"); el.id = "orr-hoverimg"; el.innerHTML = '<img alt="">'; document.body.appendChild(el); }
+    const img = el.querySelector("img");
+    if (img.getAttribute("src") !== src) { img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); }; img.src = src; }
+    el.style.display = "block";
+    positionHoverImg(el, lastMouseX, lastMouseY);
   }
 
   // ---- comment tools: OP highlight, parent links, navigator, media ----
@@ -2033,6 +2351,30 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     target.scrollIntoView({ block: "start", behavior: SB });
     flash(target);
   }
+  // Bulk collapse helpers (transient view state, like auto-collapse — not persisted).
+  function collapseThing(thing, collapse) {
+    if (!thing) return;
+    thing.classList.toggle("collapsed", collapse);
+    const ex = thing.querySelector(":scope > .entry .expand");
+    if (ex) {
+      ex.innerHTML = collapse ? "[+]" : "[&ndash;]";
+      ex.setAttribute("aria-expanded", collapse ? "false" : "true");
+      ex.setAttribute("aria-label", collapse ? "expand comment" : "collapse comment");
+    }
+  }
+  function collapseAllTop() {
+    const tops = topComments();
+    if (!tops.length) return;
+    const anyOpen = tops.some((t) => !t.classList.contains("collapsed"));
+    tops.forEach((t) => collapseThing(t, anyOpen)); // any open → collapse all; else expand all
+  }
+  function focusThread() {
+    const cur = kbCurrent();
+    if (!cur || !cur.classList.contains("comment")) return;
+    const top = cur.closest(".nestedlisting > .thing.comment") || cur;
+    topComments().forEach((t) => collapseThing(t, t !== top));
+    top.scrollIntoView({ block: "start", behavior: SB });
+  }
 
   // Expand media links inside comment bodies (RES "show images" for comments):
   // youtube/redgifs/streamable/imgur/direct video via externalMediaExpando, and
@@ -2094,7 +2436,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const cid = parentId.replace(/^t1_/, "");
     const url = location.origin + permalink.replace(/\/$/, "") + "/" + cid + "/.json?raw_json=1&limit=200";
     try {
-      const res = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+      const res = await redditFetch(url);
       if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
       const comments = (data[1] && data[1].data && data[1].data.children) || [];
@@ -2253,7 +2595,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       link.textContent = "loading other discussions…";
       try {
         const id = (post.name || "").replace(/^t3_/, "");
-        const res = await fetch(location.origin + "/duplicates/" + id + "/.json?raw_json=1", { credentials: "include", headers: { Accept: "application/json" } });
+        const res = await redditFetch(location.origin + "/duplicates/" + id + "/.json?raw_json=1");
         if (!res.ok) throw new Error("HTTP " + res.status);
         const j = await res.json();
         const dups = (j && j[1] && j[1].data && j[1].data.children) || [];
@@ -2325,10 +2667,31 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function closeQuickSwitch() { const o = document.getElementById("orr-qs"); if (o) o.remove(); }
 
+  // Per-subreddit overrides (force night, auto-expand). Sort/time is handled in
+  // loadListing; this runs each render for the night/auto-expand parts.
+  function applySubPrefs() {
+    let r;
+    try { const u = new URL(location.href); r = ORR.isListingRoute(u) || ORR.isCommentsRoute(u); } catch (e) { return; }
+    const sub = r && r.sub ? String(r.sub).toLowerCase() : null;
+    const sp = sub ? (dataCache.subPrefs || {})[sub] : null;
+    if (!sp) return;
+    if (sp.night) document.documentElement.classList.add("orr-night"); // force-on (never removes)
+    if (sp.autoExpand) {
+      // Expand each post exactly once (mark it), so re-running on infinite-scroll
+      // appends never re-opens a post the user manually collapsed.
+      document.querySelectorAll("#siteTable .thing.link:not([data-orr-autoexp])").forEach((t) => {
+        t.setAttribute("data-orr-autoexp", "1");
+        const b = t.querySelector(".expando-button.collapsed");
+        if (b) b.click();
+      });
+    }
+  }
+
   function afterRender() {
     injectStaticCss();
     applyNightSchedule(); // re-evaluate the time-of-day schedule as you browse
     applyNight();
+    applySubPrefs();
     ensureUiChrome();
     hideRivalBackToTop();
     setTimeout(hideRivalBackToTop, 1500); // catch rivals added late (RES etc.)
@@ -2345,6 +2708,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     markNewComments();
     inlineImages(document);
     wireRedditVideos(document);
+    enhanceVideoControls(document);
     addDownloadButtons(document);
     enhanceComments(document);
     autoplayMedia(document);
@@ -2357,8 +2721,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     patchTags(scope || document);
     inlineImages(scope || document);
     wireRedditVideos(scope || document);
+    enhanceVideoControls(scope || document);
     addDownloadButtons(scope || document);
     autoplayMedia(scope || document);
+    applySubPrefs(); // auto-expand newly-appended posts if this sub wants it
   }
 
   function hideGuard() {
@@ -2433,7 +2799,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const url = jsonUrlFor(route, params);
     const hit = cache.get(url);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
-    const res = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+    const res = await redditFetch(url);
     if (!res.ok) {
       const err = new Error("HTTP " + res.status);
       err.status = res.status;
@@ -2501,7 +2867,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (hit && Date.now() - hit.t < ABOUT_TTL) return hit.v;
     const base = location.origin + "/r/" + encodeURIComponent(sub);
     const get = (u) =>
-      fetch(u, { credentials: "include", headers: { Accept: "application/json" } })
+      redditFetch(u)
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
     const [about, rules] = await Promise.all([
@@ -2550,6 +2916,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       t: url.searchParams.get("t"),
       days: url.searchParams.get("days"),
     };
+    // Per-subreddit default sort/time: only on the FIRST load of a bare /r/{sub}
+    // (typed/bookmarked/external). Not on SPA navs — otherwise the "hot" tab, whose
+    // href is the same bare URL, would bounce straight back to the default sort.
+    const sp = firstLoad && route.scope === "sub" && route.sub ? (dataCache.subPrefs || {})[route.sub.toLowerCase()] : null;
+    if (sp && sp.sort && sp.sort !== "hot" && /^\/r\/[^/]+\/?$/.test(url.pathname) && !params.after && !params.before && !params.t && !params.days) {
+      route.sort = sp.sort;
+      route.basePath = "/r/" + route.sub + "/" + sp.sort;
+      if (sp.t && (sp.sort === "top" || sp.sort === "controversial")) params.t = sp.t;
+      try { history.replaceState(null, "", route.basePath + "/" + (params.t ? "?t=" + params.t : "")); } catch (e) {}
+    }
     hideGuard();
     // Safety: if a fetch truly hangs on first load, never leave the page blank —
     // reveal new Reddit after a timeout (generous, since we retry rate-limits).
@@ -2603,7 +2979,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const q = new URLSearchParams({ raw_json: "1", limit: "200" });
       if (sort) q.set("sort", sort);
       const jsonUrl = location.origin + url.pathname.replace(/\/$/, "") + "/.json?" + q.toString();
-      const res = await fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } });
+      const res = await redditFetch(jsonUrl);
       if (!res.ok) {
         const e = new Error("HTTP " + res.status);
         e.status = res.status;
@@ -2650,7 +3026,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         q.set("count", params.count || "25");
       }
       const jsonUrl = location.origin + ur.basePath + "/.json?" + q.toString();
-      const res = await fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } });
+      const res = await redditFetch(jsonUrl);
       if (!res.ok) {
         const e = new Error("HTTP " + res.status);
         e.status = res.status;
@@ -2682,7 +3058,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     setupInfinite(
       async (after, count) => {
         const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
-        const r2 = await fetch(location.origin + ur.basePath + "/.json?" + q.toString(), { credentials: "include", headers: { Accept: "application/json" } });
+        const r2 = await redditFetch(location.origin + ur.basePath + "/.json?" + q.toString());
         if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
         const j2 = await r2.json();
         const kids = ((j2 && j2.data) || {}).children || [];
@@ -2702,10 +3078,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   async function loadUserSidebar(name) {
     try {
-      const res = await fetch(location.origin + "/user/" + encodeURIComponent(name) + "/about.json?raw_json=1", {
-        credentials: "include",
-        headers: { Accept: "application/json" },
-      });
+      const res = await redditFetch(location.origin + "/user/" + encodeURIComponent(name) + "/about.json?raw_json=1");
       if (!res.ok) return;
       const about = await res.json();
       const side = document.querySelector(".side");
@@ -2736,7 +3109,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const hit = cache.get(jsonUrl);
       if (hit && Date.now() - hit.t < CACHE_TTL) json = hit.json;
       else {
-        const res = await fetch(jsonUrl, { credentials: "include", headers: { Accept: "application/json" } });
+        const res = await redditFetch(jsonUrl);
         if (!res.ok) {
           const e = new Error("HTTP " + res.status);
           e.status = res.status;
@@ -2769,7 +3142,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     setupInfinite(
       async (after, count) => {
         const u = searchJsonUrl(route, Object.assign({}, params, { after, before: null, count }));
-        const r2 = await fetch(u, { credentials: "include", headers: { Accept: "application/json" } });
+        const r2 = await redditFetch(u);
         if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
         const j2 = await r2.json();
         const kids = (((j2 && j2.data) || {}).children || []).filter((c) => c.kind === "t3");
@@ -2811,7 +3184,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let json;
     try {
       const base = route.sub ? "/r/" + route.sub + "/wiki/" + route.page : "/wiki/" + route.page;
-      const res = await fetch(location.origin + base + ".json?raw_json=1", { credentials: "include", headers: { Accept: "application/json" } });
+      const res = await redditFetch(location.origin + base + ".json?raw_json=1");
       if (!res.ok) { const e = new Error("HTTP " + res.status); e.status = res.status; throw e; }
       json = await res.json();
     } catch (err) {
@@ -2851,9 +3224,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const q = new URLSearchParams({
         api_type: "json", link_id: linkId, children: batch.join(","), raw_json: "1", limit_children: "false",
       });
-      const res = await fetch(location.origin + "/api/morechildren.json?" + q.toString(), {
-        credentials: "include", headers: { Accept: "application/json" },
-      });
+      const res = await redditFetch(location.origin + "/api/morechildren.json?" + q.toString());
       status = res.status;
       retryAfter = retryAfterOf(res);
       if (res.ok) {
@@ -3143,6 +3514,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
                 if (f.dataset.orrSrc) { f.src = f.dataset.orrSrc; delete f.dataset.orrSrc; }
               });
               wireRedditVideos(expando); // give the video its sound
+              enhanceVideoControls(expando); // speed / loop controls + remembered prefs
               addDownloadButtons(expando);
             }
           }
@@ -3157,6 +3529,30 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           return;
         }
         // Custom "last N days" top filter → read the input and navigate to ?days=N.
+        // "N hidden — show / re-hide" filtered-posts toggle.
+        const filtToggle = e.target.closest && e.target.closest(".orr-filtered-toggle");
+        if (filtToggle) {
+          e.preventDefault();
+          e.stopPropagation();
+          const stbl = document.getElementById("siteTable");
+          if (stbl) { stbl.classList.toggle("orr-reveal-filtered"); updateFilteredBanner(); }
+          return;
+        }
+        // Image lightbox: click an expanded image / gallery image → fullscreen viewer.
+        const lbImg = e.target.closest && e.target.closest(".expando img.preview, .orr-gimg, .expando-container img");
+        // Skip inline body images (.orr-inline-img) — they keep in-place resize + dblclick-reset.
+        if (lbImg && lbImg.tagName === "IMG" && !lbImg.closest("a[href]") && !lbImg.closest(".orr-inline-img")) {
+          e.preventDefault();
+          e.stopPropagation();
+          const gal = lbImg.closest(".orr-gallery");
+          if (gal) {
+            const imgs = Array.prototype.slice.call(gal.querySelectorAll(".orr-gimg"));
+            openLightbox(imgs.map((im) => im.getAttribute("src")), imgs.indexOf(lbImg));
+          } else {
+            openLightbox([lbImg.getAttribute("src")], 0);
+          }
+          return;
+        }
         const daysGo = e.target.closest && e.target.closest("a.orr-days-go");
         if (daysGo) {
           e.preventDefault();
@@ -3310,6 +3706,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     infiniteOn = prefs.infiniteScroll !== false;
     nightModeOn = prefs.nightMode !== false;
     orrVideoMuted = prefs.videoMuted === true;
+    videoLoopOn = prefs.videoLoop === true;
+    hoverPreviewOn = prefs.hoverPreview !== false;
     subredditCssOn = prefs.subredditCss !== false;
     autoplayOn = prefs.autoplayMedia === true;
     hideReadOn = prefs.hideRead === true;
@@ -3322,6 +3720,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } catch (e) {
       /* keep defaults */
     }
+    const _ui = dataCache.ui || {};
+    videoSpeed = typeof _ui.videoSpeed === "number" ? _ui.videoSpeed : 1;
+    videoVolume = typeof _ui.videoVolume === "number" ? _ui.videoVolume : null;
+    applyLayoutVars(_ui); // content width / font size sliders
+    try { // restore a recent rate-limit cooldown so a reload doesn't immediately hammer Reddit
+      const rls = await api.storage.local.get({ rl429: null });
+      if (rls.rl429 && nowMsNow() - rls.rl429.at < RL_DECAY) {
+        rlLast429 = rls.rl429.at;
+        rlGap = Math.min(rls.rl429.gap || 0, RL_CAP);
+        rlNextAt = nowMsNow() + Math.min(rlGap, 5000); // brief hold on the first post-reload call
+      }
+    } catch (e) {}
     const url = new URL(location.href);
     if (ORR.isAnswersRoute && ORR.isAnswersRoute(url)) {
       unhideGuard();
@@ -3358,6 +3768,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         nightModeOn = changes.nightMode.newValue !== false;
         if (active && !nightAutoOn) applyNight();
       }
+      if (changes.videoLoop && active) {
+        videoLoopOn = changes.videoLoop.newValue === true;
+        document.querySelectorAll(".orr-video-wrap video, video.orr-directvideo").forEach((v) => { v.loop = videoLoopOn; if (v._orrAudio) v._orrAudio.loop = videoLoopOn; if (v._orrPaintLoop) v._orrPaintLoop(); });
+      }
+      if (changes.hoverPreview) { hoverPreviewOn = changes.hoverPreview.newValue !== false; if (!hoverPreviewOn) hideHoverImg(); }
+      if (changes.ui && active) {
+        const u = changes.ui.newValue || {};
+        dataCache.ui = u;
+        videoSpeed = typeof u.videoSpeed === "number" ? u.videoSpeed : 1;
+        videoVolume = typeof u.videoVolume === "number" ? u.videoVolume : null;
+        applyLayoutVars(u);
+      }
       // New issue-#6 toggles: apply live where cheap (a reload also works).
       if (active && (changes.subredditCss || changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
                      changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont)) {
@@ -3374,7 +3796,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           applyFilters(document); // hideRead / re-filter
         });
       }
-      if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits) && active) {
+      if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits ||
+           changes.subPrefs || changes.keyBindings) && active) {
         ORR.getData().then((d) => {
           dataCache = d;
           applyFilters(document);
@@ -3382,6 +3805,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           document.querySelectorAll("a.author[data-orr-tagged]").forEach((a) => delete a.dataset.orrTagged);
           document.querySelectorAll(".orr-usertag").forEach((s) => s.remove());
           patchTags(document);
+          applySubPrefs(); // reflect changed per-sub night/auto-expand (keyBindings picked up on next keypress)
         });
       }
       if (changes.enabled) {

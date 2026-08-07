@@ -80,6 +80,15 @@
 
   <label class="orr-row">
     <span class="orr-row-text">
+      <span class="orr-row-title">Hover image preview</span>
+      <span class="orr-row-sub">Peek a post's image/GIF by hovering its link — no click (RES-style)</span>
+    </span>
+    <input type="checkbox" id="hoverPreview">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
       <span class="orr-row-title">Hide already-read posts</span>
       <span class="orr-row-sub">Remove posts whose comments you've opened</span>
     </span>
@@ -148,12 +157,39 @@
     </div>
     <label class="orr-check"><input type="checkbox" id="filter-nsfw"> Hide NSFW posts</label>
     <label class="orr-check"><input type="checkbox" id="filter-promoted"> Hide promoted / ad posts</label>
+    <label class="orr-check"><input type="checkbox" id="filter-crossposts"> Hide crossposts (reposts of another post)</label>
+    <p class="orr-filters-hint">Hide by post type:</p>
+    <label class="orr-check"><input type="checkbox" id="filter-type-image"> Images</label>
+    <label class="orr-check"><input type="checkbox" id="filter-type-video"> Videos</label>
+    <label class="orr-check"><input type="checkbox" id="filter-type-text"> Text (self) posts</label>
+    <label class="orr-check"><input type="checkbox" id="filter-type-link"> Link posts</label>
   </section>
 
   <section class="orr-filters">
     <h2>Subreddit shortcut bar</h2>
     <p class="orr-filters-hint">Favorite subreddits shown in the top bar (one per line). Recently-visited subs are appended automatically.</p>
     <label class="orr-field"><span>Favorites</span><textarea id="favorite-subs" rows="3" placeholder="AskReddit&#10;programming"></textarea></label>
+  </section>
+
+  <section class="orr-filters">
+    <h2>Layout</h2>
+    <p class="orr-filters-hint">Adjust the reading area. Content width 0 = old Reddit's normal width.</p>
+    <label class="orr-field"><span>Content width <output id="ui-width-out"></output></span>
+      <input type="range" id="ui-width" min="0" max="1800" step="20" value="0"></label>
+    <label class="orr-field"><span>Post &amp; comment size <output id="ui-font-out"></output></span>
+      <input type="range" id="ui-font" min="80" max="160" step="5" value="100"></label>
+  </section>
+
+  <section class="orr-filters">
+    <h2>Per-subreddit preferences</h2>
+    <p class="orr-filters-hint">One subreddit per line. Tokens: <code>night</code>, <code>expand</code>, <code>sort=hot|new|top|rising|controversial</code>, <code>t=hour|day|week|month|year|all</code>. Example: <code>askreddit: night, sort=top, t=week</code></p>
+    <label class="orr-field"><span>Rules</span><textarea id="sub-prefs" rows="4" placeholder="pics: night, expand&#10;programming: sort=new"></textarea></label>
+  </section>
+
+  <section class="orr-filters">
+    <h2>Keyboard shortcuts</h2>
+    <p class="orr-filters-hint">Remap keys (one character each; blank = default). Reload open Reddit tabs to apply.</p>
+    <div id="keybind-list" class="orr-keybinds"></div>
   </section>
 
   <section class="orr-data">
