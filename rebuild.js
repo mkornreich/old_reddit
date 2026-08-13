@@ -240,6 +240,7 @@
       ` data-author="${esc(d.author)}" data-domain="${esc(d.domain)}" data-nsfw="${d.over_18 ? "true" : "false"}"` +
       ` data-flair="${esc(flairText)}" data-score="${esc(typeof d.score === "number" ? d.score : "")}" data-created="${esc(d.created_utc || 0)}"` +
       ` data-promoted="${d.promoted || d.is_created_from_ads_ui ? "true" : "false"}"` +
+      ` data-comments="${esc(d.num_comments || 0)}"` +
       ` data-ptype="${postType(d)}" data-crosspost="${d.crosspost_parent || (d.crosspost_parent_list && d.crosspost_parent_list.length) ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
       `<div class="midcol unvoted">` +
@@ -1095,6 +1096,7 @@
   let nightModeOn = true;
   // issue #6 toggles (set from prefs in start())
   let subredditCssOn = true, autoplayOn = false, hideReadOn = false, autoCollapseBotsOn = false, nightAutoOn = false;
+  let foldReadCommentsOn = false;
   let dataCache = { filters: { subreddits: [], users: [], domains: [], keywords: [], flairs: [] }, userTags: {}, threadVisits: {} };
   const enhanceCache = new Map();
 
@@ -1183,6 +1185,10 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
   border-radius:3px; padding:8px; font:11px verdana; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
 #orr-hovercard .orr-tagbtn { color:#369; cursor:pointer; text-decoration:underline; }
 .thing.comment.orr-new > .entry > .tagline:after { content:" \\2022 new"; color:#ff4500; font-weight:bold; }
+/* issue #16: "N new" badge on visited posts, + grey read comments when folding */
+li.orr-newcount-li a.orr-newcount { color:#ff4500; font-weight:bold; }
+.commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .tagline,
+.commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .usertext-body { opacity:.55; }
 .orr-gimg { display:none; max-width:100%; height:auto; }
 .orr-gimg.active { display:block; }
 .orr-gnav-bar { margin:4px 0; font-size:12px; }
@@ -1600,7 +1606,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const promoted = p.getAttribute("data-promoted") === "true";
       const ptype = p.getAttribute("data-ptype") || "";
       const crosspost = p.getAttribute("data-crosspost") === "true";
-      const read = p.classList.contains("orr-visited");
+      // A read post with new comments since your visit is kept (issue #16).
+      const read = p.classList.contains("orr-visited") && !p.classList.contains("orr-has-new");
       const hide =
         (f.subreddits || []).some((s) => s && s.toLowerCase() === sub) ||
         (f.users || []).some((u) => u && u.toLowerCase() === author) ||
@@ -1644,18 +1651,74 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const post = document.querySelector("#siteTable .thing.link");
     const t3 = post ? post.getAttribute("data-fullname") : null;
     if (!t3) return;
-    const last = dataCache.threadVisits[t3] || 0;
+    const rec = dataCache.threadVisits[t3];
+    const last = typeof rec === "number" ? rec : (rec && rec.t) || 0; // old (number) or new ({t,c})
     if (last) {
       document.querySelectorAll(".thing.comment").forEach((c) => {
         const created = parseInt(c.getAttribute("data-created") || "0", 10);
         if (created > last) c.classList.add("orr-new");
       });
+      area.classList.add("orr-visited-before"); // prior-visit info exists → read/unread is meaningful
     }
-    dataCache.threadVisits[t3] = Math.floor((typeof Date.now === "function" ? Date.now() : 0) / 1000);
-    // cap growth
+    applyReadFolding(); // grey + fold read threads (opt-in) before we overwrite the record
+    // Record this visit: timestamp + current comment count (powers the listing "N new" badge).
+    const count = parseInt(post.getAttribute("data-comments") || "0", 10);
+    dataCache.threadVisits[t3] = { t: Math.floor(nowMsNow() / 1000), c: count };
     const keys = Object.keys(dataCache.threadVisits);
-    if (keys.length > 800) delete dataCache.threadVisits[keys[0]];
+    if (keys.length > 800) delete dataCache.threadVisits[keys[0]]; // cap growth
     ORR.setPrefs({ threadVisits: dataCache.threadVisits });
+  }
+
+  // Grey read comments and fold top-level threads with nothing new since your last
+  // visit. Opt-in (foldReadComments) and only when we have prior-visit info.
+  function applyReadFolding() {
+    const area = document.querySelector(".commentarea");
+    if (!area || !foldReadCommentsOn || !area.classList.contains("orr-visited-before")) return;
+    area.classList.add("orr-foldread"); // CSS greys .thing.comment:not(.orr-new)
+    topComments().forEach((t) => {
+      const hasNew = t.classList.contains("orr-new") || t.querySelector(".orr-new");
+      // Only auto-fold threads that are open (leave user-collapsed ones alone) and mark
+      // them so turning the option off can re-expand exactly what we folded.
+      if (!hasNew && !t.classList.contains("collapsed")) { collapseThing(t, true); t.setAttribute("data-orr-readfold", "1"); }
+    });
+  }
+  function unfoldReadComments() {
+    const area = document.querySelector(".commentarea");
+    if (area) area.classList.remove("orr-foldread"); // un-grey
+    document.querySelectorAll(".thing.comment[data-orr-readfold]").forEach((t) => {
+      t.removeAttribute("data-orr-readfold");
+      collapseThing(t, false); // re-expand only the threads we auto-folded
+    });
+  }
+
+  // Listing pass: show "N new" on posts whose comment count grew since your last visit.
+  function markThreadNew(scope) {
+    if (document.querySelector(".commentarea")) return; // listings only — never badge the opened post
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll("#siteTable .thing.link[data-fullname]").forEach((p) => {
+      const rec = dataCache.threadVisits[p.getAttribute("data-fullname")];
+      const seen = rec && typeof rec === "object" ? rec.c : null; // count at last visit (new format only)
+      const cur = parseInt(p.getAttribute("data-comments") || "0", 10);
+      const n = seen != null ? cur - seen : 0;
+      p.classList.toggle("orr-has-new", n > 0);
+      let li = p.querySelector(".orr-newcount-li");
+      if (n > 0) {
+        const commentsLi = p.querySelector(".entry .flat-list.buttons li.first");
+        const link = commentsLi && commentsLi.querySelector("a.comments");
+        if (!li && commentsLi) {
+          li = document.createElement("li");
+          li.className = "orr-newcount-li";
+          const a = document.createElement("a");
+          a.className = "orr-newcount";
+          a.setAttribute("href", link ? link.getAttribute("href") : "#");
+          li.appendChild(a);
+          commentsLi.insertAdjacentElement("afterend", li);
+        }
+        if (li) li.querySelector("a").textContent = n + " new";
+      } else if (li) {
+        li.remove();
+      }
+    });
   }
 
   // ---- persist visited posts + collapsed comments ----
@@ -2744,6 +2807,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     kbIdx = -1;
     markVisited(document); // before applyFilters so "hide read" can act
+    markThreadNew(document); // "N new" badges + orr-has-new (so read posts with new comments aren't hidden)
     applyFilters(document);
     patchTags(document);
     markNewComments();
@@ -2759,6 +2823,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function enhanceNewItems(scope) {
     markVisited(scope || document);
+    markThreadNew(scope || document);
     applyFilters(scope || document);
     patchTags(scope || document);
     inlineImages(scope || document);
@@ -3762,6 +3827,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     autoplayOn = prefs.autoplayMedia === true;
     hideReadOn = prefs.hideRead === true;
     autoCollapseBotsOn = prefs.autoCollapseBots === true;
+    foldReadCommentsOn = prefs.foldReadComments === true;
     nightAutoOn = prefs.nightAuto === true;
     applyBodyFlags(prefs);
     applyNightSchedule(); // may override nightModeOn based on time of day
@@ -3833,7 +3899,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       // New issue-#6 toggles: apply live where cheap (a reload also works).
       if (active && (changes.subredditCss || changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
                      changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont ||
-                     changes.fixedThumbnails || changes.expandImages)) {
+                     changes.fixedThumbnails || changes.expandImages || changes.foldReadComments)) {
         ORR.getPrefs().then((p) => {
           subredditCssOn = p.subredditCss !== false;
           if (changes.subredditCss) applySubredditCss(curSub); // apply/remove the sub's CSS live
@@ -3846,12 +3912,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           applyNight();
           applyFilters(document); // hideRead / re-filter
           if (changes.expandImages) { expandImagesOn = p.expandImages === true; expandImagesPass(); }
+          if (changes.foldReadComments) { foldReadCommentsOn = p.foldReadComments === true; if (foldReadCommentsOn) applyReadFolding(); else unfoldReadComments(); }
         });
       }
       if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits ||
            changes.subPrefs || changes.keyBindings) && active) {
         ORR.getData().then((d) => {
           dataCache = d;
+          if (changes.threadVisits) markThreadNew(document); // refresh "N new" badges + orr-has-new
           applyFilters(document);
           patchSrBar();
           document.querySelectorAll("a.author[data-orr-tagged]").forEach((a) => delete a.dataset.orrTagged);

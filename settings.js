@@ -15,7 +15,7 @@
     subredditCss: "subredditCss", autoplay: "autoplayMedia", hideRead: "hideRead",
     autoCollapseBots: "autoCollapseBots", compact: "compactView", nightAuto: "nightAuto",
     highContrast: "highContrast", dyslexia: "dyslexiaFont", hoverPreview: "hoverPreview",
-    expandImages: "expandImages", fixedThumbnails: "fixedThumbnails",
+    expandImages: "expandImages", fixedThumbnails: "fixedThumbnails", foldReadComments: "foldReadComments",
   };
 
   // Filter lists / advanced (options page only).
