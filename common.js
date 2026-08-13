@@ -47,14 +47,13 @@
   }
 
   async function getPrefs() {
-    const want = { mode: undefined };
-    BOOL_PREFS.forEach((k) => { want[k] = undefined; });
-    const sync = await areaGet(syncArea(), want);
-    const local = await areaGet(api.storage.local, want);
+    const keysToGet = ["mode"].concat(BOOL_PREFS);
+    const sync = await areaGet(syncArea(), keysToGet);
+    const local = await areaGet(api.storage.local, keysToGet);
     // Per-key merge: sync wins where set, local fills the rest. (An all-or-nothing
     // fallback would orphan pre-migration local settings once ANY one key is synced.)
     const stored = {};
-    Object.keys(want).forEach((k) => { stored[k] = sync[k] !== undefined ? sync[k] : local[k]; });
+    keysToGet.forEach((k) => { stored[k] = sync[k] !== undefined ? sync[k] : local[k]; });
     let enabled = stored.enabled;
     if (enabled === undefined) enabled = stored.mode === "off" ? false : true;
     const out = { enabled: enabled !== false };
