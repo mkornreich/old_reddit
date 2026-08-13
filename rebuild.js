@@ -855,7 +855,7 @@
 
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
-    bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType,
+    bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType, foldReadSubtrees,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
@@ -1683,18 +1683,38 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     ORR.setPrefs({ threadVisits: dataCache.threadVisits });
   }
 
-  // Grey read comments and fold top-level threads with nothing new since your last
-  // visit. Opt-in (foldReadComments) and only when we have prior-visit info.
+  // Grey read comments and fold — at the HIGHEST level of each all-read subtree —
+  // comment branches with nothing new since your last visit. Opt-in (foldReadComments)
+  // and only when we have prior-visit info.
+  function childComments(childWrap) {
+    return Array.prototype.filter.call(childWrap.children, (el) => el.classList && el.classList.contains("comment"));
+  }
+  function foldReadSubtrees(topLevel) {
+    // Bottom-up: mark every comment whose subtree contains a new comment (O(n)).
+    const hasNew = new WeakSet();
+    function mark(c) {
+      let has = c.classList.contains("orr-new");
+      const child = c.querySelector(":scope > .child");
+      if (child) childComments(child).forEach((cc) => { if (mark(cc)) has = true; });
+      if (has) hasNew.add(c);
+      return has;
+    }
+    topLevel.forEach(mark);
+    // Top-down: fold the highest all-read node in each branch; descend past nodes
+    // that contain something new so their all-read sub-branches still fold.
+    (function fold(list) {
+      list.forEach((c) => {
+        if (c.classList.contains("collapsed")) return; // already collapsed (user/prior) → leave it
+        if (!hasNew.has(c)) { collapseThing(c, true); c.setAttribute("data-orr-readfold", "1"); }
+        else { const child = c.querySelector(":scope > .child"); if (child) fold(childComments(child)); }
+      });
+    })(topLevel);
+  }
   function applyReadFolding() {
     const area = document.querySelector(".commentarea");
     if (!area || !foldReadCommentsOn || !area.classList.contains("orr-visited-before")) return;
     area.classList.add("orr-foldread"); // CSS greys .thing.comment:not(.orr-new) and clamps read bodies
-    topComments().forEach((t) => {
-      const hasNew = t.classList.contains("orr-new") || t.querySelector(".orr-new");
-      // Only auto-fold threads that are open (leave user-collapsed ones alone) and mark
-      // them so turning the option off can re-expand exactly what we folded.
-      if (!hasNew && !t.classList.contains("collapsed")) { collapseThing(t, true); t.setAttribute("data-orr-readfold", "1"); }
-    });
+    foldReadSubtrees(topComments());
     clampReadBodies(); // add the "click to expand" affordance to long, visible read bodies
   }
   // Add the expand affordance (.orr-clamped) to read bodies that overflow the clamp.
