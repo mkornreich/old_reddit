@@ -313,9 +313,10 @@
     ["all", "all time"],
   ];
 
-  // Reddit's `t` only has fixed buckets; for a custom "last N days" we fetch the
-  // smallest bucket that fully contains N days, then filter client-side to the
-  // exact window (see daysSince + the sinceUtc filter in buildBody).
+  // Reddit's `t` only has fixed buckets; for a custom "last N hours/days" window we
+  // fetch the smallest bucket that fully contains it, then filter client-side to the
+  // exact cutoff (see windowSince + the sinceUtc filter in buildBody). Hours fill the
+  // big gap between Reddit's built-in "past hour" and "past 24 hours".
   function bucketForDays(days) {
     const d = parseInt(days, 10);
     if (!(d > 0)) return null;
@@ -325,26 +326,49 @@
     if (d <= 366) return "year";
     return "all";
   }
+  function bucketForHours(hours) {
+    const h = parseInt(hours, 10);
+    if (!(h > 0)) return null;
+    return h <= 24 ? "day" : bucketForDays(Math.ceil(h / 24));
+  }
   function daysSince(days) {
     const d = parseInt(days, 10);
     return d > 0 ? Math.floor(Date.now() / 1000) - d * 86400 : null;
   }
+  function hoursSince(hours) {
+    const h = parseInt(hours, 10);
+    return h > 0 ? Math.floor(Date.now() / 1000) - h * 3600 : null;
+  }
+  // Unified custom-window helpers (hours wins over days if both are present).
+  function windowBucket(params) {
+    return params.hours ? bucketForHours(params.hours) : (params.days ? bucketForDays(params.days) : null);
+  }
+  function windowSince(params) {
+    return params.hours ? hoursSince(params.hours) : daysSince(params.days);
+  }
 
-  function timeMenuHtml(route, currentT, currentDays) {
+  function timeMenuHtml(route, currentT, currentDays, currentHours) {
     const customDays = parseInt(currentDays, 10);
-    const custom = customDays > 0;
+    const customHours = parseInt(currentHours, 10);
+    const custom = customDays > 0 || customHours > 0;
     const t = custom ? null : (currentT || "day"); // reddit's default for top/controversial
     const boldSel = ' style="font-weight:bold;text-decoration:underline"';
     const links = TIMES.map(([val, label]) => {
       const sel = val === t;
       return `<a href="${route.basePath}/?t=${val}"${sel ? boldSel : ""}>${label}</a>`;
     }).join(' <span class="separator">&middot;</span> ');
-    // Custom "last N days" window — filtered client-side from the nearest bucket.
+    // Custom "last N hours/days" windows — filtered client-side from the nearest bucket.
+    // Hours fill the gap between Reddit's "past hour" and "past 24 hours".
     const customField =
       ` <span class="separator">&middot;</span> ` +
-      `<span class="orr-custom-top"${custom ? boldSel : ""}>last ` +
-        `<input type="number" min="1" max="3650" class="orr-days-input" value="${custom ? esc(String(customDays)) : ""}" ` +
-          `placeholder="N" style="width:48px" aria-label="custom number of days"> days ` +
+      `<span class="orr-custom-top"${customHours > 0 ? boldSel : ""}>last ` +
+        `<input type="number" min="1" max="720" class="orr-hours-input" value="${customHours > 0 ? esc(String(customHours)) : ""}" ` +
+          `placeholder="N" style="width:44px" aria-label="custom number of hours"> hours ` +
+        `<a href="#" class="orr-hours-go">go</a></span>` +
+      ` <span class="separator">&middot;</span> ` +
+      `<span class="orr-custom-top"${customDays > 0 ? boldSel : ""}>last ` +
+        `<input type="number" min="1" max="3650" class="orr-days-input" value="${customDays > 0 ? esc(String(customDays)) : ""}" ` +
+          `placeholder="N" style="width:44px" aria-label="custom number of days"> days ` +
         `<a href="#" class="orr-days-go">go</a></span>`;
     return `<div class="menuarea" style="padding:5px 5px 5px 10px;font-size:small">links from: ${links}${customField}</div>`;
   }
@@ -375,7 +399,7 @@
       `<div class="side" role="complementary">${sideSearchHtml(route)}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
-      (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t, opts.days) : "") +
+      (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t, opts.days, opts.hours) : "") +
       `<div id="siteTable" class="sitetable linklisting">` +
       (items || `<div class="thing">Nothing here.</div>`) +
       `</div>` +
@@ -830,7 +854,7 @@
 
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
-    bucketForDays, daysSince, shareLinkFor, buildSharePanel, postType,
+    bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
@@ -2631,16 +2655,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     window.scrollTo(0, 0);
     loadPage(u, false);
   }
-  // Custom "top of last N days": read the days input from the time menu and
-  // navigate to ?days=N (jsonUrlFor maps it to a bucket; buildBody filters to the window).
-  function submitCustomDays(fromEl) {
+  // Custom "top of last N hours/days": read the input from the time menu and navigate
+  // to ?hours=N or ?days=N (jsonUrlFor maps it to a bucket; buildBody filters the window).
+  function submitCustomWindow(fromEl, unit) {
     const area = fromEl.closest(".menuarea") || document;
-    const input = area.querySelector(".orr-days-input");
+    const input = area.querySelector(unit === "hours" ? ".orr-hours-input" : ".orr-days-input");
     const n = input ? parseInt(input.value, 10) : NaN;
     if (!(n > 0)) { if (input) input.focus(); return; }
     const r = ORR.isListingRoute(new URL(location.href));
     if (!r) return;
-    navigateTo(r.basePath + "/?days=" + Math.min(n, 3650));
+    navigateTo(r.basePath + "/?" + unit + "=" + Math.min(n, unit === "hours" ? 8760 : 3650));
   }
 
   function openQuickSwitch() {
@@ -2807,8 +2831,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       q.set("count", params.count || "25");
     }
     if (route.sort === "top" || route.sort === "controversial") {
-      // custom "last N days" → fetch the smallest bucket covering N days, then filter
-      const bucket = params.days ? bucketForDays(params.days) : params.t;
+      // custom "last N hours/days" → fetch the smallest covering bucket, then filter
+      const bucket = windowBucket(params) || params.t;
       if (bucket) q.set("t", bucket);
     }
     return location.origin + route.basePath + "/.json?" + q.toString();
@@ -2849,8 +2873,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function renderInto(route, json, params) {
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
-    const sinceUtc = daysSince(params.days); // custom "last N days" window (null otherwise)
-    const body = buildBody(route, json, { startCount, t: params.t, days: params.days, sinceUtc, me: meCached });
+    const sinceUtc = windowSince(params); // custom "last N hours/days" window (null otherwise)
+    const body = buildBody(route, json, { startCount, t: params.t, days: params.days, hours: params.hours, sinceUtc, me: meCached });
     const sub = route.scope === "front" ? "reddit" : "r/" + route.sub;
     replaceBody(body, sub + " — old reddit");
     patchHeader();
@@ -2864,7 +2888,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const count0 = startCount + kids0.length; // match buildBody's displayed count so ranks stay continuous
     setupInfinite(
       async (after, count) => {
-        const j = await fetchListing(route, { after, count, t: params.t, days: params.days });
+        const j = await fetchListing(route, { after, count, t: params.t, days: params.days, hours: params.hours });
         let kids = (((j && j.data) || {}).children || []).filter((c) => c.kind === "t3");
         if (sinceUtc) kids = kids.filter((c) => (c.data.created_utc || 0) >= sinceUtc);
         const html = kids
@@ -2934,12 +2958,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       count: url.searchParams.get("count"),
       t: url.searchParams.get("t"),
       days: url.searchParams.get("days"),
+      hours: url.searchParams.get("hours"),
     };
     // Per-subreddit default sort/time: only on the FIRST load of a bare /r/{sub}
     // (typed/bookmarked/external). Not on SPA navs — otherwise the "hot" tab, whose
     // href is the same bare URL, would bounce straight back to the default sort.
     const sp = firstLoad && route.scope === "sub" && route.sub ? (dataCache.subPrefs || {})[route.sub.toLowerCase()] : null;
-    if (sp && sp.sort && sp.sort !== "hot" && /^\/r\/[^/]+\/?$/.test(url.pathname) && !params.after && !params.before && !params.t && !params.days) {
+    if (sp && sp.sort && sp.sort !== "hot" && /^\/r\/[^/]+\/?$/.test(url.pathname) && !params.after && !params.before && !params.t && !params.days && !params.hours) {
       route.sort = sp.sort;
       route.basePath = "/r/" + route.sub + "/" + sp.sort;
       if (sp.t && (sp.sort === "top" || sp.sort === "controversial")) params.t = sp.t;
@@ -3572,11 +3597,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           }
           return;
         }
+        const hoursGo = e.target.closest && e.target.closest("a.orr-hours-go");
+        if (hoursGo) {
+          e.preventDefault();
+          e.stopPropagation();
+          submitCustomWindow(hoursGo, "hours");
+          return;
+        }
         const daysGo = e.target.closest && e.target.closest("a.orr-days-go");
         if (daysGo) {
           e.preventDefault();
           e.stopPropagation();
-          submitCustomDays(daysGo);
+          submitCustomWindow(daysGo, "days");
           return;
         }
         const a = e.target.closest && e.target.closest("a[href]");
@@ -3631,15 +3663,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       true
     );
 
-    // Enter inside the custom "last N days" input submits it.
+    // Enter inside the custom "last N hours/days" inputs submits it.
     document.addEventListener("keydown", (e) => {
       if (!active) return;
       const t = e.target;
-      if (e.key === "Enter" && t && t.classList && t.classList.contains("orr-days-input")) {
-        e.preventDefault();
-        e.stopPropagation();
-        submitCustomDays(t);
-      }
+      if (e.key !== "Enter" || !t || !t.classList) return;
+      if (t.classList.contains("orr-hours-input")) { e.preventDefault(); e.stopPropagation(); submitCustomWindow(t, "hours"); }
+      else if (t.classList.contains("orr-days-input")) { e.preventDefault(); e.stopPropagation(); submitCustomWindow(t, "days"); }
     }, true);
 
     window.addEventListener("popstate", () => {
