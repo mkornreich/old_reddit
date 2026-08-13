@@ -1082,6 +1082,7 @@
     el.classList.toggle("orr-compact", p.compactView === true);
     el.classList.toggle("orr-contrast", p.highContrast === true);
     el.classList.toggle("orr-dyslexic", p.dyslexiaFont === true);
+    el.classList.toggle("orr-fixedthumbs", p.fixedThumbnails === true);
   }
   // Content-width / font-size sliders: drive CSS custom properties on <html>.
   function applyLayoutVars(ui) {
@@ -1198,9 +1199,13 @@ html.orr-lb-open { overflow:hidden; }
 #orr-hoverimg img { display:block; max-width:44vw; max-height:80vh; }
 .orr-pdf { width:100%; height:80vh; background:#fff; }
 .orr-directaudio { width:100%; max-width:640px; display:block; }
-/* drag-resizable images (RES-style); double-click to reset */
+/* post expando images/videos scale to fit the window (never cut off); click opens the lightbox */
 .orr-resizable { display:inline-block; overflow:hidden; max-width:100%; line-height:0; cursor:zoom-in; }
-.orr-resizable img.preview { width:100%; height:100%; object-fit:contain; display:block; max-width:none; max-height:none; }
+.orr-resizable img.preview { max-width:100%; max-height:80vh; width:auto; height:auto; object-fit:contain; display:block; }
+.orr-gimg { max-width:100%; max-height:80vh; }
+.orr-video-wrap video, .expando video, video.orr-directvideo { max-width:100%; max-height:80vh; height:auto; }
+/* fixed-size thumbnails (uniform row height for easy scanning) */
+html.orr-fixedthumbs .thing.link .thumbnail img { width:70px; height:70px; max-width:70px; object-fit:cover; }
 /* NSFW / spoiler blur with click-to-reveal */
 .expando.orr-nsfw, .expando.orr-spoiler { position:relative; }
 .expando.orr-nsfw:not(.orr-revealed) .expando-container,
@@ -1989,6 +1994,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   let orrVideoMuted = false;
   let videoLoopOn = false, videoSpeed = 1, videoVolume = null; // remembered video prefs (ui blob + videoLoop bool)
   let hoverPreviewOn = true, lastMouseX = 0, lastMouseY = 0;
+  let expandImagesOn = false;
   function updateUi(patch) { dataCache.ui = Object.assign({}, dataCache.ui, patch); ORR.setPrefs({ ui: dataCache.ui }); }
   function setVideoMuted(m) {
     orrVideoMuted = !!m;
@@ -2687,6 +2693,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
   }
 
+  // RES-style "show images": auto-expand image/gallery previews on listings so you
+  // can just scroll. Mark-once so it never re-opens a manually-collapsed post.
+  function expandImagesPass() {
+    if (!expandImagesOn) return;
+    document.querySelectorAll("#siteTable .thing.link:not([data-orr-imgexp])").forEach((t) => {
+      t.setAttribute("data-orr-imgexp", "1");
+      const b = t.querySelector(".expando-button.collapsed.image"); // image + "image gallery"
+      if (b) b.click();
+    });
+  }
+
   function afterRender() {
     injectStaticCss();
     applyNightSchedule(); // re-evaluate the time-of-day schedule as you browse
@@ -2712,6 +2729,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     addDownloadButtons(document);
     enhanceComments(document);
     autoplayMedia(document);
+    expandImagesPass();
     if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
   }
@@ -2725,6 +2743,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     addDownloadButtons(scope || document);
     autoplayMedia(scope || document);
     applySubPrefs(); // auto-expand newly-appended posts if this sub wants it
+    expandImagesPass(); // "show images": expand newly-appended image posts
   }
 
   function hideGuard() {
@@ -3708,6 +3727,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     orrVideoMuted = prefs.videoMuted === true;
     videoLoopOn = prefs.videoLoop === true;
     hoverPreviewOn = prefs.hoverPreview !== false;
+    expandImagesOn = prefs.expandImages === true;
     subredditCssOn = prefs.subredditCss !== false;
     autoplayOn = prefs.autoplayMedia === true;
     hideReadOn = prefs.hideRead === true;
@@ -3782,7 +3802,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       }
       // New issue-#6 toggles: apply live where cheap (a reload also works).
       if (active && (changes.subredditCss || changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
-                     changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont)) {
+                     changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont ||
+                     changes.fixedThumbnails || changes.expandImages)) {
         ORR.getPrefs().then((p) => {
           subredditCssOn = p.subredditCss !== false;
           if (changes.subredditCss) applySubredditCss(curSub); // apply/remove the sub's CSS live
@@ -3790,10 +3811,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           hideReadOn = p.hideRead === true;
           autoCollapseBotsOn = p.autoCollapseBots === true;
           nightAutoOn = p.nightAuto === true;
-          applyBodyFlags(p);
+          applyBodyFlags(p); // includes fixedThumbnails
           applyNightSchedule();
           applyNight();
           applyFilters(document); // hideRead / re-filter
+          if (changes.expandImages) { expandImagesOn = p.expandImages === true; expandImagesPass(); }
         });
       }
       if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits ||
