@@ -1189,6 +1189,12 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 li.orr-newcount-li a.orr-newcount { color:#ff4500; font-weight:bold; }
 .commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .tagline,
 .commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .usertext-body { opacity:.55; }
+/* clamp read comments to a few lines; click a long one to expand it (RES-style, saves space) */
+.commentarea.orr-foldread .thing.comment:not(.orr-new):not(.orr-read-open) > .entry > .usertext-body { max-height:4.2em; overflow:hidden; }
+.commentarea.orr-foldread .thing.comment.orr-clamped:not(.orr-read-open) > .entry > .usertext-body { cursor:pointer; position:relative; }
+.commentarea.orr-foldread .thing.comment.orr-clamped:not(.orr-read-open) > .entry > .usertext-body:after {
+  content:"… click to expand"; position:absolute; left:0; right:0; bottom:0; padding:1.4em 2px 0 0; text-align:right; font-size:11px;
+  color:#369; background:linear-gradient(rgba(255,255,255,0), #fff 65%); pointer-events:none; }
 .orr-gimg { display:none; max-width:100%; height:auto; }
 .orr-gimg.active { display:block; }
 .orr-gnav-bar { margin:4px 0; font-size:12px; }
@@ -1348,6 +1354,8 @@ html.orr-night .thing, html.orr-night .thing.comment { background:transparent !i
 html.orr-night .thing { border-color:#343536 !important; }
 html.orr-night .tagline, html.orr-night .domain, html.orr-night .score, html.orr-night .rank { color:#818384 !important; }
 html.orr-night .md, html.orr-night .usertext-body, html.orr-night .md * { background:transparent !important; color:#d7dadc !important; }
+html.orr-night .commentarea.orr-foldread .thing.comment.orr-clamped:not(.orr-read-open) > .entry > .usertext-body:after {
+  background:linear-gradient(rgba(26,26,27,0), #1a1a1b 65%) !important; color:#6ca6e0; }
 html.orr-night .side .spacer > *, html.orr-night .titlebox, html.orr-night .sidecontentbox {
   background:#242526 !important; border-color:#343536 !important; color:#d7dadc !important; }
 html.orr-night #search input[type=text] { background:#111 !important; color:#d7dadc !important; border-color:#474748 !important; }
@@ -1503,6 +1511,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     expandLink.setAttribute("aria-expanded", collapsed ? "false" : "true");
     expandLink.setAttribute("aria-label", collapsed ? "expand comment" : "collapse comment");
     persistCollapse(thing, collapsed);
+    if (!collapsed) clampReadBodies(); // expanding a thread reveals read bodies → add their expand hint
   }
 
   // ---- gallery nav ----
@@ -1645,6 +1654,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   // ---- new comments since last visit ----
+  let curThreadLast = 0; // last-visit time for the open thread, for flagging late-loaded comments
+  function flagNewComments(scope) {
+    if (!curThreadLast) return;
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll(".thing.comment:not(.orr-new)").forEach((c) => {
+      if (parseInt(c.getAttribute("data-created") || "0", 10) > curThreadLast) c.classList.add("orr-new");
+    });
+  }
   function markNewComments() {
     const area = document.querySelector(".commentarea");
     if (!area) return;
@@ -1652,12 +1669,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const t3 = post ? post.getAttribute("data-fullname") : null;
     if (!t3) return;
     const rec = dataCache.threadVisits[t3];
-    const last = typeof rec === "number" ? rec : (rec && rec.t) || 0; // old (number) or new ({t,c})
-    if (last) {
-      document.querySelectorAll(".thing.comment").forEach((c) => {
-        const created = parseInt(c.getAttribute("data-created") || "0", 10);
-        if (created > last) c.classList.add("orr-new");
-      });
+    curThreadLast = typeof rec === "number" ? rec : (rec && rec.t) || 0; // old (number) or new ({t,c})
+    if (curThreadLast) {
+      flagNewComments(document);
       area.classList.add("orr-visited-before"); // prior-visit info exists → read/unread is meaningful
     }
     applyReadFolding(); // grey + fold read threads (opt-in) before we overwrite the record
@@ -1674,21 +1688,36 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function applyReadFolding() {
     const area = document.querySelector(".commentarea");
     if (!area || !foldReadCommentsOn || !area.classList.contains("orr-visited-before")) return;
-    area.classList.add("orr-foldread"); // CSS greys .thing.comment:not(.orr-new)
+    area.classList.add("orr-foldread"); // CSS greys .thing.comment:not(.orr-new) and clamps read bodies
     topComments().forEach((t) => {
       const hasNew = t.classList.contains("orr-new") || t.querySelector(".orr-new");
       // Only auto-fold threads that are open (leave user-collapsed ones alone) and mark
       // them so turning the option off can re-expand exactly what we folded.
       if (!hasNew && !t.classList.contains("collapsed")) { collapseThing(t, true); t.setAttribute("data-orr-readfold", "1"); }
     });
+    clampReadBodies(); // add the "click to expand" affordance to long, visible read bodies
+  }
+  // Add the expand affordance (.orr-clamped) to read bodies that overflow the clamp.
+  // Read bodies are clamped by CSS whenever visible; the click-to-expand handler works
+  // on ANY read body, so this is only the visual hint. Re-run when bodies become newly
+  // visible (a thread expands, load-more appends); idempotent via :not(.orr-clamped).
+  function clampReadBodies() {
+    const area = document.querySelector(".commentarea");
+    if (!area || !area.classList.contains("orr-foldread")) return;
+    const over = [];
+    area.querySelectorAll(".thing.comment:not(.orr-new):not(.orr-read-open):not(.orr-clamped) > .entry > .usertext-body").forEach((b) => {
+      if (b.offsetParent !== null && b.scrollHeight > b.clientHeight + 4) { const c = b.parentElement.parentElement; if (c) over.push(c); }
+    });
+    over.forEach((c) => c.classList.add("orr-clamped"));
   }
   function unfoldReadComments() {
     const area = document.querySelector(".commentarea");
-    if (area) area.classList.remove("orr-foldread"); // un-grey
+    if (area) area.classList.remove("orr-foldread"); // un-grey / un-clamp
     document.querySelectorAll(".thing.comment[data-orr-readfold]").forEach((t) => {
       t.removeAttribute("data-orr-readfold");
       collapseThing(t, false); // re-expand only the threads we auto-folded
     });
+    document.querySelectorAll(".thing.comment.orr-clamped, .thing.comment.orr-read-open").forEach((c) => c.classList.remove("orr-clamped", "orr-read-open"));
   }
 
   // Listing pass: show "N new" on posts whose comment count grew since your last visit.
@@ -3417,6 +3446,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     patchTags(document);
     inlineImages(document);
     enhanceComments(document);
+    flagNewComments(document); // flag any newly-loaded comments created since your last visit
+    clampReadBodies(); // give newly-loaded read bodies the "click to expand" affordance
     observeMores(); // pick up new/continued "more" stubs
   }
 
@@ -3556,6 +3587,19 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         if (shareOpt) { e.preventDefault(); e.stopPropagation(); openShareIntent(shareOpt); return; }
         const shareInput = e.target.closest && e.target.closest(".post-sharing-link-input");
         if (shareInput) { shareInput.focus(); shareInput.select(); return; } // re-select for easy copy
+        // Expand a clamped read comment (fold-read mode) when its own body is clicked.
+        // Gated on the read condition (NOT .orr-clamped) so a body revealed later —
+        // by expanding a thread or load-more — is always expandable, never hidden.
+        const foldBody = e.target.closest && e.target.closest(".commentarea.orr-foldread .usertext-body");
+        if (foldBody && foldBody.parentElement && foldBody.parentElement.classList.contains("entry") &&
+            !e.target.closest("a, button, .md-spoiler-text, input, textarea")) {
+          const c = foldBody.parentElement.parentElement; // .thing.comment > .entry > .usertext-body
+          if (c && c.classList.contains("comment") && !c.classList.contains("orr-new") && !c.classList.contains("orr-read-open")) {
+            e.preventDefault();
+            c.classList.add("orr-read-open");
+            return;
+          }
+        }
         // Comment collapse toggle.
         const expandLink = e.target.closest && e.target.closest("a.expand");
         if (expandLink) {
