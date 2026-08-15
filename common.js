@@ -14,7 +14,7 @@
 
   // Rebuild is now the only mode.
   const DEFAULTS = Object.freeze({
-    enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: false,
+    enabled: true, infiniteScroll: true, nightMode: false, redirect: true, videoMuted: true,
     subredditCss: true, autoplayMedia: false, hideRead: false, autoCollapseBots: false,
     compactView: false, nightAuto: false, highContrast: false, dyslexiaFont: false,
     videoLoop: false, hoverPreview: true, expandImages: false, fixedThumbnails: false,

@@ -2,7 +2,7 @@
 
 **[▶ Install for Firefox (addons.mozilla.org)](https://addons.mozilla.org/addon/68acaf9111064d669ba0/)** &nbsp;·&nbsp; **[▶ Install for Edge (Microsoft Store)](https://microsoftedge.microsoft.com/addons/detail/classic-layout-for-reddit/jpccopdjifaoidblbnhaeobelcldnoop)** &nbsp;·&nbsp; Chrome/Brave/Opera: [load unpacked](#install-on-chrome-brave-and-opera)
 
-A dependency-free browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
+A browser extension — **Firefox and Chrome / Chromium (Edge, Brave,
 Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches each page
 from Reddit's JSON API and renders old Reddit's *real* archived HTML + CSS, then
 layers on RES-style power features.
@@ -299,6 +299,7 @@ A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs
 | `rebuild.js` | Content script: rebuilds old Reddit from the JSON API + all RES-style features |
 | `vendor/oldreddit.css` | Old Reddit's real archived 2019 stylesheet (source) |
 | `vendor/oldreddit.bundled.css` | The above with asset URLs rewritten — the file injected at runtime |
+| `vendor/dash.mediaplayer.min.js` | [dash.js](https://github.com/Dash-Industry-Forum/dash.js) (BSD-3-Clause) — MSE playback for v.redd.it videos with audio |
 | `scripts/build-css.mjs` | Rebuilds `oldreddit.bundled.css` from the source |
 | `common.js` | Shared prefs + listing-route parser (content scripts + settings UI) |
 | `settings.js` | Wires the toggles to storage |
@@ -306,10 +307,15 @@ A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs
 | `icons/icon.svg` | Source vector icon |
 | `icons/icon-{16,32,48,128}.png` | Extension icons (PNG — required by Chrome) |
 
-No build step and no third-party runtime dependencies.
+No build step. The only third-party runtime dependency is
+[dash.js](https://github.com/Dash-Industry-Forum/dash.js), vendored at
+`vendor/dash.mediaplayer.min.js`.
 
 ---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+This project also bundles [dash.js](https://github.com/Dash-Industry-Forum/dash.js)
+(BSD-3-Clause) — see [dash.js's LICENSE](https://github.com/Dash-Industry-Forum/dash.js/blob/master/LICENSE.md).

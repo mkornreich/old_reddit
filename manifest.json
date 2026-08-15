@@ -50,7 +50,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["vendor/oldreddit.bundled.css"],
+      "resources": ["vendor/oldreddit.bundled.css", "vendor/dash.mediaplayer.min.js"],
       "matches": ["*://*.reddit.com/*"]
     }
   ],
