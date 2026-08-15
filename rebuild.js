@@ -68,25 +68,11 @@
   }
 
   // Reddit serves a v.redd.it video as a video-only DASH mp4 plus a separate audio
-  // file. Derive the likely audio URLs from the fallback (video) URL — Reddit has
-  // used several names over the years, so we list them newest-first and the runtime
-  // probes them in order. Returns [] if this isn't a v.redd.it fallback URL.
+  // file, described together by one DASH manifest. Derive that manifest's base URL
+  // from the fallback (video) URL. Returns null if this isn't a v.redd.it fallback URL.
   function vRedditBase(fallbackUrl) {
     const m = /^(https?:\/\/v\.redd\.it\/[^/?#]+)\//i.exec(fallbackUrl || "");
     return m ? m[1] : null;
-  }
-  // Candidate audio-track URLs, tried in order if the DASH manifest can't be read.
-  // Reddit has used CMAF (current) and DASH (older) container/naming schemes.
-  function audioCandidates(base) {
-    if (!base) return [];
-    return [
-      base + "/CMAF_AUDIO_128.mp4",
-      base + "/CMAF_AUDIO_64.mp4",
-      base + "/DASH_AUDIO_128.mp4",
-      base + "/DASH_AUDIO_64.mp4",
-      base + "/DASH_audio.mp4",
-      base + "/audio",
-    ];
   }
 
   function embedHtml(src, extra, w, h) {
@@ -149,19 +135,16 @@
     const rv = d.media && d.media.reddit_video;
     if (d.is_video && rv && rv.fallback_url) {
       // Reddit's fallback_url is a VIDEO-ONLY stream — the audio is a separate
-      // v.redd.it file. We attach the DASH manifest URL (authoritative for the
-      // exact audio track, across DASH/CMAF naming) plus candidate URLs as a
-      // fallback, so the runtime can play a hidden, synced <audio> element
-      // alongside the video (see wireRedditVideo).
-      // Reddit "gif" videos (is_gif) have no audio track — don't bother probing.
+      // v.redd.it file, described together by one DASH manifest. We attach that
+      // manifest URL so the runtime can hand it to dash.js, which demuxes both
+      // tracks into this same <video> element via Media Source Extensions (see
+      // wireRedditVideo) — real sync, not a hand-rolled two-element approximation.
+      // Reddit "gif" videos (is_gif) have no audio track — don't bother.
       const base = (rv.has_audio === false || rv.is_gif === true) ? null : vRedditBase(rv.fallback_url);
-      const cands = audioCandidates(base);
       const dashUrl = base ? base + "/DASHPlaylist.mpd" : "";
-      const audioAttr = cands.length
-        ? ` data-audio-candidates="${esc(cands.join("|"))}" data-dash-url="${esc(dashUrl)}"`
-        : "";
+      const audioAttr = dashUrl ? ` data-dash-url="${esc(dashUrl)}"` : "";
       return {
-        type: cands.length ? "video" : "video-muted",
+        type: dashUrl ? "video" : "video-muted",
         html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
       };
     }
@@ -1180,6 +1163,10 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 #orr-top { position:fixed; right:16px; bottom:16px; z-index:2147483000; background:#5f99cf; color:#fff;
   border:1px solid #336699; border-radius:3px; padding:6px 10px; font:12px verdana; cursor:pointer; display:none; }
 #orr-top.show { display:block; }
+#orr-mute-all { position:fixed; top:16px; right:16px; z-index:2147483000; background:rgba(0,0,0,.55); color:#fff;
+  border:none; border-radius:4px; padding:4px 9px; font-size:18px; line-height:1.5; cursor:pointer; display:none; }
+#orr-mute-all:hover { background:rgba(0,0,0,.82); }
+#orr-mute-all.show { display:block; }
 .orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; color:#fff; vertical-align:middle; }
 #orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
   border-radius:3px; padding:8px; font:11px verdana; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
@@ -1204,13 +1191,10 @@ a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 /* embeds + direct video */
 .orr-embed { width:640px; max-width:100%; height:360px; border:0; display:block; background:#000; }
 .orr-directvideo { max-width:100%; height:auto; display:block; background:#000; }
-/* reddit video wrapper + custom mute button (native volume control is hidden for
-   audio-less video, so we provide our own) */
+/* reddit video wrapper (dash.js gives it a real audio track, so native
+   volume/mute controls work — no custom mute button needed) */
 .orr-video-wrap { position:relative; display:inline-block; line-height:0; max-width:100%; }
 .orr-video-wrap video { max-width:100%; }
-button.orr-mute { position:absolute; top:8px; right:8px; z-index:6; background:rgba(0,0,0,.55); color:#fff;
-  border:none; border-radius:4px; padding:2px 7px; cursor:pointer; font-size:15px; line-height:1.5; }
-button.orr-mute:hover { background:rgba(0,0,0,.82); }
 /* video niceties: playback-speed + loop controls, shown below the player */
 .orr-vctl { line-height:normal; margin-top:3px; display:flex; gap:5px; }
 .orr-vctl button { background:#eee; color:#333; border:1px solid #ccc; border-radius:3px; font:11px verdana,sans-serif; padding:2px 7px; cursor:pointer; }
@@ -1295,8 +1279,8 @@ a.orr-parent { color:#369; }
   padding:8px 14px; border-radius:0 0 4px 4px; font:bold 13px verdana; text-decoration:none; transition:top .15s ease; }
 #orr-skip:focus { top:0; outline:2px solid #ff4500; }
 .expando-button:focus-visible, a.expand:focus-visible, a.orr-parent:focus-visible, a.orr-gnav:focus-visible,
-#orr-cnav button:focus-visible, button.orr-mute:focus-visible, #orr-help-btn:focus-visible,
-#orr-top:focus-visible, .thing:focus-visible, a.orr-more:focus-visible {
+#orr-cnav button:focus-visible, #orr-help-btn:focus-visible,
+#orr-top:focus-visible, #orr-mute-all:focus-visible, .thing:focus-visible, a.orr-more:focus-visible {
   outline:2px solid #ff4500; outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) {
   .orr-flash, #orr-skeleton .orr-sk-line, #orr-skip { animation:none !important; transition:none !important; }
@@ -1417,6 +1401,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       b.addEventListener("click", () => window.scrollTo({ top: 0, behavior: SB }));
       document.body.appendChild(b);
     }
+    if (!document.getElementById("orr-mute-all")) {
+      const m = document.createElement("button");
+      m.id = "orr-mute-all";
+      m.type = "button";
+      m.addEventListener("click", () => setVideoMuted(!orrVideoMuted));
+      document.body.appendChild(m);
+      paintMuteAllBtn();
+    }
+    updateMuteAllVisibility();
     if (!document.getElementById("orr-hovercard")) {
       const c = document.createElement("div");
       c.id = "orr-hovercard";
@@ -2089,149 +2082,131 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
   }
 
-  // Read the exact audio-track URL out of a Reddit DASH manifest. Works across
-  // Reddit's container schemes (CMAF today, DASH historically) because it just
-  // picks the highest-bitrate BaseURL whose name contains "audio". Returns null
-  // if the manifest can't be read or has no audio track.
-  async function audioUrlFromManifest(dashUrl) {
-    if (!dashUrl) return null;
-    try {
-      let signal;
-      if (typeof AbortController === "function") {
-        const ac = new AbortController();
-        signal = ac.signal;
-        setTimeout(() => ac.abort(), 4000); // don't hang first play on a slow/blocked manifest
-      }
-      const res = await fetch(dashUrl, { credentials: "omit", signal });
-      if (!res.ok) return null;
-      const xml = await res.text();
-      const urls = [];
-      const re = /<BaseURL>([^<]+)<\/BaseURL>/gi;
-      let m;
-      while ((m = re.exec(xml))) if (/audio/i.test(m[1])) urls.push(m[1]);
-      if (!urls.length) return null;
-      urls.sort((a, b) => parseInt((b.match(/(\d+)/) || [])[1] || "0", 10) - parseInt((a.match(/(\d+)/) || [])[1] || "0", 10));
-      const f = urls[0];
-      if (/^https?:/i.test(f)) return f;
-      return dashUrl.replace(/\/DASHPlaylist\.mpd.*$/i, "") + "/" + f.replace(/^\//, "");
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // Give a Reddit video its sound back. The <video> plays the video-only stream;
-  // we play a hidden <audio> (the separate v.redd.it audio track) locked to it, so
-  // the native volume/mute controls work. The audio URL is resolved lazily on first
-  // play from the DASH manifest (authoritative), falling back to guessed candidate
-  // URLs. A truly silent clip (no audio track anywhere) just falls back to no audio.
-  // The audio for a reddit video is a separate hidden element, and Chrome hides the
-  // <video>'s native volume control because the video track has no audio — so we add
-  // our own mute button. Mute state is global + persisted (orrVideoMuted).
-  let orrVideoMuted = false;
+  // Give a Reddit video its sound back via proper MSE-based playback. v.redd.it
+  // serves video and audio as separate DASH representations; rather than playing
+  // them in two independent <video>/<audio> elements and correcting drift with JS
+  // (fragile, and needed constant seeking/rate-nudging to avoid stutter on weaker
+  // hardware), hand the manifest to dash.js, which demuxes both tracks into this
+  // ONE <video> element via Media Source Extensions. Sync then becomes the
+  // browser's own media pipeline's job, same as any ordinary muxed video — no
+  // JS-driven seeking or rate correction needed. Since the video now carries a
+  // real audio track, the browser's native per-video controls (mute/volume) work
+  // as-is; mute is additionally exposed as ONE global toggle (#orr-mute-all,
+  // see ensureUiChrome) that applies to every reddit video at once. Defaults to
+  // muted (DEFAULTS.videoMuted in common.js) — safer for autoplay-in-feed — but
+  // remembers an explicit unmute across sessions like any other pref.
+  let orrVideoMuted = true;
   let videoLoopOn = false, videoSpeed = 1, videoVolume = null; // remembered video prefs (ui blob + videoLoop bool)
   let hoverPreviewOn = true, lastMouseX = 0, lastMouseY = 0;
   let expandImagesOn = false;
   function updateUi(patch) { dataCache.ui = Object.assign({}, dataCache.ui, patch); ORR.setPrefs({ ui: dataCache.ui }); }
+  // Set both the property AND the HTML attribute: autoplay-permission checks in
+  // some engines don't reliably treat a JS-only `.muted = true` the same as the
+  // attribute being present, which was silently blocking autoplay-with-sound
+  // videos (NotAllowedError) even though they were "muted" by the property alone.
+  function applyVideoMuted(v, m) {
+    v.muted = m;
+    if (m) v.setAttribute("muted", ""); else v.removeAttribute("muted");
+  }
+  function paintMuteAllBtn() {
+    const b = document.getElementById("orr-mute-all");
+    if (!b) return;
+    b.textContent = orrVideoMuted ? "🔇" : "🔊";
+    b.setAttribute("aria-pressed", orrVideoMuted ? "true" : "false");
+    const lbl = orrVideoMuted ? "unmute all videos" : "mute all videos";
+    b.title = lbl;
+    b.setAttribute("aria-label", lbl);
+  }
+  function updateMuteAllVisibility() {
+    const b = document.getElementById("orr-mute-all");
+    if (b) b.classList.toggle("show", !!document.querySelector("video.reddit-video[data-dash-url]"));
+  }
+  function isInViewport(el) {
+    const r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < (window.innerHeight || document.documentElement.clientHeight) && r.right > 0 && r.left < (window.innerWidth || document.documentElement.clientWidth);
+  }
   function setVideoMuted(m) {
     orrVideoMuted = !!m;
     document.querySelectorAll("video.reddit-video").forEach((v) => {
-      if (v._orrAudio) v._orrAudio.muted = orrVideoMuted;
-      if (v._orrPaintMute) v._orrPaintMute();
+      applyVideoMuted(v, orrVideoMuted);
+      // Toggling this button is itself a user gesture, so a currently-visible
+      // video that's paused (e.g. its first autoplay attempt was rejected
+      // while unmuted) can safely retry now — play() is allowed here
+      // regardless of mute state since it's gesture-driven, not autoplay.
+      if (autoplayOn && v.paused && v.dataset.orrWant !== "pause" && isInViewport(v)) {
+        v.dataset.orrWant = "play";
+        v.play().catch(() => {});
+      }
     });
+    paintMuteAllBtn();
     ORR.setPrefs({ videoMuted: orrVideoMuted });
   }
 
+  // Loaded lazily (see wireRedditVideo) and only once per page — dash.js is a
+  // ~740KB module, not worth fetching/parsing on pages with no video, or before
+  // the user actually presses play.
+  let dashModulePromise = null;
+  function loadDashJs() {
+    if (!dashModulePromise) dashModulePromise = import(api.runtime.getURL("vendor/dash.mediaplayer.min.js"));
+    return dashModulePromise;
+  }
+
+  // dash.js's own representation-selection logic throws internally against
+  // Reddit's raw manifest ("period[i.index] is undefined" / "entries() is not
+  // iterable") — happens during initial selection, not just later ABR
+  // switches, so disabling autoSwitchBitrate alone doesn't stop it. RES's own
+  // dash.js integration avoids this by trimming the manifest to a single video
+  // Representation and handing dash.js a blob: URL instead of the remote one —
+  // tried that here too, but Reddit's page CSP connect-src doesn't allow
+  // blob:, so dash.js's own fetch of it gets blocked outright (worse: no
+  // playback at all, not just console noise). Reverted; the errors are noisy
+  // but don't block actual playback, unlike the CSP wall. A real fix would
+  // need dash.js's own internal manifest object shape via loadWithManifest()
+  // instead of a URL — more fragile than this is worth for now.
+
   function wireRedditVideo(video) {
-    if (!video || video.dataset.orrAudioWired) return;
-    const cands = (video.getAttribute("data-audio-candidates") || "").split("|").filter(Boolean);
+    if (!video || video.dataset.orrDashWired) return;
     const dashUrl = video.getAttribute("data-dash-url") || "";
-    if (!cands.length && !dashUrl) return;
-    video.dataset.orrAudioWired = "1";
+    if (!dashUrl) return; // no separate audio track — the plain <source> already plays fine
+    video.dataset.orrDashWired = "1";
+    applyVideoMuted(video, orrVideoMuted);
 
-    // Wrap the video so the mute button can overlay it precisely.
-    let wrap = video.closest(".orr-video-wrap");
-    if (!wrap) {
-      wrap = document.createElement("span");
-      wrap.className = "orr-video-wrap";
-      if (video.parentNode) video.parentNode.insertBefore(wrap, video);
-      wrap.appendChild(video);
-    }
-    const audio = document.createElement("audio");
-    audio.preload = "none";
-    audio.style.display = "none";
-    audio.muted = orrVideoMuted;
-    audio.loop = videoLoopOn; // loop the synced audio when the video is set to loop
-    wrap.appendChild(audio);
-    video._orrAudio = audio;
-
-    // Custom, always-visible mute toggle (the native one is unavailable).
-    const muteBtn = document.createElement("button");
-    muteBtn.type = "button";
-    muteBtn.className = "orr-mute";
-    const paintMute = () => {
-      muteBtn.textContent = audio.muted ? "🔇" : "🔊";
-      const lbl = audio.muted ? "unmute video" : "mute video";
-      muteBtn.setAttribute("aria-label", lbl);
-      muteBtn.setAttribute("aria-pressed", audio.muted ? "true" : "false");
-      muteBtn.title = lbl;
-    };
-    video._orrPaintMute = paintMute;
-    paintMute();
-    muteBtn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); setVideoMuted(!audio.muted); });
-    wrap.appendChild(muteBtn);
-
-    let idx = -1, resolved = false, dead = false, srcSet = false, resolving = false;
-    const resync = () => { if (dead) return; try { if (Math.abs(audio.currentTime - video.currentTime) > 0.3) audio.currentTime = video.currentTime; } catch (e) {} };
-    const play = () => { if (dead) return; try { audio.currentTime = video.currentTime; } catch (e) {} audio.play().catch(() => {}); };
-
-    // Choose the audio source: manifest first, then walk the candidate list.
-    async function ensureSrc(advance) {
-      if (dead) return;
-      if (!srcSet) {
-        if (resolving) return;
-        resolving = true;
-        const u = await audioUrlFromManifest(dashUrl);
-        resolving = false;
-        if (dead) return;
-        if (u) { audio.src = u; srcSet = true; }
-        else if (cands.length) { idx = 0; audio.src = cands[0]; srcSet = true; }
-        else { dead = true; return; }
-        if (!video.paused) play();
-        return;
-      }
-      if (advance) {
-        idx += 1;
-        if (idx >= cands.length) { dead = true; return; } // out of candidates → silent
-        audio.src = cands[idx];
-        if (!video.paused) play();
-      }
-    }
-
-    audio.addEventListener("playing", () => { resolved = true; resync(); });
-    audio.addEventListener("error", () => {
-      if (resolved || dead) return; // only fall through candidates while still probing
-      ensureSrc(true);
-    });
-
-    video.addEventListener("play", () => { if (srcSet) play(); else ensureSrc(false); });
-    video.addEventListener("playing", () => { if (srcSet) play(); });
-    video.addEventListener("pause", () => audio.pause());
-    video.addEventListener("waiting", () => audio.pause()); // buffering → hold audio
-    video.addEventListener("seeking", resync);
-    video.addEventListener("seeked", resync);
-    video.addEventListener("timeupdate", resync);
-    video.addEventListener("ratechange", () => { try { audio.playbackRate = video.playbackRate; } catch (e) {} });
-    // Volume slider (if the browser shows one) mirrors to the audio; mute is driven
-    // by our own button (orrVideoMuted), not the video, so we don't override it here.
-    video.addEventListener("volumechange", () => { audio.volume = video.volume; });
-    audio.volume = video.volume;
+    // Don't attach dash.js (or fetch anything) until the user actually presses
+    // play: this runs for every visible video on the page (e.g. every post in a
+    // feed), and dash.js starts fetching the manifest+segments the moment it's
+    // attached, regardless of the video's own `preload` attribute.
+    video.addEventListener("play", () => {
+      loadDashJs()
+        .then((mod) => {
+          if (!video.isConnected) return; // navigated away before dash.js finished loading
+          const player = mod.MediaPlayer().create();
+          video._orrDashPlayer = player;
+          // We don't offer a quality picker, so at least stop dash.js from
+          // evaluating bitrate switches on Reddit's short representation ladder
+          // (that's where the "period[i.index] is undefined" noise comes from).
+          try { player.updateSettings({ streaming: { abr: { autoSwitchBitrate: { video: false, audio: false } } } }); } catch (e) {}
+          player.initialize(video, dashUrl, false);
+          // attachSource (inside initialize) swaps the element's media source out
+          // from under the native <source> that was already playing, so the video
+          // isn't actually ready yet — resuming immediately gets silently dropped
+          // (hence needing a second manual click). Resume once it genuinely is —
+          // unless autoplay already paused it again (scrolled out while this was
+          // loading), tracked via data-orr-want (see autoplayMedia).
+          video.addEventListener("canplay", () => {
+            if (video.dataset.orrWant === "pause") return;
+            video.play().catch(() => {});
+          }, { once: true });
+        })
+        .catch(() => { /* dash.js unavailable → the plain <source src=fallback_url> keeps playing, just silent */ });
+    }, { once: true });
   }
 
   function wireRedditVideos(scope) {
     const root = scope && scope.querySelectorAll ? scope : document;
     let vids;
-    try { vids = root.querySelectorAll("video.reddit-video[data-audio-candidates]"); } catch (e) { return; }
+    try { vids = root.querySelectorAll("video.reddit-video[data-dash-url]"); } catch (e) { return; }
     vids.forEach(wireRedditVideo);
+    updateMuteAllVisibility();
   }
 
   // ---- video niceties: playback speed, loop, remembered volume ----
@@ -2240,7 +2215,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     videoLoopOn = !!on;
     document.querySelectorAll(".orr-video-wrap video, video.orr-directvideo, .expando video").forEach((v) => {
       v.loop = videoLoopOn;
-      if (v._orrAudio) v._orrAudio.loop = videoLoopOn; // reddit videos loop their synced audio too
       if (v._orrPaintLoop) v._orrPaintLoop();
     });
     ORR.setPrefs({ videoLoop: videoLoopOn });
@@ -2248,11 +2222,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function addVideoControls(video) {
     if (!video || video.dataset.orrVctl) return;
     video.dataset.orrVctl = "1";
-    const isReddit = video.classList.contains("reddit-video"); // reddit videos carry sound on a separate <audio>
     video.loop = videoLoopOn;
-    if (video._orrAudio) video._orrAudio.loop = videoLoopOn; // keep the synced audio looping in step
     try { if (videoSpeed && videoSpeed !== 1) video.playbackRate = videoSpeed; } catch (e) {}
-    if (!isReddit && videoVolume != null) { try { video.volume = videoVolume; } catch (e) {} }
+    if (videoVolume != null) { try { video.volume = videoVolume; } catch (e) {} }
     let wrap = video.closest(".orr-video-wrap");
     if (!wrap) {
       wrap = document.createElement("span");
@@ -2285,7 +2257,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const r = video.playbackRate || 1;
       if (r !== videoSpeed) { videoSpeed = r; updateUi({ videoSpeed: r }); }
     });
-    if (!isReddit) video.addEventListener("volumechange", () => {
+    video.addEventListener("volumechange", () => {
       if (video.volume !== videoVolume) { videoVolume = video.volume; updateUi({ videoVolume: video.volume }); }
     });
   }
@@ -2559,7 +2531,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       wrap.className = "orr-inline-media";
       wrap.innerHTML =
         '<div class="expando-container"><video class="reddit-video" controls preload="metadata" data-dash-url="' +
-        esc(base + "/DASHPlaylist.mpd") + '" data-audio-candidates="' + esc(audioCandidates(base).join("|")) +
+        esc(base + "/DASHPlaylist.mpd") +
         '" width="480"><source src="' + esc(vurl) + '"></video></div>';
       if (anchor.isConnected) { anchor.insertAdjacentElement("afterend", wrap); wireRedditVideos(wrap); }
     } catch (e) { /* leave the link as-is */ }
@@ -2625,7 +2597,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     });
   }
 
-  // Autoplay muted reddit videos/gifs in listings as they scroll into view (RES).
+  // Autoplay reddit videos/gifs in listings as they scroll into view, and pause
+  // them again once they scroll out (RES). Sound is governed by the same global
+  // mute toggle as every other video (orrVideoMuted, defaults muted) — no special
+  // casing here. Stays observing (doesn't unobserve after the first trigger) so
+  // it can re-pause/re-play across repeated scroll in/out.
   let autoplayObserver = null;
   function autoplayMedia(scope) {
     if (!autoplayOn || typeof IntersectionObserver === "undefined") return;
@@ -2635,17 +2611,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       autoplayObserver = new IntersectionObserver((entries) => {
         entries.forEach((en) => {
           const btn = en.target;
-          if (!en.isIntersecting) return;
-          autoplayObserver.unobserve(btn);
-          if (btn.classList.contains("collapsed")) btn.click(); // expand
           const entry = btn.closest(".entry");
-          const v = entry && entry.querySelector(":scope > .expando video");
-          if (v) {
-            v.muted = true;
-            // Reddit videos have a SEPARATE audio element — mute it too, else autoplay
-            // blasts sound (v.muted only mutes the video-only track).
-            if (v._orrAudio) { v._orrAudio.muted = true; if (v._orrPaintMute) v._orrPaintMute(); }
-            try { v.play().catch(() => {}); } catch (e) {}
+          if (en.isIntersecting) {
+            if (btn.classList.contains("collapsed")) btn.click(); // expand (also starts it — see the expando click handler)
+            const v = entry && entry.querySelector(":scope > .expando video");
+            if (v) { v.dataset.orrWant = "play"; try { v.play().catch(() => {}); } catch (e) {} }
+          } else {
+            const v = entry && entry.querySelector(":scope > .expando video");
+            if (v) { v.dataset.orrWant = "pause"; try { v.pause(); } catch (e) {} }
           }
         });
       }, { rootMargin: "0px" });
@@ -3674,7 +3647,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
               // stop any playing <video> (which cascades to audio.pause() via the
               // 'pause' listener) AND blank any iframe embed (whose browsing context
               // keeps playing audio while hidden). Both are restored on re-expand.
-              expando.querySelectorAll("video").forEach((v) => { try { v.pause(); } catch (e) {} });
+              expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "pause"; try { v.pause(); } catch (e) {} });
               expando.querySelectorAll("iframe.orr-embed").forEach((f) => {
                 if (!f.dataset.orrSrc) f.dataset.orrSrc = f.src;
                 f.src = "about:blank";
@@ -3689,6 +3662,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
               wireRedditVideos(expando); // give the video its sound
               enhanceVideoControls(expando); // speed / loop controls + remembered prefs
               addDownloadButtons(expando);
+              // A manual expand is a deliberate "play this" action, independent of
+              // the autoplay-in-feed setting — start it immediately either way.
+              expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "play"; try { v.play().catch(() => {}); } catch (e) {} });
             }
           }
           return;
@@ -3938,10 +3914,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         const m = changes.videoMuted.newValue === true;
         if (m !== orrVideoMuted) {
           orrVideoMuted = m;
-          document.querySelectorAll("video.reddit-video").forEach((v) => {
-            if (v._orrAudio) v._orrAudio.muted = orrVideoMuted;
-            if (v._orrPaintMute) v._orrPaintMute();
-          });
+          document.querySelectorAll("video.reddit-video").forEach((v) => applyVideoMuted(v, orrVideoMuted));
+          paintMuteAllBtn();
         }
       }
       if (changes.nightMode) {
@@ -3950,7 +3924,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       }
       if (changes.videoLoop && active) {
         videoLoopOn = changes.videoLoop.newValue === true;
-        document.querySelectorAll(".orr-video-wrap video, video.orr-directvideo").forEach((v) => { v.loop = videoLoopOn; if (v._orrAudio) v._orrAudio.loop = videoLoopOn; if (v._orrPaintLoop) v._orrPaintLoop(); });
+        document.querySelectorAll(".orr-video-wrap video, video.orr-directvideo").forEach((v) => { v.loop = videoLoopOn; if (v._orrPaintLoop) v._orrPaintLoop(); });
       }
       if (changes.hoverPreview) { hoverPreviewOn = changes.hoverPreview.newValue !== false; if (!hoverPreviewOn) hideHoverImg(); }
       if (changes.ui && active) {
