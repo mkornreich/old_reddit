@@ -76,7 +76,12 @@
   }
 
   function embedHtml(src, extra, w, h) {
-    return `<div class="expando-container"><iframe class="orr-embed" src="${esc(src)}" width="${w || 640}" height="${h || 360}" frameborder="0" loading="lazy" referrerpolicy="no-referrer" ${extra || ""}></iframe></div>`;
+    // referrerpolicy: YouTube's embedded player requires a referrer/origin header
+    // as of late 2025 and throws error 153 without one — "no-referrer" broke it.
+    // strict-origin-when-cross-origin is the browser's own default when nothing is
+    // specified at all: it reveals only the origin (https://www.reddit.com), never
+    // the specific path/post, so it's not a meaningful privacy step down.
+    return `<div class="expando-container"><iframe class="orr-embed" src="${esc(src)}" width="${w || 640}" height="${h || 360}" frameborder="0" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" ${extra || ""}></iframe></div>`;
   }
 
   // Expand common non-Reddit media hosts inline (RES "show images" style), from a
@@ -1496,6 +1501,33 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   // ---- collapse comments ----
+  // Collapsing via CSS doesn't pause embedded media — same issue the
+  // post-level expando toggle handles. A comment can carry a v.redd.it/direct
+  // <video> or an external embed <iframe> (expandCommentMedia), either of
+  // which keeps playing (and, for an iframe, keeps making sound) while hidden.
+  //
+  // For iframes: blanking .src (the obvious approach) isn't reliable — some
+  // embedded players (confirmed: YouTube's) can keep playing audio briefly or
+  // indefinitely afterward regardless. Fully detaching the iframe is the one
+  // technique guaranteed to tear down whatever the embedded page was doing;
+  // its markup is saved on a placeholder so it can be recreated on restore.
+  function stopHiddenMedia(root) {
+    if (!root) return;
+    root.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "pause"; try { v.pause(); } catch (e) {} });
+    root.querySelectorAll("iframe.orr-embed").forEach((f) => {
+      const placeholder = document.createElement("span");
+      placeholder.className = "orr-embed-removed";
+      placeholder.dataset.orrHtml = f.outerHTML;
+      f.replaceWith(placeholder);
+    });
+  }
+  function resumeHiddenMedia(root) {
+    if (!root) return;
+    root.querySelectorAll(".orr-embed-removed").forEach((ph) => {
+      const html = ph.dataset.orrHtml;
+      if (html) ph.outerHTML = html;
+    });
+  }
   function toggleCollapse(expandLink) {
     const thing = expandLink.closest(".thing.comment");
     if (!thing) return;
@@ -1504,7 +1536,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     expandLink.setAttribute("aria-expanded", collapsed ? "false" : "true");
     expandLink.setAttribute("aria-label", collapsed ? "expand comment" : "collapse comment");
     persistCollapse(thing, collapsed);
-    if (!collapsed) clampReadBodies(); // expanding a thread reveals read bodies → add their expand hint
+    if (collapsed) stopHiddenMedia(thing);
+    else { resumeHiddenMedia(thing); clampReadBodies(); } // expanding a thread reveals read bodies → add their expand hint
   }
 
   // ---- gallery nav ----
@@ -1648,6 +1681,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   // ---- new comments since last visit ----
   let curThreadLast = 0; // last-visit time for the open thread, for flagging late-loaded comments
+  let lastCommentsPathname = null; // set by loadComments; loadPage clears it on navigating elsewhere
+  let commentsResortInPlace = false; // read by markNewComments(): true when this render is just a sort-order change on the same thread, not a fresh visit
   function flagNewComments(scope) {
     if (!curThreadLast) return;
     const root = scope && scope.querySelectorAll ? scope : document;
@@ -1668,6 +1703,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       area.classList.add("orr-visited-before"); // prior-visit info exists → read/unread is meaningful
     }
     applyReadFolding(); // grey + fold read threads (opt-in) before we overwrite the record
+    // Just re-sorting the same open thread isn't a new visit — leave the read
+    // timestamp (and the new/read split it drives) alone. Otherwise every
+    // sort-order change would immediately "catch up" curThreadLast to now,
+    // flagging everything as read and folding it all away.
+    if (commentsResortInPlace) return;
     // Record this visit: timestamp + current comment count (powers the listing "N new" badge).
     const count = parseInt(post.getAttribute("data-comments") || "0", 10);
     dataCache.threadVisits[t3] = { t: Math.floor(nowMsNow() / 1000), c: count };
@@ -1731,6 +1771,35 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       collapseThing(t, false); // re-expand only the threads we auto-folded
     });
     document.querySelectorAll(".thing.comment.orr-clamped, .thing.comment.orr-read-open").forEach((c) => c.classList.remove("orr-clamped", "orr-read-open"));
+  }
+
+  // Forget this thread's visit record — the next markNewComments() pass (e.g.
+  // after a reload) will treat it as never-visited, same as a real first visit.
+  // Also undoes the current page's new/read split live, without a reload.
+  //
+  // Also clears visitedPosts (the separate "have I opened this post at all"
+  // tracker rememberVisit() writes): leaving that behind was a real bug, not
+  // just an incompleteness — with threadVisits gone, markThreadNew() no longer
+  // has a comment-count baseline, so a post can't be flagged orr-has-new
+  // either, which removes the one thing that normally keeps a visited-but-
+  // updated post from being caught by "hide read posts" (applyFilters' `read
+  // = orr-visited && !orr-has-new`). Without also clearing visitedPosts, the
+  // post would still read as visited and, missing that protection, get hidden
+  // outright — exactly backwards from what "mark unread" should do.
+  function markThreadUnread() {
+    const post = document.querySelector("#siteTable .thing.link[data-fullname]");
+    const t3 = post && post.getAttribute("data-fullname");
+    if (!t3) return;
+    let changed = false;
+    if (dataCache.threadVisits[t3]) { delete dataCache.threadVisits[t3]; changed = true; }
+    if (dataCache.visitedPosts && dataCache.visitedPosts[t3]) { delete dataCache.visitedPosts[t3]; changed = true; }
+    if (!changed) return;
+    ORR.setPrefs({ threadVisits: dataCache.threadVisits, visitedPosts: dataCache.visitedPosts });
+    curThreadLast = 0;
+    const area = document.querySelector(".commentarea");
+    if (area) area.classList.remove("orr-visited-before");
+    document.querySelectorAll(".thing.comment.orr-new").forEach((c) => c.classList.remove("orr-new"));
+    unfoldReadComments();
   }
 
   // Listing pass: show "N new" on posts whose comment count grew since your last visit.
@@ -2475,6 +2544,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       ex.setAttribute("aria-expanded", collapse ? "false" : "true");
       ex.setAttribute("aria-label", collapse ? "expand comment" : "collapse comment");
     }
+    if (collapse) stopHiddenMedia(thing);
+    else resumeHiddenMedia(thing);
   }
   function collapseAllTop() {
     const tops = topComments();
@@ -2729,6 +2800,23 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         link.textContent = "other discussions — failed";
         link.dataset.loading = "";
       }
+    });
+  }
+
+  // "mark unread" next to the post's comment-count/share buttons. Always shown
+  // (markNewComments already recorded this visit by the time we get here, so
+  // there's always something to forget) — clicking it again with nothing left
+  // to reset is a harmless no-op via markThreadUnread's own guard.
+  function addMarkUnreadButton() {
+    const buttons = document.querySelector("#siteTable .thing.link .flat-list.buttons");
+    if (!buttons || buttons.querySelector(".orr-mark-unread")) return;
+    if (!document.querySelector("#siteTable .thing.link[data-fullname]")) return;
+    const li = document.createElement("li");
+    li.innerHTML = '<a href="javascript:void(0)" class="orr-mark-unread">mark unread</a>';
+    buttons.appendChild(li);
+    li.querySelector("a").addEventListener("click", (e) => {
+      e.preventDefault();
+      markThreadUnread();
     });
   }
 
@@ -3088,8 +3176,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     await ensureCss();
     // Never leave the page hidden if a render helper throws on some odd payload.
     try {
-      renderInto(route, json, params);
+      // Set before rendering, not after: afterRender() synchronously synthesizes
+      // clicks (expandImagesPass, applySubPrefs' autoExpand) that the delegated
+      // click handler in wireNav() drops while active is still false — those
+      // posts silently never expanded on a page's first load.
       active = true;
+      renderInto(route, json, params);
     } catch (e) {
       active = false; // fall back to new Reddit rather than a blank page
     }
@@ -3102,6 +3194,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // per-subreddit comment-sort memory: fall back to the sub's remembered sort.
     let sort = url.searchParams.get("sort");
     if (!sort && cr.sub && dataCache.commentSorts) sort = dataCache.commentSorts[cr.sub.toLowerCase()] || null;
+    // Same pathname as the comments page we just rendered → this is a sort-order
+    // change on the thread the user is already reading, not a fresh visit (see
+    // markNewComments). loadPage() clears lastCommentsPathname on navigating
+    // anywhere else, so a genuine later re-visit to the same thread isn't
+    // mistaken for this.
+    commentsResortInPlace = url.pathname === lastCommentsPathname;
+    lastCommentsPathname = url.pathname;
     hideGuard();
     let watchdog = null;
     if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
@@ -3131,14 +3230,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
     const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached });
+    active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
-    active = true;
     unhideGuard();
     patchHeader();
     const realSub = body.sub || cr.sub;
     rememberSub(realSub);
     rememberCommentSort(realSub, sort);
     addOtherDiscussions(data);
+    addMarkUnreadButton();
     loadSidebar({ scope: "sub", sub: realSub });
   }
 
@@ -3178,8 +3278,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(buildUserPage(ur, json, { startCount, me: meCached }), "u/" + ur.name + " — old reddit");
-    active = true;
     unhideGuard();
     patchHeader();
     loadUserSidebar(ur.name);
@@ -3263,8 +3363,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(buildSearchPage(json, { route, params, startCount, me: meCached }), (params.q ? params.q + " — " : "") + "search — old reddit");
-    active = true;
     unhideGuard();
     patchHeader();
 
@@ -3299,6 +3399,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (autoplayObserver) { autoplayObserver.disconnect(); autoplayObserver = null; }
     curSub = null; // off-sub until loadSidebar sets it again; keeps the live CSS toggle accurate
     removeSubredditCss(); // clear the previous sub's theme; loadSidebar re-applies
+    // Leaving comments entirely (not just re-sorting) — a later return to the
+    // same thread should count as a genuine fresh visit again.
+    if (!ORR.isCommentsRoute(url)) lastCommentsPathname = null;
     if (ORR.isListingRoute(url)) return loadListing(url, firstLoad);
     if (ORR.isCommentsRoute(url)) return loadComments(url, firstLoad);
     if (ORR.isUserRoute(url)) return loadUser(url, firstLoad);
@@ -3325,8 +3428,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
+    active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(buildWikiPage(route, json, { me: meCached }), (route.sub ? "r/" + route.sub : "reddit") + " wiki — old reddit");
-    active = true;
     unhideGuard();
     patchHeader();
     if (route.sub) loadSidebar({ scope: "sub", sub: route.sub });
@@ -3643,22 +3746,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           if (expando) {
             expando.style.display = collapse ? "none" : "";
             if (collapse) {
-              // Collapsing hides the media but display:none does NOT pause it — so
-              // stop any playing <video> (which cascades to audio.pause() via the
-              // 'pause' listener) AND blank any iframe embed (whose browsing context
-              // keeps playing audio while hidden). Both are restored on re-expand.
-              expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "pause"; try { v.pause(); } catch (e) {} });
-              expando.querySelectorAll("iframe.orr-embed").forEach((f) => {
-                if (!f.dataset.orrSrc) f.dataset.orrSrc = f.src;
-                f.src = "about:blank";
-              });
+              stopHiddenMedia(expando); // display:none alone doesn't pause a <video> or silence an iframe embed
             } else {
               // Expanding a spoiler/NSFW post is a deliberate "show me" action —
               // reveal it in this one click instead of requiring a second (issue #7).
               if (expando.classList.contains("orr-spoiler") || expando.classList.contains("orr-nsfw")) expando.classList.add("orr-revealed");
-              expando.querySelectorAll("iframe.orr-embed").forEach((f) => {
-                if (f.dataset.orrSrc) { f.src = f.dataset.orrSrc; delete f.dataset.orrSrc; }
-              });
+              resumeHiddenMedia(expando);
               wireRedditVideos(expando); // give the video its sound
               enhanceVideoControls(expando); // speed / loop controls + remembered prefs
               addDownloadButtons(expando);
