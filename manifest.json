@@ -19,11 +19,20 @@
   "permissions": [
     "storage"
   ],
+  "optional_host_permissions": [
+    "https://embed.bsky.app/*",
+    "https://publish.twitter.com/*",
+    "https://giphy.com/*"
+  ],
   "host_permissions": [
     "*://reddit.com/*",
     "*://*.reddit.com/*",
     "*://v.redd.it/*"
   ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
   "content_scripts": [
     {
       "matches": [

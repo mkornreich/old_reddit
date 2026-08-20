@@ -84,6 +84,29 @@
     return `<div class="expando-container"><iframe class="orr-embed" src="${esc(src)}" width="${w || 640}" height="${h || 360}" frameborder="0" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" ${extra || ""}></iframe></div>`;
   }
 
+  // Bluesky/Twitter/Twitch-clip/Imgur embeds are blocked by Reddit's own page CSP
+  // (frame-src) — see issue #20. Editing that CSP doesn't work (Firefox merges any
+  // extension CSP edit with the original by design; Chrome's declarativeNetRequest
+  // can only overwrite a header wholesale). Bluesky and Twitter both have a public
+  // oEmbed endpoint (as does Giphy), so those get fetched (via background.js,
+  // using a narrow optional host permission) and rendered NATIVELY as same-origin
+  // DOM (see renderOembedNode — never the provider's raw HTML) instead of a
+  // cross-origin iframe. Twitch clips have no such endpoint (RES doesn't solve
+  // that one either) and Imgur's API needs a registered client ID, so both just
+  // get a plain external link via externalLinkOnly.
+  function oembedGatedEmbed(platform, originalUrl, label) {
+    return `<div class="expando-container orr-embed-gate" data-embed-platform="${esc(platform)}" data-embed-href="${esc(originalUrl)}" data-embed-label="${esc(label)}">` +
+      `<p>Reddit blocks ${esc(label)} previews from loading inline unless you allow it.</p>` +
+      `<button type="button" class="orr-embed-allow">Enable ${esc(label)} previews</button>` +
+      `<a href="${esc(originalUrl)}" target="_blank" rel="noopener noreferrer">open on ${esc(label)} instead &#8599;</a>` +
+      `</div>`;
+  }
+  function externalLinkOnly(originalUrl, label) {
+    return `<div class="expando-container orr-embed-gate">` +
+      `<p>Reddit blocks ${esc(label)} previews from loading inline, and there's no way to show them without it.</p>` +
+      `<a href="${esc(originalUrl)}" target="_blank" rel="noopener noreferrer">open on ${esc(label)} instead &#8599;</a>` +
+      `</div>`;
+  }
   // Expand common non-Reddit media hosts inline (RES "show images" style), from a
   // post's outbound URL. Returns { type, html } or null.
   function externalMediaExpando(url) {
@@ -99,20 +122,23 @@
     if ((m = /streamable\.com\/(?:e\/)?([A-Za-z0-9]+)/i.exec(url))) {
       return { type: "video", html: embedHtml("https://streamable.com/e/" + m[1], "allowfullscreen") };
     }
-    if ((m = /(?:twitter\.com|x\.com)\/[^/]+\/status\/(\d+)/i.exec(url))) {
-      return { type: "video", html: embedHtml("https://platform.twitter.com/embed/Tweet.html?id=" + m[1], "", 550, 500) };
+    if (/(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i.test(url)) {
+      return { type: "video", html: oembedGatedEmbed("twitter", url, "Twitter/X") };
     }
     if ((m = /(?:tiktok\.com\/@[^/]+\/video\/|tiktok\.com\/v\/|vm\.tiktok\.com\/)(\d+)/i.exec(url))) {
       return { type: "video", html: embedHtml("https://www.tiktok.com/embed/v2/" + m[1], "allowfullscreen", 340, 560) };
     }
-    if ((m = /clips\.twitch\.tv\/([A-Za-z0-9-]+)/i.exec(url)) || (m = /twitch\.tv\/[^/]+\/clip\/([A-Za-z0-9-]+)/i.exec(url))) {
-      return { type: "video", html: embedHtml("https://clips.twitch.tv/embed?clip=" + m[1] + "&parent=www.reddit.com&parent=reddit.com&autoplay=false", "allowfullscreen") };
+    if (/clips\.twitch\.tv\/[A-Za-z0-9-]+/i.test(url) || /twitch\.tv\/[^/]+\/clip\/[A-Za-z0-9-]+/i.test(url)) {
+      return { type: "video", html: externalLinkOnly(url, "Twitch clip") };
     }
-    if ((m = /bsky\.app\/profile\/([^/]+)\/post\/([A-Za-z0-9]+)/i.exec(url))) {
-      return { type: "video", html: embedHtml("https://embed.bsky.app/embed/" + encodeURIComponent(m[1]) + "/app.bsky.feed.post/" + m[2], "", 550, 400) };
+    if (/bsky\.app\/profile\/[^/]+\/post\/[A-Za-z0-9]+/i.test(url)) {
+      return { type: "video", html: oembedGatedEmbed("bluesky", url, "Bluesky") };
     }
-    if ((m = /imgur\.com\/(?:a|gallery)\/([A-Za-z0-9]+)/i.exec(url))) {
-      return { type: "image", html: embedHtml("https://imgur.com/a/" + m[1] + "/embed?pub=true", "allowfullscreen", 640, 500) };
+    if (/imgur\.com\/(?:a|gallery)\/[A-Za-z0-9]+/i.test(url)) {
+      return { type: "image", html: externalLinkOnly(url, "Imgur") };
+    }
+    if (/^https?:\/\/(?:www\.)?giphy\.com\/gifs\/[\w-]+/i.test(url)) {
+      return { type: "image", html: oembedGatedEmbed("giphy", url, "Giphy") };
     }
     if (/^https?:\/\//i.test(url) && /\.pdf(\?|#|$)/i.test(url)) {
       return { type: "selftext", html: `<div class="expando-container"><iframe class="orr-embed orr-pdf" src="${esc(url)}" loading="lazy" referrerpolicy="no-referrer"></iframe></div>` };
@@ -1195,6 +1221,18 @@ a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 .orr-inline-img img { width:100%; height:100%; object-fit:contain; display:block; }
 /* embeds + direct video */
 .orr-embed { width:640px; max-width:100%; height:360px; border:0; display:block; background:#000; }
+.orr-embed-gate { width:640px; max-width:100%; padding:10px 12px; border:1px solid #ccc; background:#f7f7f8; font-size:12px; line-height:1.5; }
+html.orr-night .orr-embed-gate { background:#272729; border-color:#343536; color:#d7dadc; }
+.orr-embed-gate p { margin:0 0 6px; }
+.orr-embed-gate .orr-embed-allow { font-size:11px; padding:3px 8px; margin-right:8px; }
+.orr-embed-gate a { color:#369; }
+.orr-oembed { max-width:550px; overflow:hidden; }
+.orr-oembed img, .orr-oembed video { max-width:100%; height:auto; display:block; }
+.orr-oembed-quote { border:1px solid #ccc; border-left:3px solid #5f99cf; border-radius:3px; padding:8px 12px; background:#fff; font-size:13px; line-height:1.5; }
+html.orr-night .orr-oembed-quote { background:#1a1a1b; border-color:#343536; color:#d7dadc; }
+.orr-oembed-author { font-weight:bold; margin-bottom:4px; }
+.orr-oembed-text { white-space:pre-wrap; word-wrap:break-word; }
+.orr-oembed-link { display:inline-block; margin-top:6px; color:#369; font-size:11px; }
 .orr-directvideo { max-width:100%; height:auto; display:block; background:#000; }
 /* reddit video wrapper (dash.js gives it a real audio track, so native
    volume/mute controls work — no custom mute button needed) */
@@ -1528,6 +1566,170 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (html) ph.outerHTML = html;
     });
   }
+
+  // Wires the "Enable X previews" button in oembedGatedEmbed() placeholders and
+  // upgrades any already-permitted placeholders by fetching the oEmbed data and
+  // rendering it natively (see renderOembedNode; the fetch happens in background.js,
+  // not here, since a content-script fetch is also bound by the page's CSP
+  // connect-src). Scoped per platform: granting Bluesky must never silently also
+  // grant Twitter/X.
+  const embedPermissionCache = {}; // platform -> boolean; absent = not checked yet
+  function checkEmbedPermission(platform) {
+    if (embedPermissionCache[platform] !== undefined) return Promise.resolve(embedPermissionCache[platform]);
+    return Promise.resolve(api.runtime.sendMessage({ type: "orr-check-embed-permission", platform }))
+      .then((res) => { embedPermissionCache[platform] = !!(res && res.granted); return embedPermissionCache[platform]; })
+      .catch(() => false);
+  }
+  // Render an oEmbed preview WITHOUT ever injecting the provider's HTML into the
+  // live page — that would be an XSS hole on the logged-in reddit.com origin
+  // (stripping <script> is not enough: onerror/onload attributes, iframes, and
+  // javascript: URLs all survive and activate on insertion). Quote text is read
+  // out of the provider markup in an INERT DOMParser document — no browsing
+  // context, so nothing loads, no script runs, no handler fires — and re-emitted
+  // as textContent; links and media are rebuilt with scheme-validated attributes.
+  function safeHttpUrl(u) {
+    try { const p = new URL(u, location.href); return (p.protocol === "https:" || p.protocol === "http:") ? p.href : null; }
+    catch (e) { return null; }
+  }
+  function externalLinkNode(href, label, msg) {
+    const div = document.createElement("div");
+    div.className = "expando-container orr-embed-gate";
+    const p = document.createElement("p");
+    p.textContent = msg || ("Reddit blocks " + label + " previews from loading inline.");
+    div.appendChild(p);
+    const safe = safeHttpUrl(href);
+    if (safe) {
+      const a = document.createElement("a");
+      a.href = safe; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.textContent = "open on " + label + " instead ↗";
+      div.appendChild(a);
+    }
+    return div;
+  }
+  function oembedQuoteText(html) {
+    let doc;
+    try { doc = new DOMParser().parseFromString(String(html || ""), "text/html"); }
+    catch (e) { return ""; }
+    const el = doc.querySelector("blockquote p") || doc.querySelector("blockquote") || doc.body;
+    return el ? el.textContent.replace(/\s+/g, " ").trim() : "";
+  }
+  function renderOembedNode(data, href, label) {
+    if (!data) return null;
+    if (data.kind === "media") {
+      const url = safeHttpUrl(data.url);
+      if (!url) return null;
+      const wrap = document.createElement("div");
+      wrap.className = "expando-container orr-oembed";
+      const w = Number.isFinite(data.width) ? data.width : 480;
+      let media;
+      if (data.mediaType === "video") {
+        media = document.createElement("video");
+        media.controls = true; media.loop = true; media.preload = "metadata";
+        const s = document.createElement("source"); s.src = url; media.appendChild(s);
+      } else {
+        media = document.createElement("img");
+        media.src = url;
+        if (Number.isFinite(data.height)) media.height = data.height;
+      }
+      media.width = w;
+      // If reddit's own img-src/media-src blocks the provider host, the load
+      // fails — degrade to a plain link rather than a broken frame.
+      media.addEventListener("error", () => {
+        if (wrap.isConnected) wrap.replaceWith(externalLinkNode(href, label, "Couldn't load the " + label + " preview."));
+      }, { once: true });
+      wrap.appendChild(media);
+      return wrap;
+    }
+    // quote providers (bluesky, twitter)
+    const text = oembedQuoteText(data.html);
+    const author = typeof data.author === "string" ? data.author.trim() : "";
+    if (!text && !author) return null;
+    const wrap = document.createElement("div");
+    wrap.className = "expando-container orr-oembed orr-oembed-quote";
+    if (author) { const a = document.createElement("div"); a.className = "orr-oembed-author"; a.textContent = author; wrap.appendChild(a); }
+    if (text) { const t = document.createElement("div"); t.className = "orr-oembed-text"; t.textContent = text; wrap.appendChild(t); }
+    const safe = safeHttpUrl(href);
+    if (safe) {
+      const a = document.createElement("a");
+      a.className = "orr-oembed-link"; a.href = safe; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.textContent = "View on " + label + " ↗";
+      wrap.appendChild(a);
+    }
+    return wrap;
+  }
+  function upgradeEmbedGate(gate) {
+    if (gate.dataset.orrUpgrading) return; // don't double-fetch if wireEmbedGates re-runs mid-flight
+    gate.dataset.orrUpgrading = "1";
+    const platform = gate.getAttribute("data-embed-platform");
+    const href = gate.getAttribute("data-embed-href");
+    const label = gate.getAttribute("data-embed-label") || platform;
+    gate.removeAttribute("data-embed-platform"); // so a concurrent re-scan can't match it again while in flight
+    gate.textContent = "";
+    const loading = document.createElement("p");
+    loading.textContent = "Loading preview…";
+    gate.appendChild(loading);
+    const fail = () => { if (gate.isConnected) gate.replaceWith(externalLinkNode(href, label, "Couldn't load the " + label + " preview.")); };
+    Promise.resolve(api.runtime.sendMessage({ type: "orr-fetch-oembed", platform, href }))
+      .then((res) => {
+        if (!gate.isConnected) return;
+        const node = res && res.data ? renderOembedNode(res.data, href, label) : null;
+        if (node) gate.replaceWith(node);
+        else fail();
+      })
+      .catch(fail);
+  }
+  // A gate hidden inside a collapsed expando (display:none) has no offsetParent.
+  // We don't fetch previews for those — it would fire a background request, and
+  // reveal the post view to the provider, for every off-screen post on the page.
+  // They're upgraded when the user expands the post (the expando handler re-runs
+  // wireEmbedGates on the revealed content).
+  function gateVisible(g) {
+    return !!g && g.isConnected && (g.offsetParent !== null || g.getClientRects().length > 0);
+  }
+  function wireEmbedGates(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const gates = root.querySelectorAll(".orr-embed-gate[data-embed-platform]");
+    if (!gates.length) return;
+    const byPlatform = {};
+    gates.forEach((g) => {
+      const platform = g.getAttribute("data-embed-platform");
+      (byPlatform[platform] || (byPlatform[platform] = [])).push(g);
+    });
+    Object.keys(byPlatform).forEach((platform) => {
+      const platformGates = byPlatform[platform];
+      checkEmbedPermission(platform).then((granted) => {
+        if (granted) {
+          platformGates.forEach((g) => { if (gateVisible(g)) upgradeEmbedGate(g); });
+          return;
+        }
+        platformGates.forEach((g) => {
+          if (g.dataset.orrGateWired) return;
+          g.dataset.orrGateWired = "1";
+          const btn = g.querySelector(".orr-embed-allow");
+          if (!btn) return;
+          const label = g.getAttribute("data-embed-label") || "";
+          const resetLabel = () => { btn.disabled = false; btn.textContent = "Enable " + label + " previews"; };
+          btn.addEventListener("click", () => {
+            btn.disabled = true;
+            btn.textContent = "Requesting…";
+            Promise.resolve(api.runtime.sendMessage({ type: "orr-request-embed-permission", platform }))
+              .then((res) => {
+                if (res && res.granted) {
+                  embedPermissionCache[platform] = true;
+                  document
+                    .querySelectorAll('.orr-embed-gate[data-embed-platform="' + platform + '"]')
+                    .forEach((gg) => { if (gateVisible(gg)) upgradeEmbedGate(gg); });
+                } else {
+                  resetLabel();
+                }
+              })
+              .catch(() => resetLabel());
+          });
+        });
+      });
+    });
+  }
+
   function toggleCollapse(expandLink) {
     const thing = expandLink.closest(".thing.comment");
     if (!thing) return;
@@ -2649,6 +2851,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     autoCollapseBots();
     expandCommentMedia(scope || document);
     addDownloadButtons(scope || document);
+    wireEmbedGates(scope || document);
   }
 
   // Auto-collapse AutoModerator / bot comments (heuristic: AutoModerator or a name
@@ -2928,6 +3131,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     enhanceComments(document);
     autoplayMedia(document);
     expandImagesPass();
+    wireEmbedGates(document);
     if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
   }
@@ -2943,6 +3147,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     autoplayMedia(scope || document);
     applySubPrefs(); // auto-expand newly-appended posts if this sub wants it
     expandImagesPass(); // "show images": expand newly-appended image posts
+    wireEmbedGates(scope || document);
   }
 
   function hideGuard() {
@@ -3755,6 +3960,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
               wireRedditVideos(expando); // give the video its sound
               enhanceVideoControls(expando); // speed / loop controls + remembered prefs
               addDownloadButtons(expando);
+              wireEmbedGates(expando); // now visible → fetch its oEmbed preview if the platform's already permitted
               // A manual expand is a deliberate "play this" action, independent of
               // the autoplay-in-feed setting — start it immediately either way.
               expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "play"; try { v.play().catch(() => {}); } catch (e) {} });
