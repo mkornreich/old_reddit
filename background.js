@@ -9,11 +9,17 @@
 // MV3 replacement (declarativeNetRequest) can only overwrite a header
 // wholesale, not extend it. So instead — matching how RES handles Bluesky and
 // Twitter — we never embed a cross-origin iframe for these at all: fetch each
-// platform's own oEmbed endpoint and inject the result as same-origin DOM
-// content. That fetch has to happen here, not in the content script — a
-// content-script fetch is also bound by the page's CSP connect-src, which
-// only allows *.giphy.com (subdomains), not the bare giphy.com domain the
-// oEmbed endpoint is actually on, and doesn't list the other two hosts at all.
+// platform's own oEmbed endpoint and hand the content script the fields it
+// needs to render the post as its OWN same-origin DOM. That fetch has to
+// happen here, not in the content script — a content-script fetch is also
+// bound by the page's CSP connect-src, which only allows *.giphy.com
+// (subdomains), not the bare giphy.com domain the oEmbed endpoint is actually
+// on, and doesn't list the other two hosts at all.
+//
+// We deliberately return STRUCTURED DATA, never the provider's raw HTML, so the
+// content script can rebuild the preview with textContent + scheme-validated
+// attributes and never inject third-party markup into the logged-in reddit.com
+// origin (see rebuild.js renderOembedNode).
 //
 // Twitch clips and Imgur galleries don't get this treatment: Twitch has no
 // public oEmbed endpoint (RES doesn't solve that one either — it still just
@@ -25,49 +31,63 @@
 const isFirefox = typeof browser !== "undefined";
 const api = isFirefox ? browser : chrome;
 
-function escAttr(s) {
-  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
+// Per platform: the optional host permission it needs, a display label, a guard
+// that the href really belongs to the platform (defense in depth — the fetch
+// target is a fixed endpoint regardless, but don't hand an unrelated URL to a
+// provider's oEmbed service), the oEmbed request URL, and a mapper from the
+// oEmbed JSON to a SAFE structured descriptor the content script renders
+// natively. `html` is passed through ONLY for the quote providers and is parsed
+// inertly (never injected) content-side to pull out the post text.
 const OEMBED = {
   bluesky: {
     origin: "https://embed.bsky.app/*",
     label: "Bluesky",
+    match: (href) => /^https?:\/\/(?:[\w-]+\.)*bsky\.app\/profile\/[^/]+\/post\/[A-Za-z0-9]+/i.test(href),
     url: (href) => "https://embed.bsky.app/oembed?url=" + encodeURIComponent(href.replace(/\/+$/, "")),
-    toHtml: (data) => (data && typeof data.html === "string" ? data.html : null),
+    toData: (data) =>
+      data && typeof data.html === "string"
+        ? { kind: "quote", author: typeof data.author_name === "string" ? data.author_name : "", html: data.html }
+        : null,
   },
   twitter: {
     origin: "https://publish.twitter.com/*",
     label: "Twitter/X",
+    match: (href) => /^https?:\/\/(?:[\w-]+\.)*(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i.test(href),
     url: (href) => "https://publish.twitter.com/oembed?omit_script=true&url=" + encodeURIComponent(href),
-    toHtml: (data) => (data && typeof data.html === "string" ? data.html : null),
+    toData: (data) =>
+      data && typeof data.html === "string"
+        ? { kind: "quote", author: typeof data.author_name === "string" ? data.author_name : "", html: data.html }
+        : null,
   },
   giphy: {
     origin: "https://giphy.com/*",
     label: "Giphy",
+    match: (href) => /^https?:\/\/(?:www\.)?giphy\.com\/gifs\/[\w-]+/i.test(href),
     url: (href) => "https://giphy.com/services/oembed?url=" + encodeURIComponent(href),
-    // Giphy's oEmbed has no html field, just a direct media URL — build our own.
-    toHtml: (data) => {
+    // Giphy's oEmbed has no html field, just a direct media URL.
+    toData: (data) => {
       if (!data || typeof data.url !== "string") return null;
-      const w = Number.isFinite(data.width) ? data.width : 480;
-      const h = Number.isFinite(data.height) ? data.height : "";
-      if (data.type === "video") {
-        return `<video controls loop preload="metadata" width="${w}"><source src="${escAttr(data.url)}"></video>`;
-      }
-      return `<img src="${escAttr(data.url)}" width="${w}"${h ? ` height="${h}"` : ""}>`;
+      return {
+        kind: "media",
+        mediaType: data.type === "video" ? "video" : "img",
+        url: data.url,
+        width: Number.isFinite(data.width) ? data.width : null,
+        height: Number.isFinite(data.height) ? data.height : null,
+      };
     },
   },
 };
 
-async function fetchOembedHtml(platform, href) {
+async function fetchOembedData(platform, href) {
   const spec = OEMBED[platform];
   if (!spec) throw new Error("unknown platform: " + platform);
-  const res = await fetch(spec.url(href));
+  if (typeof href !== "string" || !spec.match(href)) throw new Error("href does not match platform");
+  const res = await fetch(spec.url(href), { credentials: "omit" });
   if (!res.ok) throw new Error("oEmbed request failed: " + res.status);
   const data = await res.json();
-  const html = spec.toHtml(data);
-  if (typeof html !== "string") throw new Error("oEmbed response missing usable content");
-  return html;
+  const out = spec.toData(data);
+  if (!out) throw new Error("oEmbed response missing usable content");
+  return out;
 }
 
 // Both Firefox and Chrome refuse permissions.request() unless it's a
@@ -121,8 +141,8 @@ if (api.runtime && api.runtime.onMessage) {
       return true;
     }
     if (msg.type === "orr-fetch-oembed") {
-      fetchOembedHtml(msg.platform, msg.href)
-        .then((html) => sendResponse({ html }))
+      fetchOembedData(msg.platform, msg.href)
+        .then((data) => sendResponse({ data }))
         .catch((e) => sendResponse({ error: String((e && e.message) || e) }));
       return true;
     }
