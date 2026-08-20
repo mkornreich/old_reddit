@@ -84,6 +84,28 @@
     return `<div class="expando-container"><iframe class="orr-embed" src="${esc(src)}" width="${w || 640}" height="${h || 360}" frameborder="0" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" ${extra || ""}></iframe></div>`;
   }
 
+  // Bluesky/Twitter/Twitch-clip/Imgur embeds are blocked by Reddit's own page CSP
+  // (frame-src) — see issue #20. Editing that CSP doesn't work (Firefox merges any
+  // extension CSP edit with the original by design; Chrome's declarativeNetRequest
+  // can only overwrite a header wholesale). Bluesky and Twitter both have a public
+  // oEmbed endpoint, so those two get fetched (via background.js, using a narrow
+  // optional host permission) and injected as same-origin HTML instead of a
+  // cross-origin iframe — see oembedGatedEmbed. Twitch clips have no such endpoint
+  // (RES doesn't solve that one either) and Imgur's API needs a registered client
+  // ID, so both just get a plain external link via externalLinkOnly.
+  function oembedGatedEmbed(platform, originalUrl, label) {
+    return `<div class="expando-container orr-embed-gate" data-embed-platform="${esc(platform)}" data-embed-href="${esc(originalUrl)}" data-embed-label="${esc(label)}">` +
+      `<p>Reddit blocks ${esc(label)} previews from loading inline unless you allow it.</p>` +
+      `<button type="button" class="orr-embed-allow">Enable ${esc(label)} previews</button>` +
+      `<a href="${esc(originalUrl)}" target="_blank" rel="noopener noreferrer">open on ${esc(label)} instead &#8599;</a>` +
+      `</div>`;
+  }
+  function externalLinkOnly(originalUrl, label) {
+    return `<div class="expando-container orr-embed-gate">` +
+      `<p>Reddit blocks ${esc(label)} previews from loading inline, and there's no way to show them without it.</p>` +
+      `<a href="${esc(originalUrl)}" target="_blank" rel="noopener noreferrer">open on ${esc(label)} instead &#8599;</a>` +
+      `</div>`;
+  }
   // Expand common non-Reddit media hosts inline (RES "show images" style), from a
   // post's outbound URL. Returns { type, html } or null.
   function externalMediaExpando(url) {
@@ -99,20 +121,23 @@
     if ((m = /streamable\.com\/(?:e\/)?([A-Za-z0-9]+)/i.exec(url))) {
       return { type: "video", html: embedHtml("https://streamable.com/e/" + m[1], "allowfullscreen") };
     }
-    if ((m = /(?:twitter\.com|x\.com)\/[^/]+\/status\/(\d+)/i.exec(url))) {
-      return { type: "video", html: embedHtml("https://platform.twitter.com/embed/Tweet.html?id=" + m[1], "", 550, 500) };
+    if (/(?:twitter\.com|x\.com)\/[^/]+\/status\/\d+/i.test(url)) {
+      return { type: "video", html: oembedGatedEmbed("twitter", url, "Twitter/X") };
     }
     if ((m = /(?:tiktok\.com\/@[^/]+\/video\/|tiktok\.com\/v\/|vm\.tiktok\.com\/)(\d+)/i.exec(url))) {
       return { type: "video", html: embedHtml("https://www.tiktok.com/embed/v2/" + m[1], "allowfullscreen", 340, 560) };
     }
-    if ((m = /clips\.twitch\.tv\/([A-Za-z0-9-]+)/i.exec(url)) || (m = /twitch\.tv\/[^/]+\/clip\/([A-Za-z0-9-]+)/i.exec(url))) {
-      return { type: "video", html: embedHtml("https://clips.twitch.tv/embed?clip=" + m[1] + "&parent=www.reddit.com&parent=reddit.com&autoplay=false", "allowfullscreen") };
+    if (/clips\.twitch\.tv\/[A-Za-z0-9-]+/i.test(url) || /twitch\.tv\/[^/]+\/clip\/[A-Za-z0-9-]+/i.test(url)) {
+      return { type: "video", html: externalLinkOnly(url, "Twitch clip") };
     }
-    if ((m = /bsky\.app\/profile\/([^/]+)\/post\/([A-Za-z0-9]+)/i.exec(url))) {
-      return { type: "video", html: embedHtml("https://embed.bsky.app/embed/" + encodeURIComponent(m[1]) + "/app.bsky.feed.post/" + m[2], "", 550, 400) };
+    if (/bsky\.app\/profile\/[^/]+\/post\/[A-Za-z0-9]+/i.test(url)) {
+      return { type: "video", html: oembedGatedEmbed("bluesky", url, "Bluesky") };
     }
-    if ((m = /imgur\.com\/(?:a|gallery)\/([A-Za-z0-9]+)/i.exec(url))) {
-      return { type: "image", html: embedHtml("https://imgur.com/a/" + m[1] + "/embed?pub=true", "allowfullscreen", 640, 500) };
+    if (/imgur\.com\/(?:a|gallery)\/[A-Za-z0-9]+/i.test(url)) {
+      return { type: "image", html: externalLinkOnly(url, "Imgur") };
+    }
+    if (/^https?:\/\/(?:www\.)?giphy\.com\/gifs\/[\w-]+/i.test(url)) {
+      return { type: "image", html: oembedGatedEmbed("giphy", url, "Giphy") };
     }
     if (/^https?:\/\//i.test(url) && /\.pdf(\?|#|$)/i.test(url)) {
       return { type: "selftext", html: `<div class="expando-container"><iframe class="orr-embed orr-pdf" src="${esc(url)}" loading="lazy" referrerpolicy="no-referrer"></iframe></div>` };
@@ -1195,6 +1220,13 @@ a.orr-gnav { color:#369; text-decoration:none; margin:0 6px; cursor:pointer; }
 .orr-inline-img img { width:100%; height:100%; object-fit:contain; display:block; }
 /* embeds + direct video */
 .orr-embed { width:640px; max-width:100%; height:360px; border:0; display:block; background:#000; }
+.orr-embed-gate { width:640px; max-width:100%; padding:10px 12px; border:1px solid #ccc; background:#f7f7f8; font-size:12px; line-height:1.5; }
+html.orr-night .orr-embed-gate { background:#272729; border-color:#343536; color:#d7dadc; }
+.orr-embed-gate p { margin:0 0 6px; }
+.orr-embed-gate .orr-embed-allow { font-size:11px; padding:3px 8px; margin-right:8px; }
+.orr-embed-gate a { color:#369; }
+.orr-oembed { max-width:550px; overflow:hidden; }
+.orr-oembed blockquote { max-width:100%; }
 .orr-directvideo { max-width:100%; height:auto; display:block; background:#000; }
 /* reddit video wrapper (dash.js gives it a real audio track, so native
    volume/mute controls work — no custom mute button needed) */
@@ -1528,6 +1560,82 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (html) ph.outerHTML = html;
     });
   }
+
+  // Wires the "Enable X previews" button in oembedGatedEmbed() placeholders and
+  // upgrades any already-permitted placeholders by fetching the real oEmbed HTML
+  // (see background.js — the fetch has to happen there, not here, since a
+  // content-script fetch is also bound by the page's CSP connect-src). Scoped
+  // per platform: granting Bluesky must never silently also grant Twitter/X.
+  const embedPermissionCache = {}; // platform -> boolean; absent = not checked yet
+  function checkEmbedPermission(platform) {
+    if (embedPermissionCache[platform] !== undefined) return Promise.resolve(embedPermissionCache[platform]);
+    return Promise.resolve(api.runtime.sendMessage({ type: "orr-check-embed-permission", platform }))
+      .then((res) => { embedPermissionCache[platform] = !!(res && res.granted); return embedPermissionCache[platform]; })
+      .catch(() => false);
+  }
+  function stripScripts(html) {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    div.querySelectorAll("script").forEach((s) => s.remove());
+    return div.innerHTML;
+  }
+  function upgradeEmbedGate(gate) {
+    const platform = gate.getAttribute("data-embed-platform");
+    const href = gate.getAttribute("data-embed-href");
+    const label = gate.getAttribute("data-embed-label") || platform;
+    gate.innerHTML = "<p>Loading preview…</p>";
+    Promise.resolve(api.runtime.sendMessage({ type: "orr-fetch-oembed", platform, href }))
+      .then((res) => {
+        if (!gate.isConnected) return;
+        if (res && res.html) gate.outerHTML = `<div class="expando-container orr-oembed">${stripScripts(res.html)}</div>`;
+        else gate.outerHTML = externalLinkOnly(href, label);
+      })
+      .catch(() => { if (gate.isConnected) gate.outerHTML = externalLinkOnly(href, label); });
+  }
+  function wireEmbedGates(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const gates = root.querySelectorAll(".orr-embed-gate[data-embed-platform]");
+    if (!gates.length) return;
+    const byPlatform = {};
+    gates.forEach((g) => {
+      const platform = g.getAttribute("data-embed-platform");
+      (byPlatform[platform] || (byPlatform[platform] = [])).push(g);
+    });
+    Object.keys(byPlatform).forEach((platform) => {
+      const platformGates = byPlatform[platform];
+      checkEmbedPermission(platform).then((granted) => {
+        if (granted) {
+          platformGates.forEach((g) => { if (g.isConnected) upgradeEmbedGate(g); });
+          return;
+        }
+        platformGates.forEach((g) => {
+          if (g.dataset.orrGateWired) return;
+          g.dataset.orrGateWired = "1";
+          const btn = g.querySelector(".orr-embed-allow");
+          if (!btn) return;
+          const label = g.getAttribute("data-embed-label") || "";
+          const resetLabel = () => { btn.disabled = false; btn.textContent = "Enable " + label + " previews"; };
+          btn.addEventListener("click", () => {
+            btn.disabled = true;
+            btn.textContent = "Requesting…";
+            Promise.resolve(api.runtime.sendMessage({ type: "orr-request-embed-permission", platform }))
+              .then((res) => {
+                if (res && res.granted) {
+                  embedPermissionCache[platform] = true;
+                  document
+                    .querySelectorAll('.orr-embed-gate[data-embed-platform="' + platform + '"]')
+                    .forEach((gg) => { if (gg.isConnected) upgradeEmbedGate(gg); });
+                } else {
+                  resetLabel();
+                }
+              })
+              .catch(() => resetLabel());
+          });
+        });
+      });
+    });
+  }
+
   function toggleCollapse(expandLink) {
     const thing = expandLink.closest(".thing.comment");
     if (!thing) return;
@@ -2649,6 +2757,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     autoCollapseBots();
     expandCommentMedia(scope || document);
     addDownloadButtons(scope || document);
+    wireEmbedGates(scope || document);
   }
 
   // Auto-collapse AutoModerator / bot comments (heuristic: AutoModerator or a name
@@ -2928,6 +3037,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     enhanceComments(document);
     autoplayMedia(document);
     expandImagesPass();
+    wireEmbedGates(document);
     if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
   }
@@ -2943,6 +3053,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     autoplayMedia(scope || document);
     applySubPrefs(); // auto-expand newly-appended posts if this sub wants it
     expandImagesPass(); // "show images": expand newly-appended image posts
+    wireEmbedGates(scope || document);
   }
 
   function hideGuard() {
