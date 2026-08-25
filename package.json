@@ -1,6 +1,6 @@
 {
   "name": "classic-layout-for-reddit",
-  "version": "3.14.1",
+  "version": "3.14.2",
   "description": "Browser extension that rebuilds Reddit into its classic (old) layout.",
   "private": true,
   "scripts": {

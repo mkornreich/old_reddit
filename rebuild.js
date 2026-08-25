@@ -3645,6 +3645,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   const moreTimers = new Set(); // pending comment-retry timers, cleared on navigation
 
   async function handleMore(el, auto) {
+    // Never load into a collapsed thread. The stub is hidden inside a collapsed
+    // subtree, so a load here can only come from a stale retry timer or another
+    // programmatic/keyboard path — and would graft comments into a subtree the
+    // user has deliberately hidden. Top-level "load more comments" has no
+    // collapsed comment ancestor, so the scroll auto-loader is unaffected.
+    if (el.closest(".thing.comment.collapsed")) return;
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
