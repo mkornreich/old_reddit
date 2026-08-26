@@ -11,6 +11,15 @@
   const host = location.hostname;
   if (!/(?:^|\.)(?:old|i)\.reddit\.com$/i.test(host)) return;
 
+  // A JS anti-bot / WAF challenge is mid-handshake — don't redirect. Swapping the
+  // host would carry the one-time challenge params (js_challenge / solution+token /
+  // jsc_orig_r) onto www and break the handshake. Let it complete on this host,
+  // then it redirects to the real URL and we take over normally.
+  try {
+    const csp = new URLSearchParams(location.search);
+    if (csp.has("js_challenge") || csp.has("jsc_orig_r") || (csp.has("solution") && csp.has("token"))) return;
+  } catch (e) { /* ignore */ }
+
   function targetUrl() {
     // /login?...&dest=<encoded> → jump straight to the destination on www.
     if (/\/login\/?$/i.test(location.pathname)) {
