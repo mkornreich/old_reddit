@@ -182,24 +182,6 @@
     return null;
   }
 
-  // True when the URL carries a JS anti-bot / WAF challenge handshake (Reddit's
-  // edge or a proxy in front of it), not a real route: `js_challenge` flags the
-  // round, `solution`+`token` are the computed proof, and `jsc_orig_r` is the URL
-  // to return to once it passes. The page must be left alone on such a URL — the
-  // challenge's own script has to run and redirect to the real URL, and our
-  // .json fetch would just be served the challenge page. Accepts a URL, an object
-  // with a `search` string, or a full URL/query string.
-  function isChallengeUrl(loc) {
-    let search = "";
-    if (loc && typeof loc === "object" && "search" in loc) search = loc.search || "";
-    else if (typeof loc === "string") { const i = loc.indexOf("?"); search = i >= 0 ? loc.slice(i) : ""; }
-    let sp;
-    try { sp = new URLSearchParams(search); } catch (e) { return false; }
-    // Require an unambiguous marker (or the solution+token pair) so a stray
-    // `token=` on some other Reddit flow can't trip it.
-    return sp.has("js_challenge") || sp.has("jsc_orig_r") || (sp.has("solution") && sp.has("token"));
-  }
-
   // Reddit Answers (/answers/…) — not an old-reddit feature and not rebuildable
   // (it's a shadow-DOM app), but we frame it in an old-reddit-style top bar.
   function isAnswersRoute(loc) {
@@ -221,6 +203,5 @@
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
     getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute, isWikiRoute,
-    isChallengeUrl,
   };
 })();

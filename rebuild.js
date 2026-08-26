@@ -984,28 +984,6 @@
     return res;
   }
 
-  // A .json endpoint served HTML instead of JSON — almost always a WAF/anti-bot
-  // challenge interstitial (or an edge error page). Body starts with markup, or
-  // literally names the JS challenge.
-  function looksLikeChallengeBody(text) {
-    const s = String(text || "");
-    return /^\s*</.test(s) || /js_challenge|jsc_orig_r|<!doctype|<html/i.test(s.slice(0, 600));
-  }
-  // Parse a Reddit .json response, but surface a non-JSON body (a challenge page)
-  // as a distinct, non-retryable error so callers fall straight back to native
-  // Reddit — which will run the challenge — instead of retrying a hidden page.
-  async function readRedditJson(res) {
-    const text = await res.text();
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      const err = new Error("non-JSON response");
-      err.status = res.status;
-      err.challenge = looksLikeChallengeBody(text);
-      throw err;
-    }
-  }
-
   // --- Infinite scroll (RES "never-ending reddit") ---------------------
   let infiniteOn = false;
   let infState = null; // { fetchPage, after, count, loading, sentinel, observer, attempt, retryTimer, retryInterval }
@@ -3245,28 +3223,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const hit = cache.get(url);
     if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
     const res = await redditFetch(url);
-    // A challenge/WAF interstitial can hit the .json fetch itself: as a followed
-    // redirect to a challenge URL (its final URL carries the handshake params),
-    // or as a non-2xx interstitial whose body names the challenge. Flag either so
-    // loadListing falls straight back to native instead of retrying a hidden page.
-    if (res.url && ORR.isChallengeUrl(res.url)) {
-      const err = new Error("challenge redirect"); err.status = res.status; err.challenge = true; throw err;
-    }
     if (!res.ok) {
       const err = new Error("HTTP " + res.status);
       err.status = res.status;
       err.retryAfter = retryAfterOf(res);
-      // Only a body that actually NAMES the challenge counts — a plain HTML 429/5xx
-      // error page must still be treated as transient and retried, not bailed on.
-      try {
-        if (!/json/i.test(res.headers.get("content-type") || "")) {
-          const text = await res.text();
-          if (/js_challenge|jsc_orig_r/i.test(text.slice(0, 2000))) err.challenge = true;
-        }
-      } catch (e) { /* body unreadable → leave as a transient error */ }
       throw err;
     }
-    const json = await readRedditJson(res); // non-JSON (challenge page) → throws err.challenge
+    const json = await res.json();
     cache.set(url, { json, t: Date.now() });
     return json;
   }
@@ -3403,9 +3366,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         break;
       } catch (err) {
         lastStatus = err.status || 0;
-        // A WAF/anti-bot challenge answered the .json with HTML — don't retry a
-        // hidden page; fall straight back to native Reddit so the challenge runs.
-        if (err.challenge) break;
         if (!firstLoad || !isTransient(lastStatus) || attempt >= 3) break;
         setSkeletonMsg("Reddit is busy — retrying… (" + (attempt + 1) + "/3)");
         await sleep(backoffMs(attempt + 1, err.retryAfter));
@@ -4184,11 +4144,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   async function start() {
-    // A JS anti-bot / WAF challenge is mid-handshake on this URL — leave the page
-    // entirely alone. Don't hide it, don't rebuild it, don't fetch: the
-    // challenge's own script has to run and redirect us to the real URL, and our
-    // .json fetch would just be served the challenge page. (See ORR.isChallengeUrl.)
-    try { if (ORR.isChallengeUrl(new URL(location.href))) return; } catch (e) { /* ignore */ }
     // Hide the page SYNCHRONOUSLY at document_start (before the async prefs read),
     // on a route we're going to rebuild — otherwise new Reddit flashes through
     // during the storage reads. Every early-return below must unhide.
