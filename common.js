@@ -18,13 +18,13 @@
     subredditCss: true, autoplayMedia: false, hideRead: false, autoCollapseBots: false,
     compactView: false, nightAuto: false, highContrast: false, dyslexiaFont: false,
     videoLoop: false, hoverPreview: true, expandImages: false, fixedThumbnails: false,
-    foldReadComments: false,
+    foldReadComments: false, trackRecentSubs: true,
   });
   const BOOL_PREFS = [
     "enabled", "infiniteScroll", "nightMode", "redirect", "videoMuted",
     "subredditCss", "autoplayMedia", "hideRead", "autoCollapseBots",
     "compactView", "nightAuto", "highContrast", "dyslexiaFont", "videoLoop", "hoverPreview",
-    "expandImages", "fixedThumbnails", "foldReadComments",
+    "expandImages", "fixedThumbnails", "foldReadComments", "trackRecentSubs",
   ];
 
   const SORTS_SUB = ["hot", "new", "rising", "controversial", "top"];

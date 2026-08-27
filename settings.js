@@ -16,6 +16,7 @@
     autoCollapseBots: "autoCollapseBots", compact: "compactView", nightAuto: "nightAuto",
     highContrast: "highContrast", dyslexia: "dyslexiaFont", hoverPreview: "hoverPreview",
     expandImages: "expandImages", fixedThumbnails: "fixedThumbnails", foldReadComments: "foldReadComments",
+    trackRecentSubs: "trackRecentSubs",
   };
 
   // Filter lists / advanced (options page only).

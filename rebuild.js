@@ -1110,7 +1110,7 @@
   let nightModeOn = true;
   // issue #6 toggles (set from prefs in start())
   let subredditCssOn = true, autoplayOn = false, hideReadOn = false, autoCollapseBotsOn = false, nightAutoOn = false;
-  let foldReadCommentsOn = false;
+  let foldReadCommentsOn = false, trackRecentSubsOn = true;
   let dataCache = { filters: { subreddits: [], users: [], domains: [], keywords: [], flairs: [] }, userTags: {}, threadVisits: {} };
   const enhanceCache = new Map();
 
@@ -1201,7 +1201,7 @@ a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:point
 .orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; color:#fff; vertical-align:middle; }
 #orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
   border-radius:3px; padding:8px; font:11px verdana; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
-#orr-hovercard .orr-tagbtn { color:#369; cursor:pointer; text-decoration:underline; }
+#orr-hovercard .orr-tagbtn, #orr-hovercard .orr-favbtn, #orr-hovercard .orr-filterbtn { color:#369; cursor:pointer; text-decoration:underline; }
 .thing.comment.orr-new > .entry > .tagline:after { content:" \\2022 new"; color:#ff4500; font-weight:bold; }
 /* issue #16: "N new" badge on visited posts, + grey read comments when folding */
 li.orr-newcount-li a.orr-newcount { color:#ff4500; font-weight:bold; }
@@ -1798,6 +1798,31 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     patchTags(document);
     hideHoverCard();
   }
+  function toggleFavoriteSub(sub) {
+    if (!sub) return;
+    const key = sub.toLowerCase();
+    const list = (dataCache.favoriteSubs || []).filter(Boolean);
+    const idx = list.findIndex((s) => s.toLowerCase() === key);
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push(sub);
+    dataCache.favoriteSubs = list;
+    ORR.setPrefs({ favoriteSubs: list });
+    patchSrBar();
+    hideHoverCard();
+  }
+  function toggleFilterSub(sub) {
+    if (!sub) return;
+    const key = sub.toLowerCase();
+    if (!dataCache.filters) dataCache.filters = { subreddits: [], users: [], domains: [], keywords: [], flairs: [], highlights: [] };
+    const list = (dataCache.filters.subreddits || []).filter(Boolean);
+    const idx = list.findIndex((s) => s.toLowerCase() === key);
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push(sub);
+    dataCache.filters.subreddits = list;
+    ORR.setPrefs({ filters: dataCache.filters });
+    applyFilters(document);
+    hideHoverCard();
+  }
 
   // ---- filters + highlights ----
   function compileRegexes(list) {
@@ -2227,9 +2252,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         `<b>u/${esc(name)}</b><br>${formatNumber(d.link_karma)} post &middot; ${formatNumber(d.comment_karma)} comment karma` +
         `<br>cake day ${esc(cake)}<br><span class="orr-tagbtn" data-tag-user="${esc(name)}">tag user</span>`;
     } else {
+      const subName = d.display_name || sm[1];
+      const subKey = subName.toLowerCase();
+      const isFav = (dataCache.favoriteSubs || []).some((s) => s && s.toLowerCase() === subKey);
+      const isFiltered = ((dataCache.filters && dataCache.filters.subreddits) || []).some((s) => s && s.toLowerCase() === subKey);
       html =
-        `<b>r/${esc(d.display_name || sm[1])}</b><br>${formatNumber(d.subscribers)} subscribers` +
-        (d.public_description ? `<br>${esc(d.public_description).slice(0, 240)}` : "");
+        `<b>r/${esc(subName)}</b><br>${formatNumber(d.subscribers)} subscribers` +
+        (d.public_description ? `<br>${esc(d.public_description).slice(0, 240)}` : "") +
+        `<br><span class="orr-favbtn" data-fav-sub="${esc(subName)}">${isFav ? "remove from favorites" : "add to favorites"}</span>` +
+        ` &middot; <span class="orr-filterbtn" data-filter-sub="${esc(subName)}">${isFiltered ? "un-filter" : "filter this subreddit"}</span>`;
     }
     card.innerHTML = html;
     positionCard(card, anchor);
@@ -2941,6 +2972,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function scrollKey() { return location.pathname + location.search; }
 
   function rememberSub(sub) {
+    if (!trackRecentSubsOn) return;
     if (!sub || /[+\-]/.test(sub) || sub === "all" || sub === "popular") return;
     let r = (dataCache.recentSubs || []).filter((s) => s && s.toLowerCase() !== sub.toLowerCase());
     r.unshift(sub);
@@ -2960,7 +2992,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const bar = document.querySelector("#sr-header-area .sr-bar");
     if (!bar) return;
     const fav = (dataCache.favoriteSubs || []).filter(Boolean);
-    const recent = (dataCache.recentSubs || []).filter(Boolean);
+    const recent = trackRecentSubsOn ? (dataCache.recentSubs || []).filter(Boolean) : [];
     const subs = fav.length ? fav.slice() : DEFAULT_SRBAR.slice();
     const seen = subs.map((x) => x.toLowerCase());
     recent.forEach((s) => { if (seen.indexOf(s.toLowerCase()) < 0) { subs.push(s); seen.push(s.toLowerCase()); } });
@@ -3942,6 +3974,21 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           promptTag(tagBtn.getAttribute("data-tag-user") || "");
           return;
         }
+        // Favorite/filter toggle links (inside a subreddit hover card).
+        const favBtn = e.target.closest && e.target.closest(".orr-favbtn");
+        if (favBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleFavoriteSub(favBtn.getAttribute("data-fav-sub") || "");
+          return;
+        }
+        const filterBtn = e.target.closest && e.target.closest(".orr-filterbtn");
+        if (filterBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleFilterSub(filterBtn.getAttribute("data-filter-sub") || "");
+          return;
+        }
         // Old-reddit expando button → toggle the post's inline media/text.
         const expBtn = e.target.closest && e.target.closest(".expando-button");
         if (expBtn) {
@@ -4173,6 +4220,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     hideReadOn = prefs.hideRead === true;
     autoCollapseBotsOn = prefs.autoCollapseBots === true;
     foldReadCommentsOn = prefs.foldReadComments === true;
+    trackRecentSubsOn = prefs.trackRecentSubs !== false;
     nightAutoOn = prefs.nightAuto === true;
     applyBodyFlags(prefs);
     applyNightSchedule(); // may override nightModeOn based on time of day
@@ -4242,7 +4290,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       // New issue-#6 toggles: apply live where cheap (a reload also works).
       if (active && (changes.subredditCss || changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
                      changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont ||
-                     changes.fixedThumbnails || changes.expandImages || changes.foldReadComments)) {
+                     changes.fixedThumbnails || changes.expandImages || changes.foldReadComments || changes.trackRecentSubs)) {
         ORR.getPrefs().then((p) => {
           subredditCssOn = p.subredditCss !== false;
           if (changes.subredditCss) applySubredditCss(curSub); // apply/remove the sub's CSS live
@@ -4250,12 +4298,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           hideReadOn = p.hideRead === true;
           autoCollapseBotsOn = p.autoCollapseBots === true;
           nightAutoOn = p.nightAuto === true;
+          trackRecentSubsOn = p.trackRecentSubs !== false;
           applyBodyFlags(p); // includes fixedThumbnails
           applyNightSchedule();
           applyNight();
           applyFilters(document); // hideRead / re-filter
           if (changes.expandImages) { expandImagesOn = p.expandImages === true; expandImagesPass(); }
           if (changes.foldReadComments) { foldReadCommentsOn = p.foldReadComments === true; if (foldReadCommentsOn) applyReadFolding(); else unfoldReadComments(); }
+          if (changes.trackRecentSubs) patchSrBar();
         });
       }
       if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits ||
