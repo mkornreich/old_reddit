@@ -7,11 +7,6 @@ Opera)** — that **rebuilds Reddit's frontend into old Reddit**. It fetches eac
 from Reddit's JSON API and renders old Reddit's *real* archived HTML + CSS, then
 layers on RES-style power features.
 
-> **Experimental & logged-in only.** It replaces new Reddit's DOM on
-> listing/comment/profile/search pages. It needs a **logged-in** Reddit session
-> (Reddit blocks the anonymous JSON API); on any API error it **falls back** to
-> normal Reddit rather than showing a broken page.
-
 What it does:
 
 - **Old Reddit, rebuilt** — subreddit & front-page **listings**, **comment
