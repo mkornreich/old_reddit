@@ -53,23 +53,6 @@ arrows, and per-post `[+]` expandos:
 
 ---
 
-## Please read — this is an approximation
-
-New Reddit is a fundamentally different page from old Reddit, so this skin **shifts
-colours/typography/density and hides clutter** rather than reproducing old Reddit
-exactly. It is inherently fragile:
-
-- It **can't restyle everything.** Parts of new Reddit live inside *closed* Shadow
-  DOM that no extension can reach. The skin injects into the main document and
-  every *open* shadow root it can find; closed roots stay unstyled.
-- It targets shreddit's **custom-element tag names, slot names, and user-facing
-  text** (all more stable than Reddit's hashed class names), but Reddit can still
-  **break it on any deploy**. When that happens, the fix is updating the selectors
-  in [rebuild.js](rebuild.js) / [vendor/oldreddit.css](vendor/oldreddit.css).
-- It will **never be a pixel match** for `old.reddit.com`.
-
----
-
 ## Install on Firefox
 
 ### Option 1 — Firefox Add-ons store (recommended, one click)
