@@ -155,7 +155,6 @@ them — no separate build.
 2. Open the extensions page by typing one of these in the address bar (these
    can't be clickable links):
    - Chrome: `chrome://extensions`
-   - Edge: `edge://extensions`
    - Brave: `brave://extensions`
    - Opera: `opera://extensions`
 3. Turn on **Developer mode** (toggle top-right on Chrome/Brave/Opera; left sidebar on Edge).
