@@ -219,6 +219,39 @@
     return "link";
   }
 
+  // Only let Reddit's flair colours through as a hex value or a CSS named colour,
+  // so a flair's background/text colour can't inject anything into the style attr.
+  function safeFlairColor(c) {
+    if (typeof c !== "string") return "";
+    const s = c.trim();
+    return /^#[0-9a-f]{3,8}$/i.test(s) || /^[a-z]+$/i.test(s) ? s : "";
+  }
+  // Render a Reddit flair (link or author) the way old reddit did: its richtext
+  // parts — text plus emoji images — carrying the flair's own background/text
+  // colours. Falls back to the plain *_flair_text. "" when there's nothing to show.
+  function flairSpan(cls, text, richtext, bgColor, textColor) {
+    let inner = "", hasContent = false;
+    if (Array.isArray(richtext) && richtext.length) {
+      inner = richtext.map((x) => {
+        if (x && x.e === "emoji" && typeof x.u === "string" && /^https:\/\//i.test(x.u)) {
+          hasContent = true;
+          return `<img class="orr-flair-emoji" src="${esc(x.u)}" alt="${esc(x.a || "")}" title="${esc(x.a || "")}">`;
+        }
+        const t = (x && x.t) || "";
+        if (t.trim()) hasContent = true;
+        return esc(t);
+      }).join("");
+    } else if (text) {
+      inner = esc(text);
+      hasContent = true;
+    }
+    if (!hasContent) return "";
+    const bg = safeFlairColor(bgColor);
+    const style = bg ? ` style="background:${bg};border-color:${bg};color:${textColor === "light" ? "#fff" : "#000"}"` : "";
+    const title = text || (Array.isArray(richtext) ? richtext.map((x) => (x && (x.e === "emoji" ? x.a : x.t)) || "").join("") : "");
+    return ` <span class="${cls}"${style} title="${esc(title)}">${inner}</span>`;
+  }
+
   function buildItem(d, opts) {
     opts = opts || {};
     const permalink = d.permalink || "/comments/" + (d.id || "");
@@ -244,7 +277,7 @@
     const blur = d.over_18 ? " orr-nsfw" : d.spoiler && !opts.expandText ? " orr-spoiler" : "";
     const expando = exp ? `<div class="expando${blur}"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
     const flairText = d.link_flair_text || (Array.isArray(d.link_flair_richtext) ? d.link_flair_richtext.map((x) => x.t || "").join("") : "");
-    const flairHtml = flairText ? ` <span class="linkflairlabel" title="${esc(flairText)}">${esc(flairText)}</span>` : "";
+    const flairHtml = flairSpan("linkflairlabel", d.link_flair_text, d.link_flair_richtext, d.link_flair_background_color, d.link_flair_text_color);
     const spoilerTag = d.spoiler ? ` <span class="linkflairlabel" style="background:#000;color:#fff">spoiler</span>` : "";
     const nsfwTag = d.over_18 ? ` <span class="linkflairlabel" style="background:#c00;color:#fff">NSFW</span>` : "";
 
@@ -272,7 +305,9 @@
       ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` +
       `</p>` +
       `<p class="tagline">submitted <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` +
-      ` by <a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>${toSub}</p>` +
+      ` by <a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
+      flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
+      `${toSub}</p>` +
       `<ul class="flat-list buttons">` +
       `<li class="first"><a href="${esc(permalink)}" class="bylink comments may-blank">${comments}</a></li>` +
       `<li class="share"><a class="post-sharing-button" href="${esc(permalink)}">share</a></li>` +
@@ -534,7 +569,7 @@
       `<div class="entry unvoted">` +
       `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-expanded="true" aria-label="collapse">[&ndash;]</a> ` +
       `<a href="/user/${esc(d.author)}" class="author may-blank">${esc(d.author)}</a>` +
-      (d.author_flair_text ? ` <span class="flair" title="${esc(d.author_flair_text)}">${esc(d.author_flair_text)}</span>` : "") +
+      flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
       ` <span class="score unvoted">${pts}</span> ` +
       `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
@@ -1331,6 +1366,7 @@ a.orr-parent { color:#369; }
 /* flair */
 .linkflairlabel { display:inline-block; background:#ddd; border:1px solid #ccc; border-radius:3px; padding:0 4px; margin:0 2px; font-size:x-small; color:#555; vertical-align:middle; }
 .tagline .flair { display:inline-block; background:#eef; border:1px solid #ccd; border-radius:3px; padding:0 4px; font-size:x-small; color:#556; }
+.orr-flair-emoji { height:1em; width:auto; vertical-align:text-bottom; }
 /* keyword highlight */
 .thing.orr-highlight > .entry { box-shadow:-4px 0 0 #ffb000; background:rgba(255,224,130,.16); }
 /* download button */
