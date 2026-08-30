@@ -795,12 +795,17 @@
   function buildHeader(opts) {
     opts = opts || {};
     const id = meIdentity(opts.me);
+    // On a real single-subreddit page, this is the only "r/name" text on
+    // screen you can act on without a listing mixing in other subs (e.g.
+    // typing the URL directly) — give it the same .subreddit class the
+    // hover-card favorite/filter controls already key off elsewhere.
+    const subClass = opts.route && opts.route.scope === "sub" ? ' class="subreddit"' : "";
     return (
       `<div id="header" role="banner">` +
       srBarHtml(opts.route) +
       `<a href="/" id="header-img" class="default-header title">reddit</a>` +
       `<div id="header-bottom-left">` +
-      `<span class="pagename redditname"><a href="${esc(opts.pageHref || "/")}">${esc(opts.pageName || "reddit.com")}</a></span>` +
+      `<span class="pagename redditname"><a${subClass} href="${esc(opts.pageHref || "/")}">${esc(opts.pageName || "reddit.com")}</a></span>` +
       (opts.tabmenu || "") +
       `</div>` +
       (id ? userbarLoggedIn(id) : userbarLoggedOut()) +
@@ -1285,11 +1290,11 @@ html.orr-custom-font #siteTable, html.orr-custom-font .commentarea { zoom:var(--
 html.orr-lb-open { overflow:hidden; }
 #orr-lightbox { position:fixed; inset:0; z-index:2147483640; background:rgba(0,0,0,.9); display:flex; align-items:center; justify-content:center; }
 #orr-lightbox #orr-lb-img { max-width:95vw; max-height:92vh; transform-origin:center; user-select:none; box-shadow:0 4px 40px rgba(0,0,0,.6); }
-#orr-lightbox .orr-lb-bar { position:absolute; top:0; left:0; right:0; height:38px; display:flex; align-items:center; gap:14px; padding:0 14px; color:#fff; font:13px verdana,sans-serif; background:linear-gradient(rgba(0,0,0,.55),transparent); }
+#orr-lightbox .orr-lb-bar { position:absolute; top:0; left:0; right:0; height:38px; z-index:1; display:flex; align-items:center; gap:14px; padding:0 14px; color:#fff; font:13px verdana,sans-serif; background:linear-gradient(rgba(0,0,0,.55),transparent); }
 #orr-lightbox #orr-lb-count { margin-right:auto; }
 #orr-lightbox .orr-lb-bar a { color:#8cf; text-decoration:none; }
 #orr-lightbox .orr-lb-close { background:none; border:none; color:#fff; font-size:20px; cursor:pointer; line-height:1; }
-#orr-lightbox .orr-lb-prev, #orr-lightbox .orr-lb-next { position:absolute; top:50%; transform:translateY(-50%); background:rgba(0,0,0,.4); color:#fff; border:none; font-size:40px; width:52px; height:82px; cursor:pointer; }
+#orr-lightbox .orr-lb-prev, #orr-lightbox .orr-lb-next { position:absolute; top:50%; transform:translateY(-50%); z-index:1; background:rgba(0,0,0,.4); color:#fff; border:none; font-size:40px; width:52px; height:82px; cursor:pointer; }
 #orr-lightbox .orr-lb-prev { left:0; } #orr-lightbox .orr-lb-next { right:0; }
 #orr-lightbox .orr-lb-prev:hover, #orr-lightbox .orr-lb-next:hover { background:rgba(0,0,0,.7); }
 /* RES-style hover preview */
@@ -1959,8 +1964,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const post = document.querySelector("#siteTable .thing.link");
     const t3 = post ? post.getAttribute("data-fullname") : null;
     if (!t3) return;
-    const rec = dataCache.threadVisits[t3];
-    curThreadLast = typeof rec === "number" ? rec : (rec && rec.t) || 0; // old (number) or new ({t,c})
+    // Only recompute the baseline on a genuine (non-resort) visit. A resort
+    // re-running this same function must NOT re-read dataCache.threadVisits —
+    // this very visit's own write below (a few lines down) already landed in
+    // there, so re-reading it on the resort would silently swap in "the
+    // baseline this visit just created" instead of "the baseline as it stood
+    // before this visit started," making anything correctly flagged new on
+    // the first render stop being flagged the moment you change sort.
+    if (!commentsResortInPlace) {
+      const rec = dataCache.threadVisits[t3];
+      curThreadLast = typeof rec === "number" ? rec : (rec && rec.t) || 0; // old (number) or new ({t,c})
+    }
     if (curThreadLast) {
       flagNewComments(document);
       area.classList.add("orr-visited-before"); // prior-visit info exists → read/unread is meaningful
@@ -2268,9 +2282,20 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     positionCard(card, pl);
   }
   async function showHoverCard(anchor) {
-    const href = anchor.getAttribute("href") || "";
     const card = document.getElementById("orr-hovercard");
     if (!card) return;
+    // Reddit's own markdown renderer can turn a bare "r/foo"/"u/foo" mention
+    // (e.g. in a sidebar's "related subreddits") into an absolute URL rather
+    // than a relative one — normalize through URL() so both match, same as
+    // a hand-authored relative link would.
+    let href;
+    try {
+      const u = new URL(anchor.getAttribute("href") || "", location.origin);
+      if (u.origin !== location.origin) return; // not a reddit.com link
+      href = u.pathname;
+    } catch (e) {
+      return;
+    }
     const um = /^\/user\/([^/?#]+)\/?$/.exec(href);
     const sm = /^\/r\/([^/?#+]+)\/?$/.exec(href);
     if (!um && !sm) return;
@@ -2372,7 +2397,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       (e) => {
         const pl = e.target.closest && e.target.closest("a.orr-parent");
         if (pl) { if (hoverTimer) clearTimeout(hoverTimer); hoverTimer = setTimeout(() => showParentCard(pl), 300); return; }
-        const a = e.target.closest && e.target.closest("a.author, .sr-bar a.choice, a.subreddit");
+        // .side a[href] covers sidebar content Reddit renders from a sub's own
+        // markdown (e.g. "related subreddits", moderator links) — arbitrary
+        // markup we don't control the classes of. showHoverCard() already only
+        // acts on an href matching /r/name/ or /user/name/ exactly, so this
+        // just widens where the attempt can start from, not what it accepts.
+        const a = e.target.closest && e.target.closest("a.author, .sr-bar a.choice, a.subreddit, .side a[href]");
         if (!a) {
           if (!(e.target.closest && e.target.closest("#orr-hovercard"))) {
             if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
@@ -2386,7 +2416,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     );
     document.addEventListener("mouseout", (e) => {
       const to = e.relatedTarget;
-      if (to && to.closest && (to.closest("#orr-hovercard") || to.closest("a.author, .sr-bar a.choice, a.subreddit, a.orr-parent"))) return;
+      if (to && to.closest && (to.closest("#orr-hovercard") || to.closest("a.author, .sr-bar a.choice, a.subreddit, .side a[href], a.orr-parent"))) return;
       if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
       setTimeout(() => {
         const c = document.getElementById("orr-hovercard");
@@ -2526,14 +2556,23 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           player.initialize(video, dashUrl, false);
           // attachSource (inside initialize) swaps the element's media source out
           // from under the native <source> that was already playing, so the video
-          // isn't actually ready yet — resuming immediately gets silently dropped
-          // (hence needing a second manual click). Resume once it genuinely is —
-          // unless autoplay already paused it again (scrolled out while this was
+          // isn't actually ready yet — resuming immediately gets silently dropped.
+          // Worse: dash.js's own representation-selection bug against Reddit's raw
+          // manifest ("period[i.index] is undefined") makes it abort and restart
+          // the stream from scratch internally, for some videos more than once —
+          // each restart re-pauses it right after we've resumed it. So this isn't
+          // a one-shot resume: keep resuming every time it becomes playable again
+          // (bounded, in case a given video's manifest never stops erroring),
+          // converging once dash.js finally stops resetting itself. Unless
+          // autoplay already paused it deliberately (scrolled out while this was
           // loading), tracked via data-orr-want (see autoplayMedia).
-          video.addEventListener("canplay", () => {
-            if (video.dataset.orrWant === "pause") return;
+          let resumeAttempts = 0;
+          video.addEventListener("canplay", function onCanPlay() {
+            if (video.dataset.orrWant === "pause") { video.removeEventListener("canplay", onCanPlay); return; }
+            if (!video.paused) return; // already playing, nothing to do
+            if (++resumeAttempts > 8) { video.removeEventListener("canplay", onCanPlay); return; }
             video.play().catch(() => {});
-          }, { once: true });
+          });
         })
         .catch(() => { /* dash.js unavailable → the plain <source src=fallback_url> keeps playing, just silent */ });
     }, { once: true });
@@ -2543,6 +2582,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const root = scope && scope.querySelectorAll ? scope : document;
     let vids;
     try { vids = root.querySelectorAll("video.reddit-video[data-dash-url]"); } catch (e) { return; }
+    // Warm the shared dash.js module (not any per-video manifest/segments — see
+    // wireRedditVideo) as soon as we know a dash video exists on the page, not
+    // only once the user presses play. Its ~740KB fetch is what was pushing the
+    // post-swap resume play() past the browser's gesture-exemption window,
+    // making it get silently rejected and forcing a second manual click.
+    if (vids.length) loadDashJs().catch(() => {});
     vids.forEach(wireRedditVideo);
     updateMuteAllVisibility();
   }
@@ -2622,6 +2667,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); };
       img.src = s.srcs[s.idx];
     }
+    // Keep at least the far edge of the scaled image reachable at the viewport
+    // edge, rather than letting it be dragged/panned entirely out of view.
+    const maxX = Math.max(0, (img.offsetWidth * s.scale - window.innerWidth) / 2);
+    const maxY = Math.max(0, (img.offsetHeight * s.scale - window.innerHeight) / 2);
+    s.tx = Math.min(maxX, Math.max(-maxX, s.tx));
+    s.ty = Math.min(maxY, Math.max(-maxY, s.ty));
     img.style.transform = `translate(${s.tx}px, ${s.ty}px) scale(${s.scale})`;
     img.style.cursor = s.scale > 1 ? "grab" : "zoom-in";
     const c = document.getElementById("orr-lb-count");
@@ -2657,8 +2708,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     img.addEventListener("wheel", (e) => {
       e.preventDefault();
       const s = lightboxState; if (!s) return;
-      s.scale = Math.min(8, Math.max(1, s.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-      if (s.scale === 1) { s.tx = 0; s.ty = 0; }
+      // Ctrl+wheel zooms — browsers also report a trackpad pinch gesture as a
+      // wheel event with ctrlKey set, so this covers both. Plain scroll (mouse
+      // wheel or a two-finger swipe) pans a zoomed-in image instead, matching
+      // how most image/PDF viewers split the two gestures — otherwise there
+      // was no way to pan via scroll at all, only click-drag.
+      if (e.ctrlKey) {
+        s.scale = Math.min(8, Math.max(1, s.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+        if (s.scale === 1) { s.tx = 0; s.ty = 0; }
+      } else if (s.scale > 1) {
+        s.tx -= e.deltaX;
+        s.ty -= e.deltaY;
+      }
       lightboxRender();
     }, { passive: false });
     let dragging = false, moved = false, sx = 0, sy = 0, ox = 0, oy = 0;
@@ -2684,7 +2745,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (moved) { moved = false; return; } // a drag that ended on the backdrop → don't close
       if (e.target.closest(".orr-lb-prev")) { lightboxTo(-1); return; }
       if (e.target.closest(".orr-lb-next")) { lightboxTo(1); return; }
-      if (e.target.closest(".orr-lb-open")) return; // let the link open
+      // #orr-lb-open is an id, not a class — html.orr-lb-open (the "lightbox is
+      // open" marker, toggled below) is an ancestor of every element on the
+      // page while open, so a `.orr-lb-open` CLASS selector here matched that
+      // instead and swallowed every click inside the lightbox, close button
+      // included, before it ever reached the logic below.
+      if (e.target.closest("#orr-lb-open")) return; // let the link open
       if (e.target.closest(".orr-lb-close") || e.target === lb || e.target.closest(".orr-lb-bar")) closeLightbox();
     });
     lightboxKey = (e) => {
@@ -2950,6 +3016,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const root = scope && scope.querySelectorAll ? scope : document;
     if (!autoplayObserver) {
       autoplayObserver = new IntersectionObserver((entries) => {
+        // Re-check the LIVE setting, not just its value when each element was
+        // first observed — the observer itself is a singleton that's never
+        // torn down, so without this, posts observed while autoplay was on
+        // would keep autoplaying forever after the setting is turned back off.
+        if (!autoplayOn) return;
         entries.forEach((en) => {
           const btn = en.target;
           const entry = btn.closest(".entry");
@@ -4342,6 +4413,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           if (changes.expandImages) { expandImagesOn = p.expandImages === true; expandImagesPass(); }
           if (changes.foldReadComments) { foldReadCommentsOn = p.foldReadComments === true; if (foldReadCommentsOn) applyReadFolding(); else unfoldReadComments(); }
           if (changes.trackRecentSubs) patchSrBar();
+          // Turning autoplay on only started observing posts rendered AFTER that
+          // point (e.g. the next infinite-scroll batch) — sweep what's already
+          // on the page too, instead of waiting for more to load in.
+          if (changes.autoplayMedia && autoplayOn) autoplayMedia(document);
         });
       }
       if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits ||
