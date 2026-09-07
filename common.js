@@ -162,7 +162,10 @@
     return null;
   }
 
-  const USER_SECTIONS = ["overview", "submitted", "comments", "gilded", "upvoted", "downvoted", "hidden", "saved"];
+  // "gilded" is intentionally omitted — Reddit's JSON API 404s it for other users
+  // (issue #25), so a /user/<name>/gilded path falls back to "overview" here rather
+  // than rendering an error page, and the gilded tab isn't offered (see USER_TABS).
+  const USER_SECTIONS = ["overview", "submitted", "comments", "upvoted", "downvoted", "hidden", "saved"];
 
   // Returns a user-profile route descriptor, else null.
   //   /user/{name}[/{section}]/  (or the /u/ alias)

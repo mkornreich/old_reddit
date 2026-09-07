@@ -336,8 +336,8 @@
     return `<ul class="tabmenu">${lis}</ul>`;
   }
 
-  function navButtonsHtml(route, listing, count, t) {
-    const tq = t ? "&t=" + t : "";
+  function navButtonsHtml(route, listing, count, t, extra) {
+    const tq = (t ? "&t=" + t : "") + (extra || "");
     const parts = [];
     if (listing.before) {
       parts.push(
@@ -626,7 +626,11 @@
 
   // ---------- user profile builders (testable) -------------------------
 
-  const USER_TABS = ["overview", "submitted", "comments", "gilded"];
+  // "gilded" dropped — Reddit's API 404s it for other users (issue #25).
+  const USER_TABS = ["overview", "submitted", "comments"];
+  // User pages sort via a ?sort= query param (like comments), not a path segment
+  // like subreddit listings. top/controversial also take a time window (?t=).
+  const USER_SORTS = ["new", "hot", "top", "controversial"];
 
   function userTabmenuHtml(route) {
     const lis = USER_TABS.map((name) => {
@@ -635,6 +639,27 @@
       return `<li class="${sel}"><a class="choice" href="${href}">${name}</a></li>`;
     }).join("");
     return `<ul class="tabmenu">${lis}</ul>`;
+  }
+
+  // Old-reddit-style "sorted by:" menu for a user page (issue #25). Sort is a
+  // ?sort= query param; top/controversial additionally get a "links from:" window.
+  function userSortMenuHtml(route, currentSort, currentT) {
+    const cur = USER_SORTS.indexOf(currentSort) >= 0 ? currentSort : "new";
+    const base = "/user/" + route.name + (route.section === "overview" ? "/" : "/" + route.section + "/");
+    const boldSel = ' style="font-weight:bold;text-decoration:underline"';
+    const sortLinks = USER_SORTS.map((s) => {
+      const tq = (s === "top" || s === "controversial") && currentT ? "&t=" + esc(currentT) : "";
+      return `<a href="${base}?sort=${s}${tq}"${s === cur ? boldSel : ""}>${s}</a>`;
+    }).join(' <span class="separator">&middot;</span> ');
+    let html = `<div class="menuarea" style="padding:5px 10px;font-size:small">sorted by: ${sortLinks}`;
+    if (cur === "top" || cur === "controversial") {
+      const tcur = currentT || "all"; // reddit's default window for a user's top/controversial
+      const timeLinks = TIMES.map(([val, label]) =>
+        `<a href="${base}?sort=${cur}&t=${val}"${val === tcur ? boldSel : ""}>${label}</a>`
+      ).join(' <span class="separator">&middot;</span> ');
+      html += ` <span class="separator">&middot;</span> links from: ${timeLinks}`;
+    }
+    return html + `</div>`;
   }
 
   // A comment as shown on a user page: with "on <post> in r/<sub>" context.
@@ -673,6 +698,10 @@
       })
       .join("");
     const count = (startRank - 1) + children.length;
+    const timed = opts.sort === "top" || opts.sort === "controversial";
+    let navExtra = "";
+    if (opts.sort) navExtra += "&sort=" + encodeURIComponent(opts.sort);
+    if (opts.t && timed) navExtra += "&t=" + encodeURIComponent(opts.t);
     const inner =
       buildHeader({
         tabmenu: userTabmenuHtml(route),
@@ -684,10 +713,11 @@
       `<div class="side" role="complementary">${sideSearchHtml({ scope: "user" })}</div>` +
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
+      userSortMenuHtml(route, opts.sort, opts.t) +
       `<div id="siteTable" class="sitetable">` +
       (items || '<div class="thing">Nothing here.</div>') +
       `</div>` +
-      navButtonsHtml({ basePath: route.basePath }, listing, count, null) +
+      navButtonsHtml({ basePath: route.basePath }, listing, count, null, navExtra) +
       `</div>`;
     return { className: "profile-page", inner };
   }
@@ -3589,6 +3619,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   async function loadUser(url, firstLoad) {
     const ur = ORR.isUserRoute(url);
     if (!ur) return;
+    const rawSort = url.searchParams.get("sort");
+    const sort = USER_SORTS.indexOf(rawSort) >= 0 ? rawSort : null; // null → Reddit's default (new)
+    const t = (sort === "top" || sort === "controversial") ? url.searchParams.get("t") : null;
     const params = { after: url.searchParams.get("after"), count: url.searchParams.get("count") };
     hideGuard();
     let watchdog = null;
@@ -3596,6 +3629,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let json;
     try {
       const q = new URLSearchParams({ raw_json: "1", limit: "25" });
+      if (sort) q.set("sort", sort);
+      if (t) q.set("t", t);
       if (params.after) {
         q.set("after", params.after);
         q.set("count", params.count || "25");
@@ -3623,7 +3658,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     await ensureCss();
     const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
     active = true; // before replaceBody(): see loadListing's comment on why
-    replaceBody(buildUserPage(ur, json, { startCount, me: meCached }), "u/" + ur.name + " — old reddit");
+    replaceBody(buildUserPage(ur, json, { startCount, me: meCached, sort, t }), "u/" + ur.name + " — old reddit");
     unhideGuard();
     patchHeader();
     loadUserSidebar(ur.name);
@@ -3633,6 +3668,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     setupInfinite(
       async (after, count) => {
         const q = new URLSearchParams({ raw_json: "1", limit: "25", after, count: String(count) });
+        if (sort) q.set("sort", sort);
+        if (t) q.set("t", t);
         const r2 = await redditFetch(location.origin + ur.basePath + "/.json?" + q.toString());
         if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
         const j2 = await r2.json();
