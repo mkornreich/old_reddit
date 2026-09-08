@@ -180,15 +180,26 @@
       };
     }
     if (d.is_gallery && d.gallery_data && d.media_metadata) {
-      const srcs = (d.gallery_data.items || [])
+      // Reddit's gallery metadata gives each item's real pixel size (x/y, not
+      // width/height — a gallery-specific API quirk). Carry it alongside the
+      // src through the same map+filter pass so indices can't drift apart,
+      // and set it as plain width/height attributes so the browser reserves
+      // the right aspect ratio before the image loads, instead of collapsing
+      // to zero height and reflowing everything below it once it does — the
+      // exact kind of shift that makes a page seem to "jump" while scrolling.
+      const items = (d.gallery_data.items || [])
         .map((it) => {
           const m = d.media_metadata[it.media_id];
-          return m && m.s ? m.s.u || m.s.gif : null;
+          const src = m && m.s ? m.s.u || m.s.gif : null;
+          return src ? { src, w: m.s.x, h: m.s.y } : null;
         })
         .filter(Boolean);
-      if (srcs.length) {
-        const n = srcs.length;
-        const imgs = srcs.map((s, i) => `<img class="orr-gimg${i === 0 ? " active" : ""}" src="${esc(s)}">`).join("");
+      if (items.length) {
+        const n = items.length;
+        const imgs = items.map((it, i) => {
+          const wh = it.w && it.h ? ` width="${esc(it.w)}" height="${esc(it.h)}"` : "";
+          return `<img class="orr-gimg${i === 0 ? " active" : ""}"${wh} src="${esc(it.src)}">`;
+        }).join("");
         const nav =
           n > 1
             ? `<div class="orr-gnav-bar"><a class="orr-gnav" data-d="-1" href="javascript:void(0)">&lsaquo; prev</a> <span class="orr-gcount">1 / ${n}</span> <a class="orr-gnav" data-d="1" href="javascript:void(0)">next &rsaquo;</a></div>`
@@ -205,7 +216,12 @@
     if (isImg) {
       const source = d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source;
       const src = source && source.url ? source.url : d.url;
-      return { type: "image", html: `<div class="expando-container"><span class="orr-resizable"><img class="preview" src="${esc(src)}"></span></div>` };
+      // Reserve the real aspect ratio up front (see the gallery case above for
+      // why) — only meaningful when source.url is what's actually used, since
+      // a fallback to d.url has no matching dimensions.
+      const wh = source && source.url && source.width && source.height
+        ? ` width="${esc(source.width)}" height="${esc(source.height)}"` : "";
+      return { type: "image", html: `<div class="expando-container"><span class="orr-resizable"><img class="preview"${wh} src="${esc(src)}"></span></div>` };
     }
     return null;
   }
@@ -1335,7 +1351,7 @@ html.orr-lb-open { overflow:hidden; }
 /* post expando images/videos scale to fit the window (never cut off); click opens the lightbox */
 .orr-resizable { display:inline-block; overflow:hidden; max-width:100%; line-height:0; cursor:zoom-in; }
 .orr-resizable img.preview { max-width:100%; max-height:80vh; width:auto; height:auto; object-fit:contain; display:block; }
-.orr-gimg { max-width:100%; max-height:80vh; }
+.orr-gimg { max-width:100%; max-height:80vh; width:auto; height:auto; object-fit:contain; }
 .orr-video-wrap video, .expando video, video.orr-directvideo { max-width:100%; max-height:80vh; height:auto; }
 /* fixed-size thumbnails (uniform row height for easy scanning) */
 html.orr-fixedthumbs .thing.link .thumbnail img { width:70px; height:70px; max-width:70px; object-fit:cover; }
