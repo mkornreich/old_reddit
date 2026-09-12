@@ -146,5 +146,17 @@ if (api.runtime && api.runtime.onMessage) {
         .catch((e) => sendResponse({ error: String((e && e.message) || e) }));
       return true;
     }
+    // Reachability check for a v.redd.it DASH manifest from the background — the
+    // only context that is CORS-exempt (via v.redd.it host_permissions) and carries
+    // the session. Reddit now 403s even this, so the content script uses the result
+    // to decide whether to show the "Watch on Reddit" fallback. Host-locked to v.redd.it.
+    if (msg.type === "orr-vreddit-fetch") {
+      const u = String((msg && msg.url) || "");
+      if (!/^https:\/\/v\.redd\.it\/[\w./?=&%~-]+$/i.test(u)) { sendResponse({ ok: false, error: "bad url" }); return; }
+      fetch(u, { credentials: "include" })
+        .then((r) => sendResponse({ ok: r.ok, status: r.status }))
+        .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+      return true;
+    }
   });
 }

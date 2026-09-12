@@ -1371,6 +1371,13 @@ html.orr-lb-open { overflow:hidden; }
 .orr-resizable img.preview { max-width:100%; max-height:80vh; width:auto; height:auto; object-fit:contain; display:block; }
 .orr-gimg { max-width:100%; max-height:80vh; width:auto; height:auto; object-fit:contain; }
 .orr-video-wrap video, .expando video, video.orr-directvideo { max-width:100%; max-height:80vh; height:auto; }
+/* "Watch on Reddit" fallback for v.redd.it videos Reddit won't serve us */
+.orr-video-fallback { position:relative; display:inline-block; max-width:100%; min-width:320px; min-height:180px; background:#000; line-height:0; border-radius:3px; overflow:hidden; }
+.orr-video-fallback .orr-video-poster { max-width:100%; max-height:80vh; display:block; opacity:.55; }
+.orr-video-fallback .orr-watch-reddit { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:rgba(0,0,0,.78); color:#fff; padding:10px 16px; border-radius:6px; font:bold 14px verdana,sans-serif;
+  text-decoration:none; line-height:normal; white-space:nowrap; }
+.orr-video-fallback .orr-watch-reddit:hover { background:#d93a00; }
 /* fixed-size thumbnails (uniform row height for easy scanning) */
 html.orr-fixedthumbs .thing.link .thumbnail img { width:70px; height:70px; max-width:70px; object-fit:cover; }
 /* NSFW / spoiler blur with click-to-reveal */
@@ -2603,6 +2610,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     video.dataset.orrDashWired = "1";
     applyVideoMuted(video, orrVideoMuted);
 
+    // If v.redd.it won't serve us the manifest (it now 403s all our contexts), the
+    // player can only ever show a black box — swap in the "Watch on Reddit" fallback.
+    redditVideoReachable(dashUrl).then((ok) => { if (!ok && video.isConnected) showVideoFallback(video); });
+
     // Don't attach dash.js (or fetch anything) until the user actually presses
     // play: this runs for every visible video on the page (e.g. every post in a
     // feed), and dash.js starts fetching the manifest+segments the moment it's
@@ -2654,6 +2665,43 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (vids.length) loadDashJs().catch(() => {});
     vids.forEach(wireRedditVideo);
     updateMuteAllVisibility();
+  }
+
+  // v.redd.it now serves fragmented CMAF (not directly playable) AND 403s every
+  // media request the extension can make — page fetch, content-script fetch, and
+  // even the CORS-exempt background fetch (verified) — because it requires Reddit's
+  // own signed-URL/app pipeline. So when a reddit-video's manifest is unreachable
+  // we can't play it; replace the dead black box with a poster + "Watch on Reddit"
+  // that reopens the post with the extension standing down (see #orr-native in
+  // start()), letting Reddit's own player handle it. One background probe per page;
+  // if Reddit ever restores open access, the probe passes and normal playback stays.
+  let redditVideoReachP = null;
+  function redditVideoReachable(dashUrl) {
+    if (redditVideoReachP) return redditVideoReachP;
+    redditVideoReachP = Promise.resolve(api.runtime.sendMessage({ type: "orr-vreddit-fetch", url: dashUrl }))
+      .then((res) => !!(res && res.ok))
+      .catch(() => false);
+    return redditVideoReachP;
+  }
+  function showVideoFallback(video) {
+    if (!video || video.dataset.orrFellBack) return;
+    video.dataset.orrFellBack = "1";
+    const container = video.closest(".expando-container") || (video.closest(".orr-video-wrap") || video).parentNode;
+    if (!container) return;
+    const thing = video.closest(".thing.link");
+    const permalink = (thing && thing.getAttribute("data-permalink")) || location.pathname;
+    const poster = video.getAttribute("poster") || "";
+    const fb = document.createElement("div");
+    fb.className = "orr-video-fallback";
+    if (poster) { const im = document.createElement("img"); im.className = "orr-video-poster"; im.src = poster; fb.appendChild(im); }
+    const a = document.createElement("a");
+    a.className = "orr-watch-reddit";
+    a.href = permalink.replace(/\/+$/, "") + "/#orr-native";
+    a.target = "_blank"; a.rel = "noopener noreferrer";
+    a.textContent = "▶ Watch on Reddit";
+    fb.appendChild(a);
+    container.textContent = "";
+    container.appendChild(fb);
   }
 
   // ---- video niceties: playback speed, loop, remembered volume ----
@@ -4369,6 +4417,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   async function start() {
+    // "Watch on Reddit" escape hatch: a #orr-native link (see showVideoFallback)
+    // asks the extension to stand down for this load so Reddit's own player — the
+    // only thing that can play a locked-down v.redd.it video — takes over.
+    if (location.hash === "#orr-native") return;
     // Hide the page SYNCHRONOUSLY at document_start (before the async prefs read),
     // on a route we're going to rebuild — otherwise new Reddit flashes through
     // during the storage reads. Every early-return below must unhide.
