@@ -163,8 +163,17 @@
         ? { type: "selftext", html: `<div class="expando-container"><div class="usertext-body"><div class="md">${d.selftext_html}</div></div></div>` }
         : null;
     }
-    const rv = d.media && d.media.reddit_video;
-    if (d.is_video && rv && rv.fallback_url) {
+    // A crosspost carries its media (reddit_video / gallery / preview) on the
+    // ORIGINAL post in crosspost_parent_list, not on d itself — fall back to it so
+    // crossposted v.redd.it videos, galleries and images still render (they showed
+    // nothing before, since d.media/d.gallery_data were empty on the crosspost).
+    const xp = (d.crosspost_parent_list && d.crosspost_parent_list[0]) || null;
+    const posterOf = (m) => {
+      const s = m && m.preview && m.preview.images && m.preview.images[0] && m.preview.images[0].source;
+      return s && s.url ? s.url : null;
+    };
+    const rv = (d.media && d.media.reddit_video) || (xp && xp.media && xp.media.reddit_video) || null;
+    if (rv && rv.fallback_url) {
       // Reddit's fallback_url is a VIDEO-ONLY stream — the audio is a separate
       // v.redd.it file, described together by one DASH manifest. We attach that
       // manifest URL so the runtime can hand it to dash.js, which demuxes both
@@ -174,12 +183,18 @@
       const base = (rv.has_audio === false || rv.is_gif === true) ? null : vRedditBase(rv.fallback_url);
       const dashUrl = base ? base + "/DASHPlaylist.mpd" : "";
       const audioAttr = dashUrl ? ` data-dash-url="${esc(dashUrl)}"` : "";
+      // Show Reddit's own preview thumbnail as a poster so the player shows a frame
+      // instead of a black box before play (the <video> is preload="none").
+      const pu = posterOf(d) || posterOf(xp);
+      const poster = pu ? ` poster="${esc(pu)}"` : "";
       return {
         type: dashUrl ? "video" : "video-muted",
-        html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
+        html: `<div class="expando-container"><video class="reddit-video" controls preload="none"${poster}${audioAttr} width="${esc(rv.width || 640)}" height="${esc(rv.height || 360)}"><source src="${esc(rv.fallback_url)}" type="video/mp4"></video></div>`,
       };
     }
-    if (d.is_gallery && d.gallery_data && d.media_metadata) {
+    const gal = (d.is_gallery && d.gallery_data && d.media_metadata) ? d
+      : (xp && xp.is_gallery && xp.gallery_data && xp.media_metadata ? xp : null);
+    if (gal) {
       // Reddit's gallery metadata gives each item's real pixel size (x/y, not
       // width/height — a gallery-specific API quirk). Carry it alongside the
       // src through the same map+filter pass so indices can't drift apart,
@@ -187,9 +202,9 @@
       // the right aspect ratio before the image loads, instead of collapsing
       // to zero height and reflowing everything below it once it does — the
       // exact kind of shift that makes a page seem to "jump" while scrolling.
-      const items = (d.gallery_data.items || [])
+      const items = (gal.gallery_data.items || [])
         .map((it) => {
-          const m = d.media_metadata[it.media_id];
+          const m = gal.media_metadata[it.media_id];
           const src = m && m.s ? m.s.u || m.s.gif : null;
           return src ? { src, w: m.s.x, h: m.s.y } : null;
         })
@@ -212,9 +227,10 @@
     }
     const ext = externalMediaExpando(d.url);
     if (ext) return ext;
-    const isImg = d.post_hint === "image" || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(d.url || "");
+    const isImg = d.post_hint === "image" || (xp && xp.post_hint === "image") || /\.(jpe?g|png|gif|webp)(\?|$)/i.test(d.url || "");
     if (isImg) {
-      const source = d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source;
+      const source = (d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source)
+        || (xp && xp.preview && xp.preview.images && xp.preview.images[0] && xp.preview.images[0].source);
       const src = source && source.url ? source.url : d.url;
       // Reserve the real aspect ratio up front (see the gallery case above for
       // why) — only meaningful when source.url is what's actually used, since
@@ -230,8 +246,10 @@
   // Coarse post type for the post-type filter (image / video / text / link).
   function postType(d) {
     if (d.is_self) return "text";
-    if (d.is_video || (d.media && d.media.reddit_video) || d.post_hint === "hosted:video" || d.post_hint === "rich:video") return "video";
-    if (d.is_gallery || d.post_hint === "image" || isImageUrl(d.url || "")) return "image";
+    const xp = (d.crosspost_parent_list && d.crosspost_parent_list[0]) || null;
+    if (d.is_video || (d.media && d.media.reddit_video) || (xp && (xp.is_video || (xp.media && xp.media.reddit_video))) ||
+        d.post_hint === "hosted:video" || d.post_hint === "rich:video") return "video";
+    if (d.is_gallery || (xp && xp.is_gallery) || d.post_hint === "image" || (xp && xp.post_hint === "image") || isImageUrl(d.url || "")) return "image";
     return "link";
   }
 
