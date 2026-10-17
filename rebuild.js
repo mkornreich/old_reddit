@@ -156,21 +156,46 @@
     return null;
   }
 
+  // Old reddit's self-text box: .usertext > .usertext-body > .md (".link .usertext .md"
+  // gives it its padding). Reddit's own selftext_html — and ours — already comes
+  // wrapped in a .md div, so don't nest a second one.
+  function selfTextBox(html, extraClass) {
+    const md = /^\s*(?:<!--[\s\S]*?-->\s*)*<div class="md">/.test(html) ? html : `<div class="md">${html}</div>`;
+    return `<div class="expando-container${extraClass ? " " + extraClass : ""}"><div class="usertext"><div class="usertext-body">${md}</div></div></div>`;
+  }
+
   // Determine a post's expandable inline content, or null. Returns { type, html }
   // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
   function postExpando(d) {
+    const ex = postExpandoContent(d);
+    // A post can carry its own body text AND media — new Reddit allows text on an
+    // image, gallery, video or link post, and the text is often what the comments
+    // reply to. Show it under the media rather than dropping it (it used to vanish
+    // whenever a post had media).
+    if (ex && !ex.hasText && !d.is_self && !d.orr_app && d.selftext_html) {
+      return {
+        type: ex.type,
+        hasText: true,
+        html: ex.html + selfTextBox(d.selftext_html, "orr-post-text"),
+      };
+    }
+    return ex;
+  }
+
+  // The post's inline content: its media, or (when it has none) its text.
+  function postExpandoContent(d) {
     if (d.orr_app) {
       // An interactive Devvit app post (game, poll, live thread…) only runs on Reddit itself.
       const href = String(d.permalink || "").replace(/\/+$/, "") + "/#orr-native";
       return {
         type: "selftext",
-        html: `<div class="expando-container"><div class="usertext-body"><div class="md"><p>This post is an interactive Reddit app, which only runs on Reddit itself. ` +
-          `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open it on Reddit &#8599;</a></p></div></div></div>`,
+        html: selfTextBox(`<p>This post is an interactive Reddit app, which only runs on Reddit itself. ` +
+          `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open it on Reddit &#8599;</a></p>`),
       };
     }
     if (d.is_self) {
       return d.selftext_html
-        ? { type: "selftext", html: `<div class="expando-container"><div class="usertext-body"><div class="md">${d.selftext_html}</div></div></div>` }
+        ? { type: "selftext", html: selfTextBox(d.selftext_html) }
         : null;
     }
     // A crosspost carries its media (reddit_video / gallery / preview) on the
@@ -253,7 +278,7 @@
     // No media: show body text — a link post's own (new Reddit allows both), or a
     // crossposted text post's original.
     const text = d.selftext_html || (xp && xp.selftext_html);
-    if (text) return { type: "selftext", html: `<div class="expando-container"><div class="usertext-body"><div class="md">${text}</div></div></div>` };
+    if (text) return { type: "selftext", hasText: true, html: selfTextBox(text) };
     return null;
   }
 
@@ -4006,9 +4031,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
     const ownBody = el.querySelector(`[id="${fullname}-post-rtjson-content"]`);
     const body = ownBody || el.querySelector("shreddit-post-text-body [property='schema:articleBody']");
-    const bodyHtml = body ? '<div class="md">' + cleanMd(body) + "</div>" : "";
-    if (body && (d.is_self || ownBody)) d.selftext_html = bodyHtml; // (a link post can carry body text too)
-    else if (body && type === "crosspost") d.crosspost_parent_list = [{ is_self: true, selftext_html: bodyHtml }]; // the original's text
+    const cleaned = body ? cleanMd(body) : "";
+    // Listing feeds sometimes send a text+image post's body empty (its figure left out):
+    // treat that as no body, like old reddit's empty self post, rather than an empty expando.
+    const hasBody = /<img\b/i.test(cleaned) || cleaned.replace(/<[^>]*>|&nbsp;|\s/g, "") !== "";
+    const bodyHtml = hasBody ? '<div class="md">' + cleaned + "</div>" : "";
+    if (hasBody && (d.is_self || ownBody)) d.selftext_html = bodyHtml; // (a link post can carry body text too)
+    else if (hasBody && type === "crosspost") d.crosspost_parent_list = [{ is_self: true, selftext_html: bodyHtml }]; // the original's text
     return d;
   }
 

@@ -37,7 +37,10 @@ for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(
       first: posts[0] && { title: posts[0].title.slice(0, 50), score: posts[0].score, n: posts[0].num_comments, created: posts[0].created_utc, self: posts[0].is_self, hint: posts[0].post_hint || "", gallery: !!posts[0].is_gallery, video: !!posts[0].is_video, flair: posts[0].link_flair_text || "", thumb: (posts[0].thumbnail || "").slice(0, 60), selftext: (posts[0].selftext_html || "").slice(0, 80) },
       types: posts.reduce((a, p) => { const k = p.is_gallery ? "gallery" : p.is_video ? "video" : p.post_hint === "image" ? "image" : p.is_self ? "text" : "link"; a[k] = (a[k] || 0) + 1; return a; }, {}),
       badDates: posts.filter((p) => !(p.created_utc > 1.6e9)).length,
-      multiNoBody: Array.from(doc.querySelectorAll("shreddit-post[post-type='multi_media']")).map(R.postFromShreddit).filter((p) => !p.is_self || !p.selftext_html).length,
+      multiNoBody: Array.from(doc.querySelectorAll("shreddit-post[post-type='multi_media']")).map(R.postFromShreddit).filter((p) => !p.is_self || (!p.selftext_html && (() => { const b = doc.getElementById(p.name + "-post-rtjson-content"); return b && (b.textContent.trim() || b.querySelector("img")); })())).length,
+      emptyBodies: posts.filter((p) => p.selftext_html && !/<img\b/i.test(p.selftext_html) && !p.selftext_html.replace(/<[^>]*>|&nbsp;|\s/g, "")).length,
+      mediaTextDropped: posts.filter((p) => !p.is_self && p.selftext_html && (() => { const ex = R.postExpando(p); return !ex || !/class="md"/.test(ex.html); })()).length,
+      mediaWithText: posts.filter((p) => !p.is_self && p.selftext_html).length,
       awardImages: posts.filter((p) => p.preview && /snoovatar|snoo_assets/.test(JSON.stringify(p.preview))).length,
       t1, more, orphans, maxDepth,
       bodySample: html0.slice(0, 120),
@@ -54,6 +57,8 @@ for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(
   check("builders accept parsed data", r.itemOk === true && r.builtOk === true, r.itemOk + "/" + r.builtOk);
   check("comment bodies sanitized", !r.bodyUnsafe);
   check("multi_media posts are self posts with their body", r.multiNoBody === 0);
+  check("no empty post body (no empty expando)", r.emptyBodies === 0, "empty=" + r.emptyBodies);
+  check("a media post's own text is shown with its media", r.mediaTextDropped === 0, r.mediaWithText + " media post(s) with text");
 }
 const sanit = await page.evaluate(() => {
   const R = globalThis.ORR_REBUILD;

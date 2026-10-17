@@ -51,7 +51,8 @@ the `env -u` above does the same. New scripts should import it too.
 | `firefox-page.mjs <ext> <out> <url>` | Firefox (temporary add-on): what one page's post media actually rendered and whether each image/video loaded, plus a screenshot. |
 | `inspect-css.mjs <ext> <url> <selector>` | Lists every stylesheet in the rebuilt page and the rules that style one element. |
 | `css-timeline.mjs <ext> <out> <url>…` | Samples the page's `<style>`/`<link>` elements over time. This found new Reddit's CSS leaking in after the body swap. |
-| `offline.mjs <repo> <saved.html>…` | Runs the parsers exposed on `ORR_REBUILD` against saved HTML with no network: post types, dates, comment-tree integrity, sanitiser (spoilers, screen-reader text), packaged-MP4 video, and, by fixture file name, right-rail sidebars (`*right_rail*`) and stickies (`_r_<sub>_.html`). Exits non-zero on failure. |
+| `offline.mjs <repo> <saved.html>…` | Runs the parsers exposed on `ORR_REBUILD` against saved HTML with no network: post types, dates, comment-tree integrity, sanitiser (spoilers, screen-reader text), packaged-MP4 video, and, by fixture file name, right-rail sidebars (`*right_rail*`) and stickies (`_r_<sub>_.html`). Exits non-zero on failure. Also checks that a post with both media and its own text shows both, and that no post gets an empty body. |
+| `lab-post.mjs <repo> <saved.html>` | Offline: runs a saved page's first `<shreddit-post>` through `postFromShreddit` + `postExpando` and prints what the post would show (type, body text, whether the expando has an image and/or text). |
 
 ## Probes (no extension, raw Reddit behaviour)
 
@@ -72,6 +73,8 @@ the `env -u` above does the same. New scripts should import it too.
 | `probe14.mjs [user]` | Profile feed paging (`after=base64(fullname)`) and sorting. Sorting is a query parameter (`&sort=top&t=all`); the path segment is ignored. |
 | `probe15.mjs` | Front-page feeds logged out: `home-feed` ignores `sort`/`t` (every sort is the same 0.8–91 h mix); `popular-feed` honours them (new = 0 h, top/hour 0.4–1 h, controversial ratio ≈ 0.5). |
 | `probe16.mjs <permalink>` | Follows a thread's top-level "more comments" chain to the end and counts comments by depth. Shows where Reddit's own chain stops, e.g. r/Salary: 15 + 8 + 48 top-level. |
+| `probe17.mjs` | Multi_media (text + inline image) posts in subreddit listing feeds: body text, images in the body, `<object>` embeds (links), media-slot images. Listing feeds can send such a post's body empty, with no image anywhere; only the thread page has the figure. |
+| `feed-one.mjs <sub> <t3_id> [<out>]` | Walks a subreddit's logged-out listing feed (hot/new/top, a few pages each) to find one post and saves its card as `card-<id>.html`, for `offline.mjs` / `lab-post.mjs`. |
 | `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). `ACCEPT_PARTIAL=1` requests Reddit's partial rendering, like the extension does. |
 
 Saved HTML and screenshots are Reddit content and test output, so they're gitignored.
