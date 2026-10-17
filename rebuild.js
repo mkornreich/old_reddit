@@ -384,13 +384,23 @@
     ["controversial", "controversial"],
     ["top", "top"],
   ];
+  // Reddit only offers "best" for the front page, where it's the default (bare "/").
+  const FRONT_TABS = [["best", ""], ["hot", "hot"]].concat(TABS.slice(1));
+  const TAB_TITLES = {
+    best: "New Reddit's default: popular posts with the most engagement",
+    hot: "Old Reddit's classic default: posts getting lots of upvotes right now, favoring newer ones",
+    new: "Newest posts first",
+    rising: "New posts that are quickly gaining upvotes and comments",
+    controversial: "Posts with a close split of upvotes and downvotes",
+    top: "Most upvoted posts in the chosen time range",
+  };
 
   function tabmenuHtml(route) {
     const base = route.homeBase != null ? route.homeBase : (route.scope === "front" ? "" : "/r/" + route.sub);
-    const lis = TABS.map(([name, seg]) => {
+    const lis = (route.scope === "front" || route.bestTab ? FRONT_TABS : TABS).map(([name, seg]) => {
       const href = base + "/" + (seg ? seg + "/" : "");
       const sel = route.sort === name ? " selected" : "";
-      return `<li class="${sel}"><a class="choice" href="${href}">${name}</a></li>`;
+      return `<li class="${sel}"><a class="choice" href="${href}" title="${TAB_TITLES[name]}">${name}</a></li>`;
     }).join("");
     return `<ul class="tabmenu">${lis}</ul>`;
   }
@@ -4082,15 +4092,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   // The HTML partial new Reddit pages listings through, or null where there's no
-  // logged-out equivalent (r/all, multireddits, combined r/a+b) — those stay native.
+  // logged-out equivalent (multireddits, combined r/a+b) — those stay native.
+  // Logged out, new Reddit's own front page (and r/all, which Reddit redirects
+  // there) loads popular-feed. home-feed ignores sort and t, so every tab showed
+  // the same multi-day "best" mix.
   function htmlListingPath(route, params, after) {
     const sort = route.sort || "hot";
     const bucket = sort === "top" || sort === "controversial" ? windowBucket(params) || params.t || "" : "";
     const sub = route.scope === "sub" ? String(route.sub || "") : "";
     const q = new URLSearchParams();
     let base;
-    if (route.scope === "front" || sub.toLowerCase() === "popular") {
-      base = "/svc/shreddit/feeds/" + (route.scope === "front" ? "home-feed" : "popular-feed") + "?";
+    if (route.scope === "front" || /^(popular|all)$/i.test(sub)) {
+      base = "/svc/shreddit/feeds/popular-feed?";
       q.set("sort", sort.toUpperCase());
       if (after) { q.set("after", btoa(after)); q.set("cursor", btoa(after)); }
     } else if (route.scope === "sub" && !route.combined && /^[A-Za-z0-9_]+$/.test(sub) && sub.toLowerCase() !== "all") {
@@ -4105,6 +4118,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   async function fetchListingHtml(route, params) {
+    // Logged out, r/all is Reddit's front feed (Reddit redirects it to "/"), which
+    // has "best": offer that tab there too, and make it the default like on the
+    // front page. Logged in, the .json API has no r/all "best", so this only
+    // happens here. (Sets it on the route the caller renders with.)
+    if (route.scope === "sub" && /^all$/i.test(route.sub || "")) {
+      route.bestTab = true;
+      if (route.basePath === route.homeBase && !params.after) {
+        route.sort = "best";
+        route.basePath = route.homeBase + "/best";
+      }
+    }
     const first = htmlListingPath(route, params, params.after);
     if (!first) {
       const err = new Error("no logged-out listing source");
@@ -4117,7 +4141,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // Stickies aren't in the feed partial — only on the subreddit page itself, as
     // "community highlight" cards. Old reddit shows them atop the first hot page,
     // so fetch that page alongside (best-effort: no stickies if it fails).
-    const stickiesP = route.scope === "sub" && (route.sort || "hot") === "hot" && !params.after
+    const stickiesP = route.scope === "sub" && (route.sort || "hot") === "hot" && !params.after && !/^all$/i.test(route.sub)
       ? fetchHtmlDoc("/r/" + encodeURIComponent(route.sub) + "/").then(stickiesFromHtml).catch(() => [])
       : Promise.resolve([]);
     const posts = [];
@@ -5542,6 +5566,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } catch (e) {
       /* keep defaults */
     }
+    // Tracking off → keep no recent-sub list at all (one collected earlier would
+    // otherwise linger in storage and in settings exports).
+    if (!trackRecentSubsOn && (dataCache.recentSubs || []).length) {
+      dataCache.recentSubs = [];
+      ORR.setPrefs({ recentSubs: [] });
+    }
     const _ui = dataCache.ui || {};
     videoSpeed = typeof _ui.videoSpeed === "number" ? _ui.videoSpeed : 1;
     videoVolume = typeof _ui.videoVolume === "number" ? _ui.videoVolume : null;
@@ -5616,7 +5646,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           applyFilters(document); // hideRead / re-filter
           if (changes.expandImages) { expandImagesOn = p.expandImages === true; expandImagesPass(); }
           if (changes.foldReadComments) { foldReadCommentsOn = p.foldReadComments === true; if (foldReadCommentsOn) applyReadFolding(); else unfoldReadComments(); }
-          if (changes.trackRecentSubs) patchSrBar();
+          if (changes.trackRecentSubs) {
+            if (!trackRecentSubsOn) dataCache.recentSubs = [];
+            patchSrBar();
+          }
           // Turning autoplay on only started observing posts rendered AFTER that
           // point (e.g. the next infinite-scroll batch) — sweep what's already
           // on the page too, instead of waiting for more to load in.

@@ -57,7 +57,12 @@
   if (enabledEl) enabledEl.addEventListener("change", () => update({ enabled: enabledEl.checked }));
   Object.keys(TOGGLES).forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.addEventListener("change", () => update({ [TOGGLES[id]]: el.checked }));
+    if (el) el.addEventListener("change", () => {
+      const patch = { [TOGGLES[id]]: el.checked };
+      // turning recent-sub tracking off also forgets the list already collected
+      if (id === "trackRecentSubs" && !el.checked) patch.recentSubs = [];
+      update(patch);
+    });
   });
 
   // ---- filters (options page) ----

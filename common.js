@@ -115,7 +115,8 @@
     const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
     const segs = pathname.split("/").filter(Boolean);
 
-    if (segs.length === 0) return { scope: "front", sub: null, sort: "hot", basePath: "", homeBase: "" };
+    // "best" is the front page's default, like Reddit's own (old Reddit too, since 2018).
+    if (segs.length === 0) return { scope: "front", sub: null, sort: "best", basePath: "/best", homeBase: "" };
     if (segs.length === 1 && SORTS_FRONT.includes(segs[0]))
       return { scope: "front", sub: null, sort: segs[0], basePath: "/" + segs[0], homeBase: "" };
     // custom multireddit: /user/{owner}/m/{name}[/{sort}]  (or /u/ alias)
@@ -128,7 +129,8 @@
     }
     if (segs[0] === "r" && segs.length === 2)
       return { scope: "sub", sub: segs[1], sort: "hot", basePath: "/r/" + segs[1], homeBase: "/r/" + segs[1], combined: segs[1].indexOf("+") >= 0 };
-    if (segs[0] === "r" && segs.length === 3 && SORTS_SUB.includes(segs[2]))
+    // r/all/best: logged out, "all" is Reddit's front feed, which has "best" (see rebuild.js fetchListingHtml)
+    if (segs[0] === "r" && segs.length === 3 && (SORTS_SUB.includes(segs[2]) || (segs[2] === "best" && segs[1].toLowerCase() === "all")))
       return { scope: "sub", sub: segs[1], sort: segs[2], basePath: "/r/" + segs[1] + "/" + segs[2], homeBase: "/r/" + segs[1], combined: segs[1].indexOf("+") >= 0 };
     return null; // user pages, search, etc.
   }
