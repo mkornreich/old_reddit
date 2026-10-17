@@ -114,6 +114,54 @@ for (const f of files) {
     check("video uses packaged MP4 (≤720p, no dash)", v.every((x) => /^https:\/\/packaged-media\.redd\.it\//.test(x.url) && x.h <= 720 && x.type === "video" && !x.dash));
   }
 }
+// Logged-in markup + the comment editor's live markdown preview (issues #1/#11)
+const li = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const mdCases = [
+    "**bold** *it* ~~del~~ super^script ^(two words) >!secret!< `a<b>`",
+    "[ok](https://e.com/?a=1&b=2) [rel](/r/pics) [bad](javascript:alert(1)) [bad2](data:text/html,x) r/pics u/spez https://x.com/y.",
+    "<script>alert(1)</script> <img src=x onerror=alert(1)> \" onmouseover=\"x &amp; &lt;b&gt;",
+    "> quote **q**\n\n* one\n* two\n  * nested\n\n1. a\n2. b",
+    "# H\n\n---\n\n    code <b>\n\n```\nfence <i>\n```",
+    "| a | b |\n|:--|--:|\n| 1 | **2** |",
+    "[x](https://e.com\" onclick=\"alert(1))  [y](javascript&#58;alert(1)) [z](  JaVaScRiPt:alert(1))",
+  ];
+  const ALLOWED = /^(P|BR|HR|A|EM|STRONG|DEL|SUP|CODE|PRE|BLOCKQUOTE|UL|OL|LI|H[1-6]|TABLE|THEAD|TBODY|TR|TH|TD|SPAN)$/;
+  const out = mdCases.map((c) => R.mdPreview(c));
+  const unsafe = out.filter((h) => {
+    const d = new DOMParser().parseFromString("<div>" + h + "</div>", "text/html");
+    return Array.from(d.body.querySelectorAll("*")).slice(1).some((el) =>
+      !ALLOWED.test(el.tagName) ||
+      Array.from(el.attributes).some((a) => /^on/i.test(a.name) || a.name === "style" || a.name === "src") ||
+      (el.tagName === "A" && !/^(https?:\/\/|\/(?!\/))/i.test(el.getAttribute("href") || "")));
+  });
+  const item = (d) => R.buildItem(Object.assign({ name: "t3_a", id: "a", title: "t", author: "x", subreddit: "s", score: 10, num_comments: 1, created_utc: 1.7e9, permalink: "/r/s/comments/a/t/", url: "/r/s/comments/a/t/", is_self: true }, d), {});
+  const comment = (d) => R.buildComment(Object.assign({ name: "t1_c", author: "y", score: 5, created_utc: 1.7e9, body_html: "<div class=\"md\"><p>hi</p></div>", permalink: "/r/s/comments/a/t/c/", subreddit: "s" }, d), {});
+  const msg = R.buildMessage({ name: "t1_m", was_comment: true, new: true, type: "comment_reply", author: "z", subreddit: "s", link_title: "T", context: "/r/s/comments/a/t/m/?context=3", body_html: "<div class=\"md\"><p>r</p></div>", created_utc: 1.7e9, num_comments: 4, score: 2 }, {});
+  const page = R.buildMessagesPage({ where: "unread", basePath: "/message/unread" }, { data: { children: [] } }, {});
+  return {
+    md: out, unsafe: unsafe.length,
+    nested: /<ul><li>one<\/li><li>two<ul><li>nested<\/li><\/ul><\/li><\/ul>/.test(out[3]),
+    upvoted: /class="midcol likes"[^]*class="arrow upmod"/.test(item({ likes: true })) && /class="entry likes"/.test(item({ likes: true })),
+    downvoted: /class="arrow downmod"/.test(comment({ likes: false })) && /class="score dislikes"/.test(comment({ likes: false })),
+    unvoted: /class="midcol unvoted"/.test(item({ likes: null })) && !/login-required/.test(item({})),
+    savedHidden: />unsave</.test(item({ saved: true })) && />unhide</.test(item({ hidden: true })) && />save</.test(item({})),
+    lockedNoReply: !/orr-reply/.test(comment({ locked: true })) && /orr-reply/.test(comment({})),
+    linkNoEdit: !/orr-edit/.test(item({ is_self: false })) && /orr-edit/.test(item({ is_self: true })),
+    archivedPage: /archived post/.test(R.buildCommentsBody([{ data: { children: [{ kind: "t3", data: { name: "t3_a", title: "t", archived: true, subreddit: "s", permalink: "/r/s/comments/a/t/" } }] } }, { data: { children: [] } }]).inner),
+    topForm: /orr-topform/.test(R.buildCommentsBody([{ data: { children: [{ kind: "t3", data: { name: "t3_a", title: "t", subreddit: "s", permalink: "/r/s/comments/a/t/" } }] } }, { data: { children: [] } }]).inner),
+    ownTabs: /saved/.test(R.userTabmenuHtml({ name: "Me", section: "overview" }, "me")) && !/saved/.test(R.userTabmenuHtml({ name: "other", section: "overview" }, "me")),
+    sidebarJoin: /subscribe-button[^]*option add active/.test(R.buildSidebar({ data: { name: "t5_x", display_name: "s", subscribers: 3, user_is_subscriber: false } }, null)) &&
+      /option remove active/.test(R.buildSidebar({ data: { name: "t5_x", display_name: "s", subscribers: 3, user_is_subscriber: true } }, null)),
+    message: /thing message new was-comment/.test(msg) && /href="\/r\/s\/comments\/a\/t\/m\/\?context=3"/.test(msg) && /full comments \(4\)/.test(msg) && />mark read</.test(msg) && /orr-msg-reply/.test(msg),
+    msgPage: /tabmenu[^]*class="selected"><a class="choice" href="\/message\/unread\/">unread/.test(page.inner),
+  };
+});
+li.md.forEach((h, i) => console.log("md" + i + ": " + h));
+check("markdown preview never emits handlers / script URLs / unknown tags", li.unsafe === 0, "unsafe=" + li.unsafe);
+check("markdown preview: nested list", li.nested);
+["upvoted", "downvoted", "unvoted", "savedHidden", "lockedNoReply", "linkNoEdit", "archivedPage", "topForm", "ownTabs", "sidebarJoin", "message", "msgPage"]
+  .forEach((k) => check("logged-in markup: " + k, li[k] === true));
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");

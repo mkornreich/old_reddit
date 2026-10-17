@@ -331,6 +331,46 @@
     return a === "[deleted]" ? "<span>[deleted]</span>" : `<a href="/user/${esc(a)}" class="author may-blank">${esc(a)}</a>`;
   }
 
+  // ---------- your account in the markup (testable) ---------------------
+  // Logged in, the JSON carries your vote (`likes`: true / false / null), whether
+  // you saved or hid a post, and whether it's archived or locked. Old reddit shows
+  // a vote as likes / dislikes / unvoted classes on the midcol, entry and score,
+  // and upmod / downmod arrows.
+  function voteState(d) {
+    return d && d.likes === true ? "likes" : d && d.likes === false ? "dislikes" : "unvoted";
+  }
+  function accountDataAttrs(d) {
+    return (d.saved ? ' data-saved="true"' : "") + (d.hidden ? ' data-hidden="true"' : "") +
+      (d.archived ? ' data-archived="true"' : "") + (d.locked ? ' data-locked="true"' : "");
+  }
+  // The vote arrows (and, for posts, the score between them). Clickable for
+  // everyone, like old reddit's: logged out they nudge you to log in.
+  function midcolHtml(d, scoreHtml) {
+    const vs = voteState(d);
+    return (
+      `<div class="midcol ${vs}">` +
+      `<div class="arrow ${vs === "likes" ? "upmod" : "up"}" role="button" tabindex="0" aria-label="upvote" aria-pressed="${vs === "likes"}"></div>` +
+      (scoreHtml || "") +
+      `<div class="arrow ${vs === "dislikes" ? "downmod" : "down"}" role="button" tabindex="0" aria-label="downvote" aria-pressed="${vs === "dislikes"}"></div>` +
+      `</div>`
+    );
+  }
+  // The buttons that act on your account, after a thing's own ones: save, hide (posts),
+  // edit / delete (your own), report (others'), reply (comments). They're rendered for
+  // everyone but CSS shows them only when you're logged in (html.orr-logged-in) and
+  // edit / delete only on your own things (.orr-mine) — the first render can come
+  // before /api/me.json answers. kind: "link" | "comment".
+  function actionButtonsHtml(d, kind) {
+    const a = (cls, label) => `<a href="javascript:void(0)" class="${cls}" role="button">${label}</a>`;
+    let h = `<li class="orr-li-only orr-save-li">${a("orr-save", d.saved ? "unsave" : "save")}</li>`;
+    if (kind === "link") h += `<li class="orr-li-only orr-hide-li">${a("orr-hide", d.hidden ? "unhide" : "hide")}</li>`;
+    if (kind !== "link" || d.is_self) h += `<li class="orr-own-only">${a("orr-edit", "edit")}</li>`;
+    h += `<li class="orr-own-only">${a("orr-delete", "delete")}</li>`;
+    h += `<li class="orr-li-only orr-not-own">${a("orr-report", "report")}</li>`;
+    if (kind === "comment" && !d.locked && !d.archived) h += `<li class="orr-li-only orr-reply-li">${a("orr-reply", "reply")}</li>`;
+    return h;
+  }
+
   function buildItem(d, opts) {
     opts = opts || {};
     const permalink = d.permalink || "/comments/" + (d.id || "");
@@ -359,6 +399,7 @@
     const flairHtml = flairSpan("linkflairlabel", d.link_flair_text, d.link_flair_richtext, d.link_flair_background_color, d.link_flair_text_color);
     const spoilerTag = d.spoiler ? ` <span class="linkflairlabel" style="background:#000;color:#fff">spoiler</span>` : "";
     const nsfwTag = d.over_18 ? ` <span class="linkflairlabel" style="background:#c00;color:#fff">NSFW</span>` : "";
+    const vs = voteState(d);
 
     return (
       `<div class="thing id-${esc(d.name)} ${oddeven} ${nsfw}${d.stickied ? " stickied" : ""} link" id="thing_${esc(d.name)}"` +
@@ -367,15 +408,12 @@
       ` data-flair="${esc(flairText)}" data-score="${esc(typeof d.score === "number" ? d.score : "")}" data-created="${esc(d.created_utc || 0)}"` +
       ` data-promoted="${d.promoted || d.is_created_from_ads_ui ? "true" : "false"}"` +
       ` data-comments="${esc(d.num_comments || 0)}"` +
+      accountDataAttrs(d) +
       ` data-ptype="${postType(d)}" data-crosspost="${d.crosspost_parent || (d.crosspost_parent_list && d.crosspost_parent_list.length) ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
-      `<div class="midcol unvoted">` +
-      `<div class="arrow up login-required" aria-hidden="true"></div>` +
-      `<div class="score unvoted" title="${esc(d.score)}">${score}</div>` +
-      `<div class="arrow down login-required" aria-hidden="true"></div>` +
-      `</div>` +
+      midcolHtml(d, `<div class="score ${vs}" title="${esc(d.score)}">${score}</div>`) +
       thumbnailHtml(d, permalink) +
-      `<div class="entry unvoted">` +
+      `<div class="entry ${vs}">` +
       expBtn +
       `<div class="top-matter">` +
       `<p class="title">` +
@@ -395,6 +433,7 @@
       `<ul class="flat-list buttons">` +
       `<li class="first"><a href="${esc(permalink)}" class="bylink comments may-blank">${comments}</a></li>` +
       `<li class="share"><a class="post-sharing-button" href="${esc(permalink)}">share</a></li>` +
+      actionButtonsHtml(d, "link") +
       `</ul>` +
       `</div>` +
       expando +
@@ -594,6 +633,12 @@
 
     let html = '<div class="spacer"><div class="titlebox">';
     html += `<h1 class="redditname"><a class="hover" href="/r/${esc(dn)}/">${esc(name)}</a></h1>`;
+    // old reddit's join / leave toggle (shown when logged in; the runtime POSTs /api/subscribe)
+    const subbed = !!d.user_is_subscriber;
+    if (d.name)
+      html += `<span class="fancy-toggle-button subscribe-button toggle orr-li-only" data-sr="${esc(d.name)}" data-subscribers="${esc(d.subscribers || 0)}">` +
+        `<a class="option add${subbed ? "" : " active"}" href="javascript:void(0)" role="button">join</a>` +
+        `<a class="option remove${subbed ? " active" : ""}" href="javascript:void(0)" role="button">leave</a></span>`;
     html += `<div class="subscribers"><span class="number">${formatNumber(d.subscribers)}</span> <span class="word">readers</span></div>`;
     const online = d.active_user_count != null ? d.active_user_count : d.accounts_active;
     if (online != null)
@@ -657,6 +702,270 @@
     return html;
   }
 
+  // ---------- comment editor + live preview (testable) ------------------
+  // Old reddit's comment box (.usertext-edit + .bottom-area) with RES's live preview
+  // and "big editor". kind: "top" (new top-level comment), "reply", "edit" or "message"
+  // (a reply in the inbox); thing: the fullname it replies to / edits. The runtime sets
+  // the textarea's text — it never goes through this HTML.
+  function editorHtml(kind, thing) {
+    const label = kind === "edit" ? "edit" : kind === "top" ? "write a comment" : "reply";
+    return (
+      `<form class="usertext orr-editor" data-kind="${esc(kind)}" data-thing="${esc(thing)}" action="#">` +
+      `<div class="usertext-edit md-container">` +
+      `<div class="md"><textarea rows="1" cols="1" name="text" aria-label="${label}"></textarea></div>` +
+      `<div class="bottom-area">` +
+      `<span class="help-toggle toggle"><a href="javascript:void(0)" class="orr-ed-help" role="button" aria-expanded="false">formatting help</a></span>` +
+      `<a href="javascript:void(0)" class="reddiquette orr-ed-big" role="button" title="a bigger editor with the preview beside it">big editor</a>` +
+      `<div class="usertext-buttons">` +
+      `<button type="submit" class="save">save</button> ` +
+      `<button type="button" class="cancel">cancel</button> ` +
+      `<span class="status" role="status" aria-live="polite"></span>` +
+      `</div></div>` +
+      `<div class="orr-ed-preview-box" hidden><div class="orr-ed-label">preview</div><div class="orr-ed-preview md"></div></div>` +
+      `</div></form>`
+    );
+  }
+  // Old reddit's "formatting help" table (static).
+  const MARKHELP_HTML =
+    `<div class="markhelp orr-markhelp"><table><tbody>` +
+    `<tr style="background-color:#ffff99;text-align:center"><td><em>you type:</em></td><td><em>you see:</em></td></tr>` +
+    [
+      ["*italics*", "<em>italics</em>"],
+      ["**bold**", "<b>bold</b>"],
+      ["[reddit!](https://reddit.com)", '<a href="https://reddit.com" target="_blank" rel="noopener">reddit!</a>'],
+      ["* item 1<br>* item 2<br>* item 3", "<ul><li>item 1</li><li>item 2</li><li>item 3</li></ul>"],
+      ["&gt; quoted text", "<blockquote>quoted text</blockquote>"],
+      ["Lines starting with four spaces<br>are treated like code:<br><br><span class=\"spaces\">&nbsp;&nbsp;&nbsp;&nbsp;</span>if 1 * 2 &lt; 3:<br><span class=\"spaces\">&nbsp;&nbsp;&nbsp;&nbsp;</span>print \"hello, world!\"",
+        "Lines starting with four spaces<br>are treated like code:<pre>if 1 * 2 &lt; 3:\n    print \"hello, world!\"</pre>"],
+      ["~~strikethrough~~", "<del>strikethrough</del>"],
+      ["super^script", "super<sup>script</sup>"],
+      ["&gt;!spoiler!&lt;", '<span class="md-spoiler-text revealed">spoiler</span>'],
+      ["`inline code`", "<code>inline code</code>"],
+    ].map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+
+  // A live preview of Reddit markdown while you type (Reddit renders the real thing
+  // once it's posted). Covers what comments mostly use: paragraphs, emphasis,
+  // strikethrough, superscript, spoilers, code, links, r/ and u/ links, quotes,
+  // lists, headings, rules and tables. Text is escaped before any markup is added,
+  // and links must be http(s) or on reddit, so a preview can't inject anything.
+  function mdPreview(src) {
+    const lines = String(src == null ? "" : src).replace(/\u0000/g, "").replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
+    return mdBlocks(lines, 0);
+  }
+  const MD_LIST_ITEM = /^( {0,3})([*+-]|\d{1,9}[.)])\s+(.*)$/;
+  function mdBlocks(lines, depth) {
+    if (depth > 6) return "<p>" + mdInline(lines.join("\n")) + "</p>";
+    let out = "", para = [], i = 0;
+    const flush = () => { if (para.length) { out += "<p>" + mdInline(para.join("\n")) + "</p>"; para = []; } };
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) { flush(); i++; continue; }
+      let m = /^ {0,3}(```|~~~)/.exec(line);
+      if (m) { // fenced code
+        flush();
+        const code = [];
+        i++;
+        while (i < lines.length && lines[i].trim().indexOf(m[1]) !== 0) code.push(lines[i++]);
+        i++;
+        out += "<pre><code>" + esc(code.join("\n")) + "</code></pre>";
+        continue;
+      }
+      if (!para.length && /^ {4}/.test(line)) { // indented code
+        const code = [];
+        while (i < lines.length && (/^ {4}/.test(lines[i]) || !lines[i].trim())) code.push(lines[i++].slice(4));
+        while (code.length && !code[code.length - 1].trim()) code.pop();
+        out += "<pre><code>" + esc(code.join("\n")) + "</code></pre>";
+        continue;
+      }
+      if (/^ {0,3}([-*_])( *\1){2,} *$/.test(line)) { flush(); out += "<hr>"; i++; continue; }
+      m = /^ {0,3}(#{1,6})\s*(.*?)\s*#*\s*$/.exec(line);
+      if (m && m[2]) { flush(); out += `<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`; i++; continue; }
+      if (/^ {0,3}>(?!!)/.test(line)) { // quote (">!" at a line start is a spoiler)
+        flush();
+        const q = [];
+        while (i < lines.length && /^ {0,3}>(?!!)/.test(lines[i])) q.push(lines[i++].replace(/^ {0,3}> ?/, ""));
+        out += "<blockquote>" + mdBlocks(q, depth + 1) + "</blockquote>";
+        continue;
+      }
+      m = MD_LIST_ITEM.exec(line);
+      if (m) {
+        flush();
+        const ordered = /\d/.test(m[2]);
+        const indent = m[1].length; // deeper-indented items belong to a nested list
+        const sibling = (im) => im && im[1].length <= indent + 1 && /\d/.test(im[2]) === ordered;
+        const items = [];
+        let cur = null, loose = false;
+        while (i < lines.length) {
+          const l = lines[i];
+          const im = MD_LIST_ITEM.exec(l);
+          if (sibling(im)) { cur = [im[3]]; items.push(cur); i++; continue; }
+          if (!l.trim()) { // a blank line ends the list unless more of it follows
+            const nx = lines[i + 1];
+            if (nx !== undefined && (new RegExp("^ {" + (indent + 2) + ",}\\S").test(nx) || sibling(MD_LIST_ITEM.exec(nx)))) { cur.push(""); loose = true; i++; continue; }
+            break;
+          }
+          if (im && im[1].length <= indent + 1) break; // the other kind of list
+          if (/^ {2,}/.test(l) || !/^ {0,3}(#|>|```|~~~)/.test(l)) { cur.push(l.replace(new RegExp("^ {1," + (indent + 4) + "}"), "")); i++; continue; }
+          break;
+        }
+        const tag = ordered ? "ol" : "ul";
+        out += `<${tag}>` + items.map((it) => {
+          const inner = mdBlocks(it, depth + 1);
+          return "<li>" + (loose ? inner : inner.replace(/^<p>([\s\S]*?)<\/p>/, "$1")) + "</li>";
+        }).join("") + `</${tag}>`;
+        continue;
+      }
+      const sep = lines[i + 1];
+      if (line.indexOf("|") >= 0 && sep !== undefined && sep.indexOf("-") >= 0 && /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/.test(sep)) {
+        flush(); // table: a header row, then |---|:---:|
+        const cells = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+        const aligns = cells(sep).map((c) => (/^:-+:$/.test(c) ? "center" : /-:$/.test(c) ? "right" : /^:-/.test(c) ? "left" : ""));
+        const al = (k) => (aligns[k] ? ` align="${aligns[k]}"` : "");
+        let t = "<table><thead><tr>" + cells(line).map((c, k) => `<th${al(k)}>${mdInline(c)}</th>`).join("") + "</tr></thead><tbody>";
+        i += 2;
+        while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") >= 0) {
+          t += "<tr>" + cells(lines[i]).map((c, k) => `<td${al(k)}>${mdInline(c)}</td>`).join("") + "</tr>";
+          i++;
+        }
+        out += t + "</tbody></table>";
+        continue;
+      }
+      para.push(line);
+      i++;
+    }
+    flush();
+    return out;
+  }
+  // A link target the preview may use: http(s), www., or a path on reddit
+  // ("/r/x", "r/x", "/u/x"). `u` arrives HTML-escaped.
+  function mdSafeHref(u) {
+    const raw = String(u).replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    if (/^https?:\/\/[^\s]/i.test(raw)) return raw;
+    if (/^www\./i.test(raw)) return "https://" + raw;
+    if (/^\/(?!\/)/.test(raw)) return raw;
+    if (/^(r|u|user)\//i.test(raw)) return "/" + raw;
+    return null;
+  }
+  function mdInline(text) {
+    const tokens = [];
+    const keep = (html) => "\u0000" + (tokens.push(html) - 1) + "\u0000";
+    let s = String(text);
+    s = s.replace(/\\([\\`*_{}[\]()#+\-.!>~^|<&])/g, (m, c) => keep(esc(c))); // backslash escapes
+    s = s.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (m, f, code) => keep("<code>" + esc(code.trim()) + "</code>"));
+    s = esc(s);
+    s = s.replace(/&amp;(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,31});/gi, "&$1;"); // entities the author typed
+    s = s.replace(/\[([^\]\n]+)\]\(\s*([^\s)]+)(?:\s+&quot;[^\n]*?&quot;)?\s*\)/g, (m, label, url) => {
+      const href = mdSafeHref(url);
+      return href ? keep(`<a href="${esc(href)}" target="_blank" rel="noopener nofollow">${mdEmph(label)}</a>`) : m;
+    });
+    s = s.replace(/(^|[\s(])((?:https?:\/\/|www\.)[^\s<\u0000]*[^\s<\u0000.,:;!?)'*_~])/gi, (m, pre, url) => {
+      const href = mdSafeHref(url);
+      return href ? pre + keep(`<a href="${esc(href)}" target="_blank" rel="noopener nofollow">${url}</a>`) : m;
+    });
+    s = s.replace(/(^|[^\w/\u0000])(\/?)((?:r|u)\/[A-Za-z0-9_][A-Za-z0-9_-]{1,20})(?![\w-])/g,
+      (m, pre, slash, path) => pre + keep(`<a href="/${path}">${slash}${path}</a>`));
+    s = mdEmph(s).replace(/ {2,}\n/g, "<br>");
+    for (let n = 0; n < 4 && s.indexOf("\u0000") >= 0; n++) s = s.replace(/\u0000(\d+)\u0000/g, (m, k) => tokens[+k] || "");
+    return s;
+  }
+  // Emphasis on already-escaped text (the tags added are fixed strings).
+  function mdEmph(s) {
+    return s
+      .replace(/&gt;!(?=\S)([\s\S]*?\S)!&lt;/g, '<span class="md-spoiler-text">$1</span>')
+      .replace(/~~(?=\S)([\s\S]*?\S)~~/g, "<del>$1</del>")
+      .replace(/(\*\*\*|___)(?=\S)([\s\S]*?\S)\1/g, "<strong><em>$2</em></strong>")
+      .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, "<strong>$2</strong>")
+      .replace(/\*(?=\S)([\s\S]*?\S)\*/g, "<em>$1</em>")
+      .replace(/(^|[^\w])_(?=\S)([\s\S]*?\S)_(?!\w)/g, "$1<em>$2</em>")
+      .replace(/\^\(([^)\n]*)\)/g, "<sup>$1</sup>")
+      .replace(/\^([^\s^(<\u0000]+)/g, "<sup>$1</sup>");
+  }
+
+  // ---------- inbox (testable) ------------------------------------------
+  // Old reddit's /message/ pages, from /message/<box>.json (logged in).
+  const MESSAGE_TABS = [["inbox", "all"], ["unread", "unread"], ["messages", "messages"], ["comments", "comment replies"],
+    ["selfreply", "post replies"], ["mentions", "username mentions"], ["sent", "sent"]];
+  function messageTabmenuHtml(where) {
+    return `<ul class="tabmenu">` + MESSAGE_TABS.map(([w, label]) =>
+      `<li class="${w === where ? "selected" : ""}"><a class="choice" href="/message/${w}/">${label}</a></li>`).join("") + `</ul>`;
+  }
+  // The post a comment-reply's context link points into (".../comments/<id>/<slug>/<comment>/?context=3").
+  function messagePostPath(context) {
+    const m = /^(\/r\/[^/]+\/comments\/[a-z0-9]+\/[^/?#]*\/?)/i.exec(String(context || ""));
+    return m ? m[1].replace(/\/?$/, "/") : "";
+  }
+  // One inbox item: a comment reply / mention (t1, was_comment) or a private message (t4,
+  // with its replies nested). opts.sent: the "sent" box (to <dest> instead of from <author>).
+  function buildMessage(d, opts) {
+    opts = opts || {};
+    const isComment = !!d.was_comment;
+    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
+    const bodyHtml = d.body_html ? d.body_html : d.body ? `<div class="md"><p>${esc(d.body)}</p></div>` : "";
+    const ctx = /^\/(?!\/)/.test(d.context || "") ? d.context : ""; // (always a path on reddit)
+    const postPath = isComment ? messagePostPath(ctx) : "";
+    const kind = { comment_reply: "comment reply", post_reply: "post reply", username_mention: "username mention" }[d.type] || d.subject || "";
+    const subject = isComment
+      ? `${esc(kind)} <a class="title" href="${esc(postPath || ctx)}">${esc(d.link_title || "")}</a>`
+      : esc(d.subject || "(no subject)");
+    const who = opts.sent
+      ? `to ${d.dest ? `<a href="/user/${esc(d.dest)}" class="author">${esc(d.dest)}</a>` : "[unknown]"}`
+      : `from ${authorHtml(d.author || "[deleted]")}`;
+    const via = d.subreddit ? ` via <a href="/r/${esc(d.subreddit)}/" class="subreddit">r/${esc(d.subreddit)}</a>` : "";
+    const a = (cls, label) => `<a href="javascript:void(0)" class="${cls}" role="button">${label}</a>`;
+    let buttons = "";
+    if (isComment) {
+      buttons += `<li class="first"><a href="${esc(ctx)}" class="bylink">context</a></li>`;
+      if (postPath) buttons += `<li><a href="${esc(postPath)}" class="bylink">full comments${d.num_comments != null ? ` (${esc(d.num_comments)})` : ""}</a></li>`;
+    }
+    if (!opts.sent) {
+      buttons += `<li class="${buttons ? "" : "first"}">${a("orr-markread", d.new ? "mark read" : "mark unread")}</li>`;
+      buttons += `<li>${a("orr-reply orr-msg-reply", "reply")}</li>`;
+    }
+    const kids = childrenOf(d.replies);
+    const childHtml = kids.map((c) => (c.data ? buildMessage(c.data, opts) : "")).join("");
+    const vs = voteState(d);
+    return (
+      `<div class="thing message${d.new ? " new" : ""}${isComment ? " was-comment" : ""} id-${esc(d.name)}" id="thing_${esc(d.name)}"` +
+      ` data-fullname="${esc(d.name)}" data-author="${esc(d.author || "")}" data-subreddit="${esc(d.subreddit || "")}"` +
+      `${d.new ? ' data-new="true"' : ""}${isComment && d.score != null ? ` data-score="${esc(d.score)}"` : ""}>` +
+      `<p class="subject">${subject}</p>` +
+      (isComment ? midcolHtml(d, "") : "") +
+      `<div class="entry ${vs}">` +
+      `<p class="tagline"><span class="head">${who}${via} sent <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></span></p>` +
+      `<div class="usertext-body">${bodyHtml}</div>` +
+      `<ul class="flat-list buttons">${buttons}</ul>` +
+      `</div>` +
+      `<div class="child">${childHtml}</div>` +
+      `<div class="clearleft"></div></div>`
+    );
+  }
+  function buildMessagesPage(route, json, opts) {
+    opts = opts || {};
+    const listing = (json && json.data) || {};
+    const children = listing.children || [];
+    const startCount = opts.startCount || 0;
+    const items = children.map((c) => (c.data ? buildMessage(c.data, { sent: route.where === "sent", nowMs: opts.nowMs }) : "")).join("");
+    const count = startCount + children.length;
+    const inner =
+      buildHeader({
+        tabmenu: messageTabmenuHtml(route.where),
+        pageName: "messages",
+        pageHref: "/message/inbox/",
+        me: opts.me,
+        route: { scope: "message" },
+      }) +
+      `<div class="side" role="complementary">${sideSearchHtml({ scope: "message" })}</div>` +
+      `<a name="content"></a>` +
+      `<div class="content" role="main">` +
+      `<div id="siteTable" class="sitetable">` +
+      (items || `<div class="thing"><p class="orr-empty">there doesn't seem to be anything here</p></div>`) +
+      `</div>` +
+      navButtonsHtml({ basePath: route.basePath }, listing, count, null, "") +
+      `</div>`;
+    return { className: "messages-page", inner };
+  }
+
   // ---------- comments page builders (testable) ------------------------
 
   const COMMENT_SORTS = ["best", "top", "new", "controversial", "old", "qa"];
@@ -702,19 +1011,20 @@
     const iso = new Date((d.created_utc || 0) * 1000).toISOString();
     const kids = childrenOf(d.replies);
     const childHtml = kids.length ? buildCommentTree(kids, opts.linkId, opts.nowMs) : "";
+    const vs = voteState(d);
     return (
-      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}" data-created="${esc(d.created_utc || 0)}">` +
+      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}" data-created="${esc(d.created_utc || 0)}"` +
+      ` data-subreddit="${esc(d.subreddit || "")}"${d.score_hidden ? "" : ` data-score="${esc(d.score)}"`}${accountDataAttrs(d)}>` +
       `<span class="rank"></span>` +
-      `<div class="midcol unvoted"><div class="arrow up login-required" aria-hidden="true"></div>` +
-      `<div class="arrow down login-required" aria-hidden="true"></div></div>` +
-      `<div class="entry unvoted">` +
+      midcolHtml(d, "") +
+      `<div class="entry ${vs}">` +
       `<p class="tagline"><a href="javascript:void(0)" class="expand" role="button" aria-expanded="true" aria-label="collapse">[&ndash;]</a> ` +
       authorHtml(d.author) +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
-      ` <span class="score unvoted">${pts}</span> ` +
+      ` <span class="score ${vs}">${pts}</span> ` +
       `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
-      `<ul class="flat-list buttons"><li class="first"><a href="${esc(d.permalink || "")}" class="bylink">permalink</a></li></ul>` +
+      `<ul class="flat-list buttons"><li class="first"><a href="${esc(d.permalink || "")}" class="bylink">permalink</a></li>${actionButtonsHtml(d, "comment")}</ul>` +
       `</div>` +
       `<div class="child">${childHtml}</div>` +
       `<div class="clearleft"></div></div>`
@@ -744,6 +1054,7 @@
 
     const postHtml = post ? buildItem(post, { rank: "", showSub: false, expandText: true, nowMs: opts.nowMs }) : "";
     const treeHtml = buildCommentTree(comments, linkId, opts.nowMs);
+    const closed = !!(post && (post.archived || post.locked));
 
     const inner =
       buildHeader({
@@ -757,8 +1068,14 @@
       `<a name="content"></a>` +
       `<div class="content" role="main">` +
       `<div id="siteTable" class="sitetable">${postHtml}</div>` +
-      `<div class="commentarea">` +
+      `<div class="commentarea${closed ? " orr-noreply" : ""}">` +
       commentSortMenuHtml(permalink, opts.sort) +
+      // logged in: old reddit's comment box (filled in by the runtime), or why there isn't one
+      (closed
+        ? `<div class="orr-li-only orr-closed-note">${post.archived
+          ? "this is an archived post. you won't be able to vote or comment."
+          : "comments are locked."}</div>`
+        : linkId ? `<div class="orr-li-only orr-topform" data-thing="${esc(linkId)}"></div>` : "") +
       (opts.singleComment
         ? `<div class="infobar">you are viewing a single comment's thread. <a href="${esc(permalink)}">view the rest of the comments &rarr;</a></div>`
         : "") +
@@ -772,12 +1089,15 @@
 
   // "gilded" dropped — Reddit's API 404s it for other users (issue #25).
   const USER_TABS = ["overview", "submitted", "comments"];
+  // Only you can see these, on your own profile (logged in).
+  const OWN_USER_TABS = ["saved", "upvoted", "downvoted", "hidden"];
   // User pages sort via a ?sort= query param (like comments), not a path segment
   // like subreddit listings. top/controversial also take a time window (?t=).
   const USER_SORTS = ["new", "hot", "top", "controversial"];
 
-  function userTabmenuHtml(route) {
-    const lis = USER_TABS.map((name) => {
+  function userTabmenuHtml(route, myName) {
+    const own = !!myName && myName.toLowerCase() === String(route.name || "").toLowerCase();
+    const lis = (own ? USER_TABS.concat(OWN_USER_TABS) : USER_TABS).map((name) => {
       const href = "/user/" + route.name + (name === "overview" ? "/" : "/" + name + "/");
       const sel = route.section === name ? " selected" : "";
       return `<li class="${sel}"><a class="choice" href="${href}">${name}</a></li>`;
@@ -814,17 +1134,18 @@
     const iso = new Date((d.created_utc || 0) * 1000).toISOString();
     const linkPermalink = d.permalink || d.link_permalink || "";
     const sub = d.subreddit || "";
+    const vs = voteState(d);
     return (
-      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}">` +
-      `<div class="midcol unvoted"><div class="arrow up login-required" aria-hidden="true"></div>` +
-      `<div class="score unvoted">${esc(d.score)}</div><div class="arrow down login-required" aria-hidden="true"></div></div>` +
-      `<div class="entry unvoted">` +
+      `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}"` +
+      ` data-author="${esc(d.author)}" data-subreddit="${esc(sub)}"${d.score_hidden ? "" : ` data-score="${esc(d.score)}"`}${accountDataAttrs(d)}>` +
+      midcolHtml(d, `<div class="score ${vs}">${esc(d.score)}</div>`) +
+      `<div class="entry ${vs}">` +
       `<p class="tagline"><a href="/user/${esc(d.author)}" class="author">${esc(d.author)}</a> ` +
-      `<span class="score unvoted">${pts}</span> <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time> ` +
+      `<span class="score ${vs}">${pts}</span> <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time> ` +
       `on <a href="${esc(linkPermalink)}" class="bylink">${esc(d.link_title || "a post")}</a> ` +
       `in <a href="/r/${esc(sub)}/" class="subreddit">r/${esc(sub)}</a></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
-      `<ul class="flat-list buttons"><li class="first"><a href="${esc(linkPermalink)}" class="bylink">permalink</a></li></ul>` +
+      `<ul class="flat-list buttons"><li class="first"><a href="${esc(linkPermalink)}" class="bylink">permalink</a></li>${actionButtonsHtml(d, "comment")}</ul>` +
       `</div><div class="clearleft"></div></div>`
     );
   }
@@ -848,7 +1169,7 @@
     if (opts.t && timed) navExtra += "&t=" + encodeURIComponent(opts.t);
     const inner =
       buildHeader({
-        tabmenu: userTabmenuHtml(route),
+        tabmenu: userTabmenuHtml(route, (meIdentity(opts.me) || {}).name),
         pageName: route.name,
         pageHref: "/user/" + route.name + "/",
         me: opts.me,
@@ -882,7 +1203,7 @@
   // ---------- shared header (testable) ---------------------------------
 
   // Normalize /api/me.json (modern FLAT shape me.name, OR classic {data:{}}) to an
-  // identity, or null when logged out. Never trust me.modhash for writes.
+  // identity, or null when logged out. (The modhash for writes is read separately: myModhash.)
   function meIdentity(me) {
     const d = me && me.name ? me : (me && me.data) || null;
     if (!d || !d.name) return null;
@@ -1090,6 +1411,7 @@
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
+    voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -1116,6 +1438,7 @@
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         meCached = j && (j.name || (j.data && j.data.name)) ? j : null;
+        applyLoginState();
         return meCached;
       })
       .catch(() => {
@@ -1582,7 +1905,59 @@ html.orr-night #orr-qs input { background:#111; color:#d7dadc; border-color:#474
 .orr-other-box { margin:10px; padding:8px 12px; background:#f6f7f8; border:1px solid #ddd; border-radius:4px; font-size:12px; }
 .orr-other-box h4 { margin:0 0 6px; }
 .orr-other-box ul { margin:0; padding-left:18px; }
-html.orr-night .orr-other-box { background:#242526; border-color:#343536; }`;
+html.orr-night .orr-other-box { background:#242526; border-color:#343536; }
+/* logged-in actions: shown only when logged in; edit/delete only on your own things */
+html:not(.orr-logged-in) .orr-li-only { display:none !important; }
+.flat-list > .orr-own-only { display:none !important; }
+html.orr-logged-in .thing.orr-mine > .entry .flat-list > .orr-own-only { display:inline !important; }
+html.orr-logged-in .thing.orr-mine > .entry .flat-list > .orr-not-own { display:none !important; }
+.commentarea.orr-noreply .orr-reply-li { display:none !important; }
+.thing > .midcol > .arrow { cursor:pointer; }
+.thing > .midcol > .arrow:focus-visible { outline:2px solid #5f99cf; outline-offset:1px; }
+.thing.orr-hidden-post { display:none !important; }
+.orr-closed-note { margin:8px 10px; padding:6px 10px; max-width:600px; color:#555; background:#f6f6f6; border:1px solid #e3e3e3; border-radius:3px; font-size:12px; }
+.orr-topform { margin:6px 0 10px 10px; }
+.orr-editor { margin:6px 0 10px; }
+.orr-editor .usertext-edit { width:auto; max-width:600px; }
+.orr-editor .usertext-edit textarea { width:100%; box-sizing:border-box; height:100px; min-height:60px; resize:vertical; font:13px/1.4 verdana,arial,sans-serif; padding:4px; }
+.orr-editor .usertext-buttons { margin-top:5px; }
+.orr-editor .usertext-buttons button { margin-right:4px; }
+.orr-editor .status { font-size:small; margin-left:6px; color:#555; }
+.orr-editor .status.error, .orr-reportform .status.error { color:#c00; }
+.orr-ed-preview-box { margin-top:6px; padding-top:4px; border-top:1px dotted #c0c0c0; }
+.orr-ed-label { font-size:x-small; color:#888; text-transform:uppercase; letter-spacing:.05em; }
+.orr-ed-preview { padding:4px 0; }
+.orr-editor.orr-bigedit { position:fixed; inset:4vh 4vw; z-index:2147483500; margin:0; padding:12px; background:#fff; border-radius:6px; box-shadow:0 8px 40px rgba(0,0,0,.45); overflow:auto; }
+.orr-editor.orr-bigedit .usertext-edit { max-width:none; height:100%; box-sizing:border-box; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr auto auto; gap:0 14px; }
+.orr-editor.orr-bigedit .usertext-edit > .md { grid-column:1; grid-row:1; }
+.orr-editor.orr-bigedit .usertext-edit textarea { height:100%; min-height:240px; resize:none; }
+.orr-editor.orr-bigedit .bottom-area, .orr-editor.orr-bigedit .orr-markhelp { grid-column:1; }
+.orr-editor.orr-bigedit .orr-ed-preview-box { display:block !important; grid-column:2; grid-row:1 / span 3; margin:0; border:0; overflow:auto; }
+html.orr-bigedit-open { overflow:hidden; }
+@media (max-width:700px) {
+  .orr-editor.orr-bigedit .usertext-edit { grid-template-columns:1fr; grid-template-rows:minmax(200px,1fr) auto auto auto; }
+  .orr-editor.orr-bigedit .orr-ed-preview-box { grid-column:1; grid-row:auto; }
+}
+.orr-reportform { margin:6px 0 8px; padding:8px 10px; max-width:460px; background:#f6f7f8; border:1px solid #e0e0e0; border-radius:3px; font-size:12px; }
+.orr-reportform .orr-rf-title { font-weight:bold; margin-bottom:4px; }
+.orr-reportform .orr-rf-group { margin:6px 0 2px; color:#555; }
+.orr-reportform .orr-rf-opt { display:block; margin:2px 0; cursor:pointer; }
+.orr-reportform input[type=text] { width:240px; max-width:100%; font-size:12px; }
+.orr-reportform .orr-rf-buttons { margin-top:6px; }
+.orr-rf-done, .orr-sent-note { margin:4px 0; color:#2e8b3a; font-size:12px; }
+a.orr-reported { color:#888 !important; cursor:default; text-decoration:none !important; }
+.orr-del-confirm { color:#c00; }
+.orr-uservotes { margin-left:3px; font-size:x-small; font-weight:bold; }
+.orr-uservotes.orr-uv-pos { color:#ff8b60; }
+.orr-uservotes.orr-uv-neg { color:#9494ff; }
+.messages-page .orr-empty { margin:10px; color:#888; }
+html.orr-night .orr-editor textarea, html.orr-night .orr-reportform input[type=text] { background:#111 !important; color:#d7dadc !important; border-color:#474748 !important; }
+html.orr-night .orr-editor.orr-bigedit, html.orr-night .orr-reportform, html.orr-night .orr-closed-note { background:#242526 !important; border-color:#343536 !important; color:#d7dadc !important; }
+html.orr-night .message.new > .entry { background:#2a2b2c !important; border-color:#343536 !important; }
+html.orr-night .orr-markhelp tr:first-child { background:#3a3a1f !important; }
+html.orr-night .orr-markhelp td { border-color:#474748 !important; }
+html.orr-night .link .midcol .score.likes { color:#ff8b60 !important; }
+html.orr-night .link .midcol .score.dislikes { color:#9494ff !important; }`;
 
   const NIGHT_CSS = `
 html.orr-night, html.orr-night body, html.orr-night .content, html.orr-night #siteTable,
@@ -1712,7 +2087,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   let kbIdx = -1;
   function kbThings() {
     const inComments = !!document.querySelector(".commentarea");
-    const sel = inComments ? ".nestedlisting > .thing.comment" : "#siteTable > .thing.link:not(.orr-filtered)";
+    const sel = inComments ? ".nestedlisting > .thing.comment" : "#siteTable > .thing.link:not(.orr-filtered):not(.orr-hidden-post)";
     return Array.from(document.querySelectorAll(sel));
   }
   function kbSelect(i) {
@@ -1995,6 +2370,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         a.insertAdjacentElement("afterend", span);
       }
     });
+    patchUserVotes(root);
     addQuickActions(root);
   }
   function promptTag(username) {
@@ -2499,16 +2875,26 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     prevNew:     { def: "p", label: "previous new comment" },
     collapseTop: { def: "[", label: "collapse / expand all top-level threads" },
     focusThread: { def: "]", label: "collapse other threads (focus this one)" },
+    upvote:      { def: "a", label: "upvote (logged in)" },
+    downvote:    { def: "z", label: "downvote (logged in)" },
+    reply:       { def: "r", label: "reply / write a comment (logged in)" },
+    save:        { def: "s", label: "save / unsave (logged in)" },
+    hide:        { def: "h", label: "hide / unhide the post (logged in)" },
     help:        { def: "?", label: "toggle this help" },
   };
-  const KEY_ACTION_ORDER = ["next", "prev", "open", "expand", "comments", "goto", "nextNew", "prevNew", "collapseTop", "focusThread", "help"];
+  const KEY_ACTION_ORDER = ["next", "prev", "open", "expand", "comments", "goto", "nextNew", "prevNew", "collapseTop", "focusThread",
+    "upvote", "downvote", "reply", "save", "hide", "help"];
   function keyForAction(name) {
     const kb = (dataCache && dataCache.keyBindings) || {};
     return kb[name] || (KEY_ACTIONS[name] && KEY_ACTIONS[name].def);
   }
+  // Your own bindings win over defaults (so a newer default like "a" can't take a key
+  // you'd already given to something else).
   function keyToActionMap() {
+    const kb = (dataCache && dataCache.keyBindings) || {};
     const m = {};
-    KEY_ACTION_ORDER.forEach((name) => { const k = keyForAction(name); if (k) m[k] = name; });
+    KEY_ACTION_ORDER.forEach((name) => { if (!kb[name] && KEY_ACTIONS[name].def) m[KEY_ACTIONS[name].def] = name; });
+    KEY_ACTION_ORDER.forEach((name) => { if (kb[name]) m[kb[name]] = name; });
     return m;
   }
   function runKeyAction(name) {
@@ -2523,6 +2909,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       case "prevNew": jumpComment(-1, newComments()); break;
       case "collapseTop": collapseAllTop(); break;
       case "focusThread": focusThread(); break;
+      case "upvote": case "downvote": { const t = kbTarget(); if (t) vote(t, name === "upvote" ? 1 : -1); break; }
+      case "save": { const t = kbTarget(); if (t) toggleSave(t); break; }
+      case "hide": { const t = kbTarget(); if (t && t.classList.contains("link")) toggleHide(t); break; }
+      case "reply": {
+        const t = kbCurrent();
+        if (t && t.classList.contains("comment")) openReply(t);
+        else { const top = document.querySelector(".orr-topform textarea"); if (top) focusEditor(top.closest("form")); else if (!myName()) loginNudge("comment"); }
+        break;
+      }
       case "help": toggleHelp(); break;
     }
   }
@@ -3233,7 +3628,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (!parentOf(c)) return; // top-level → no parent
       const li = document.createElement("li");
       li.innerHTML = '<a href="javascript:void(0)" class="orr-parent">parent</a>';
-      buttons.appendChild(li);
+      const save = buttons.querySelector(":scope > .orr-save-li");
+      if (save) save.insertAdjacentElement("afterend", li); // old reddit's order: permalink save parent … reply
+      else buttons.appendChild(li);
     });
   }
   function flash(el) {
@@ -3393,6 +3790,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function enhanceComments(scope) {
     if (!document.querySelector(".commentarea")) return;
+    applyLoginState(scope || document);
     markOP();
     addParentLinks();
     ensureCommentNav();
@@ -3689,8 +4087,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     wireEmbedGates(document);
     if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
+    applyLoginState(document);
+    fetchMe().then(() => applyLoginState(document));
   }
   function enhanceNewItems(scope) {
+    applyLoginState(scope || document);
+    markShownRead(scope || document); // (inbox pages only)
     markVisited(scope || document);
     markThreadNew(scope || document);
     applyFilters(scope || document);
@@ -4788,6 +5190,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
+    await fetchMe(); // (your own profile gets the saved / upvoted / downvoted / hidden tabs)
     if (json.orr_adult && !(await over18Confirmed())) {
       // logged-out profile that's mostly adult posts: the same one-click "over 18?" gate
       showAgeGate(null, false, () => renderUser(ur, json, params, sort, t), "profile");
@@ -4939,6 +5342,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (ORR.isUserRoute(url)) return loadUser(url, firstLoad);
     if (ORR.isSearchRoute(url)) return loadSearch(url, firstLoad);
     if (ORR.isWikiRoute && ORR.isWikiRoute(url)) return loadWiki(url, firstLoad);
+    if (ORR.isMessageRoute && ORR.isMessageRoute(url)) return loadMessages(url, firstLoad);
+  }
+  // The pages this extension rebuilds (everything else stays new Reddit).
+  function isRebuiltRoute(url) {
+    return !!(ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url) || ORR.isSearchRoute(url) ||
+      (ORR.isWikiRoute && ORR.isWikiRoute(url)) || (ORR.isMessageRoute && ORR.isMessageRoute(url)));
   }
 
   async function loadWiki(url, firstLoad) {
@@ -5240,14 +5649,752 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     window.open(intent, net, "width=550,height=420,noopener");
   }
 
+  // ---------- logged-in actions (issues #1, #11) ------------------------
+  // Voting, save, hide, report, reply, edit, delete, join/leave and the inbox write
+  // to Reddit's classic API the way old reddit's own JS did: same-origin POSTs with
+  // your session cookie plus the modhash ("uh") from /api/me.json. Nothing is sent
+  // unless you click (or press a shortcut for) the action.
+
+  function myName() {
+    const id = meIdentity(meCached);
+    return id ? id.name : "";
+  }
+  function myModhash() {
+    const d = meCached && (meCached.data || meCached);
+    return (d && d.modhash) || "";
+  }
+  function refreshMe() {
+    mePromise = null;
+    return fetchMe();
+  }
+  function refreshHeader() {
+    mePromise = null;
+    patchHeader(); // re-renders the userbar (mail badge, karma) from a fresh me.json
+  }
+  function orrError(msg, code) {
+    const e = new Error(msg);
+    e.code = code || "";
+    return e;
+  }
+  // POST a form to Reddit's API; resolves with the JSON (or {}), or throws an Error
+  // whose message can be shown as is — Reddit's own text when it sends one.
+  async function authedPost(path, params) {
+    await fetchMe();
+    if (!myName()) throw orrError("you need to log in to do that", "LOGIN");
+    const once = () => {
+      const mh = myModhash();
+      const body = new URLSearchParams(params || {});
+      body.set("uh", mh);
+      return redditFetch(location.origin + path, {
+        method: "POST", credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded", "X-Modhash": mh },
+        body: body.toString(),
+      });
+    };
+    let res;
+    try { res = await once(); } catch (e) { throw orrError("network error — try again", "NETWORK"); }
+    if (res.status === 403) {
+      // a stale modhash (or a session that ended): fetch a fresh one and try once more
+      await refreshMe();
+      if (!myName()) throw orrError("you've been logged out — log in again", "LOGIN");
+      try { res = await once(); } catch (e) { throw orrError("network error — try again", "NETWORK"); }
+    }
+    if (res.status === 429) throw orrError("Reddit says you're doing that too much — wait a minute and try again", "RATELIMIT");
+    if (!res.ok) throw orrError("Reddit answered with an error (" + res.status + ")", "HTTP" + res.status);
+    let j = null;
+    try { j = await res.json(); } catch (e) { /* some endpoints answer with an empty body */ }
+    const errs = j && j.json && j.json.errors;
+    if (errs && errs.length) throw orrError(String(errs[0][1] || errs[0][0] || "Reddit refused that"), String(errs[0][0] || ""));
+    return j || {};
+  }
+  // Full data for one post / comment (raw_json, like the rest of the page).
+  async function fetchThingData(name) {
+    const r = await redditFetch(location.origin + "/api/info.json?raw_json=1&id=" + encodeURIComponent(name));
+    if (!r.ok) return null;
+    const j = await r.json();
+    const c = j && j.data && j.data.children && j.data.children[0];
+    return c && c.data ? c.data : null;
+  }
+
+  // Logged in: html.orr-logged-in (CSS reveals the account buttons), your own posts /
+  // comments get .orr-mine (edit / delete), and the comment box gets filled in.
+  function applyLoginState(scope) {
+    const me = myName();
+    document.documentElement.classList.toggle("orr-logged-in", !!me);
+    if (!me) return;
+    const lc = me.toLowerCase();
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const mark = (t) => t.classList.toggle("orr-mine", (t.getAttribute("data-author") || "").toLowerCase() === lc);
+    if (root.matches && root.matches(".thing[data-author]")) mark(root);
+    root.querySelectorAll(".thing[data-author]").forEach(mark);
+    document.querySelectorAll(".orr-topform").forEach((ph) => {
+      if (!ph.querySelector("form")) ph.appendChild(makeEditor("top", ph.getAttribute("data-thing") || ""));
+    });
+  }
+  function loginNudge(what) {
+    showToast("you need to log in to " + what);
+    const t = document.getElementById("orr-toast");
+    if (!t) return;
+    const a = document.createElement("a");
+    a.href = "/login/?dest=" + encodeURIComponent(location.href);
+    a.textContent = "log in";
+    t.appendChild(document.createTextNode(" — "));
+    t.appendChild(a);
+  }
+  function thingOf(el) {
+    return el && el.closest ? el.closest(".thing[data-fullname]") : null;
+  }
+  // Every action needs you logged in; nudge (and say so) when you're not.
+  async function needLogin(what) {
+    await fetchMe();
+    if (myName()) return false;
+    loginNudge(what);
+    return true;
+  }
+
+  // ---- voting ----
+  function setVoteUi(thing, dir) {
+    const vs = dir === 1 ? "likes" : dir === -1 ? "dislikes" : "unvoted";
+    const midcol = thing.querySelector(":scope > .midcol");
+    [midcol, thing.querySelector(":scope > .entry")].forEach((el) => {
+      if (!el) return;
+      el.classList.remove("likes", "dislikes", "unvoted");
+      el.classList.add(vs);
+    });
+    if (midcol) {
+      const up = midcol.querySelector(".arrow.up, .arrow.upmod");
+      const down = midcol.querySelector(".arrow.down, .arrow.downmod");
+      if (up) { up.classList.toggle("upmod", dir === 1); up.classList.toggle("up", dir !== 1); up.setAttribute("aria-pressed", String(dir === 1)); }
+      if (down) { down.classList.toggle("downmod", dir === -1); down.classList.toggle("down", dir !== -1); down.setAttribute("aria-pressed", String(dir === -1)); }
+    }
+    const base = parseInt(thing.dataset.orrBase, 10);
+    thing.querySelectorAll(":scope > .midcol > .score, :scope > .entry > .tagline .score").forEach((sc) => {
+      sc.classList.remove("likes", "dislikes", "unvoted");
+      sc.classList.add(vs);
+      if (isNaN(base)) return; // score hidden
+      const n = base + dir;
+      if (sc.parentElement.classList.contains("midcol")) {
+        if (/^-?\d+$/.test(sc.textContent.trim())) { sc.textContent = String(n); sc.title = String(n); }
+      } else if (/point/.test(sc.textContent)) {
+        sc.textContent = n + (n === 1 ? " point" : " points");
+      }
+    });
+  }
+  // Clicking the arrow you already voted with takes the vote back, like old reddit.
+  async function vote(thing, clicked) {
+    if (!thing || (await needLogin("vote"))) return;
+    if (thing.dataset.archived === "true") { showToast("this is archived — voting is closed"); return; }
+    const midcol = thing.querySelector(":scope > .midcol");
+    if (!midcol || thing.dataset.orrVoting) return;
+    const prev = midcol.classList.contains("likes") ? 1 : midcol.classList.contains("dislikes") ? -1 : 0;
+    const dir = prev === clicked ? 0 : clicked;
+    // Reddit's score already counts your vote; keep the score without it to add back
+    if (thing.dataset.orrBase == null && /^-?\d+$/.test(thing.dataset.score || "")) thing.dataset.orrBase = String(parseInt(thing.dataset.score, 10) - prev);
+    setVoteUi(thing, dir);
+    thing.dataset.orrVoting = "1";
+    try {
+      await authedPost("/api/vote", { id: thing.dataset.fullname, dir: String(dir), rank: "2" });
+      trackUserVote(thing.getAttribute("data-author"), dir - prev);
+    } catch (e) {
+      setVoteUi(thing, prev);
+      showToast("couldn't vote: " + e.message);
+    } finally {
+      delete thing.dataset.orrVoting;
+    }
+  }
+  // RES-style vote weight: your net votes on each user, shown as [+3] after their name.
+  function trackUserVote(author, delta) {
+    if (!author || author === "[deleted]" || !delta) return;
+    const k = author.toLowerCase();
+    const v = Object.assign({}, dataCache.userVotes || {});
+    v[k] = (v[k] || 0) + delta;
+    if (!v[k]) delete v[k];
+    dataCache.userVotes = v;
+    try { ORR.setPrefs({ userVotes: v }); } catch (e) { /* ignore */ }
+    patchUserVotes(document);
+  }
+  function patchUserVotes(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const v = dataCache.userVotes || {};
+    root.querySelectorAll("a.author").forEach((a) => {
+      const m = /\/user\/([^/?#]+)/.exec(a.getAttribute("href") || "");
+      if (!m) return;
+      const tag = a.nextElementSibling && a.nextElementSibling.classList.contains("orr-usertag") ? a.nextElementSibling : null;
+      const after = tag || a;
+      let badge = after.nextElementSibling && after.nextElementSibling.classList.contains("orr-uservotes") ? after.nextElementSibling : null;
+      const n = v[decodeURIComponent(m[1]).toLowerCase()] || 0;
+      if (!n) { if (badge) badge.remove(); return; }
+      if (!badge) {
+        badge = document.createElement("span");
+        after.insertAdjacentElement("afterend", badge);
+      }
+      badge.className = "orr-uservotes " + (n > 0 ? "orr-uv-pos" : "orr-uv-neg");
+      badge.textContent = "[" + (n > 0 ? "+" : "") + n + "]";
+      badge.title = "your net votes on u/" + decodeURIComponent(m[1]) + "'s posts and comments";
+    });
+  }
+
+  // ---- save / hide ----
+  async function toggleSave(el) {
+    const thing = thingOf(el);
+    if (!thing || (await needLogin("save"))) return;
+    if (thing.dataset.orrSaving) return;
+    const was = thing.dataset.saved === "true";
+    const paint = (on) => {
+      if (on) thing.dataset.saved = "true"; else delete thing.dataset.saved;
+      thing.querySelectorAll(":scope > .entry .flat-list.buttons .orr-save").forEach((x) => { x.textContent = on ? "unsave" : "save"; });
+    };
+    paint(!was);
+    thing.dataset.orrSaving = "1";
+    try {
+      await authedPost(was ? "/api/unsave" : "/api/save", { id: thing.dataset.fullname });
+    } catch (e) {
+      paint(was);
+      showToast("couldn't " + (was ? "unsave" : "save") + ": " + e.message);
+    } finally {
+      delete thing.dataset.orrSaving;
+    }
+  }
+  // Hiding a post in a listing takes it off the page (with undo); on its comments page
+  // or your "hidden" tab the button just flips to unhide / hide.
+  function paintHidden(thing, on, removeFromList) {
+    if (on) thing.dataset.hidden = "true"; else delete thing.dataset.hidden;
+    thing.querySelectorAll(":scope > .entry .flat-list.buttons .orr-hide").forEach((x) => { x.textContent = on ? "unhide" : "hide"; });
+    if (removeFromList) thing.classList.toggle("orr-hidden-post", on);
+  }
+  async function toggleHide(el) {
+    const thing = thingOf(el);
+    if (!thing || !thing.classList.contains("link") || (await needLogin("hide posts"))) return;
+    if (thing.dataset.orrHiding) return;
+    const was = thing.dataset.hidden === "true";
+    const removeFromList = !document.querySelector(".commentarea") && !/\/hidden\/?$/.test(location.pathname);
+    paintHidden(thing, !was, removeFromList);
+    thing.dataset.orrHiding = "1";
+    try {
+      await authedPost(was ? "/api/unhide" : "/api/hide", { id: thing.dataset.fullname });
+      if (!was && removeFromList) {
+        showToast("post hidden", async () => {
+          paintHidden(thing, false, true);
+          try { await authedPost("/api/unhide", { id: thing.dataset.fullname }); }
+          catch (e) { paintHidden(thing, true, true); showToast("couldn't unhide: " + e.message); }
+        });
+      }
+    } catch (e) {
+      paintHidden(thing, was, removeFromList);
+      showToast("couldn't " + (was ? "unhide" : "hide") + ": " + e.message);
+    } finally {
+      delete thing.dataset.orrHiding;
+    }
+  }
+
+  // ---- report ----
+  // The choices: the subreddit's rules, then Reddit's own (both from about/rules.json),
+  // then "other" with your own words.
+  function reportFormHtml(rules, sub) {
+    const subRules = ((rules && rules.rules) || []).map((r) => r.violation_reason || r.short_name).filter(Boolean);
+    let siteRules = ((rules && rules.site_rules) || []).filter((x) => typeof x === "string" && x);
+    if (!subRules.length && !siteRules.length) siteRules = ["Spam", "Personal and confidential information", "Threatening, harassing, or inciting violence"];
+    const opt = (kind, text) =>
+      `<label class="orr-rf-opt"><input type="radio" name="orr-reason" data-kind="${kind}" data-text="${esc(text)}"> ${esc(text)}</label>`;
+    let h = `<div class="orr-rf-title">report this — why?</div>`;
+    if (subRules.length) h += `<div class="orr-rf-group">it breaks r/${esc(sub)}'s rules:</div>` + subRules.map((t) => opt("rule", t)).join("");
+    if (siteRules.length) h += `<div class="orr-rf-group">it breaks Reddit's rules:</div>` + siteRules.map((t) => opt("site", t)).join("");
+    h += `<label class="orr-rf-opt"><input type="radio" name="orr-reason" data-kind="other"> other: ` +
+      `<input type="text" name="other_reason" maxlength="100" placeholder="(maximum 100 characters)" aria-label="other reason"></label>`;
+    h += `<div class="orr-rf-buttons"><button type="submit" class="orr-rf-submit" disabled>submit</button> ` +
+      `<button type="button" class="orr-rf-cancel">cancel</button> <span class="status" role="status" aria-live="polite"></span></div>`;
+    return h;
+  }
+  async function openReport(el) {
+    const thing = thingOf(el);
+    if (!thing || (await needLogin("report"))) return;
+    const entry = thing.querySelector(":scope > .entry");
+    const buttons = entry && entry.querySelector(".flat-list.buttons"); // (a post's are inside .top-matter)
+    if (!buttons) return;
+    const open = entry.querySelector("form.orr-reportform");
+    if (open) { open.remove(); return; } // a second click closes it
+    const post = document.querySelector("#siteTable > .thing.link");
+    const sub = thing.getAttribute("data-subreddit") || (document.querySelector(".commentarea") && post ? post.getAttribute("data-subreddit") : "") || "";
+    const form = document.createElement("form");
+    form.className = "orr-reportform";
+    form.action = "#";
+    form.setAttribute("data-thing", thing.dataset.fullname);
+    form.setAttribute("data-sub", sub);
+    form.innerHTML = `<div class="orr-rf-title">loading the rules…</div>`;
+    buttons.insertAdjacentElement("afterend", form);
+    let rules = null;
+    try { rules = sub ? (await fetchAboutRules(sub)).rules : null; } catch (e) { /* use the defaults */ }
+    if (!form.isConnected) return;
+    form.innerHTML = reportFormHtml(rules, sub);
+  }
+  async function submitReport(form) {
+    const sel = form.querySelector("input[name='orr-reason']:checked");
+    const status = form.querySelector(".status");
+    if (!sel || form.dataset.busy) return;
+    const kind = sel.getAttribute("data-kind");
+    let text = sel.getAttribute("data-text") || "";
+    if (kind === "other") {
+      const o = form.querySelector("input[name='other_reason']");
+      text = ((o && o.value) || "").trim().slice(0, 100);
+      if (!text) { status.textContent = "say what's wrong"; status.classList.add("error"); if (o) o.focus(); return; }
+    }
+    const thingId = form.getAttribute("data-thing");
+    const params = { api_type: "json", thing_id: thingId, reason: text.slice(0, 100), sr_name: form.getAttribute("data-sub") || "" };
+    params[kind === "rule" ? "rule_reason" : kind === "site" ? "site_reason" : "other_reason"] = text.slice(0, 100);
+    form.dataset.busy = "1";
+    form.querySelectorAll("button, input").forEach((x) => { x.disabled = true; });
+    status.classList.remove("error");
+    status.textContent = "sending…";
+    try {
+      await authedPost("/api/report", params);
+      const thing = document.getElementById("thing_" + thingId);
+      const link = thing && thing.querySelector(":scope > .entry .flat-list.buttons .orr-report");
+      if (link) { link.textContent = "reported"; link.classList.add("orr-reported"); }
+      form.innerHTML = `<div class="orr-rf-done">thanks for reporting — it's on its way to the moderators.</div>`;
+      setTimeout(() => form.remove(), 6000);
+    } catch (e) {
+      delete form.dataset.busy;
+      form.querySelectorAll("button, input").forEach((x) => { x.disabled = false; });
+      status.classList.add("error");
+      status.textContent = e.message;
+    }
+  }
+
+  // ---- reply / comment / edit (the editor) ----
+  const drafts = new Map(); // "<kind>:<fullname>" → text you haven't sent (kept while this tab stays open)
+  function makeEditor(kind, thing, text) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = editorHtml(kind, thing);
+    const form = tmp.firstElementChild;
+    form.querySelector("textarea").value = text != null ? text : drafts.get(kind + ":" + thing) || "";
+    updatePreview(form);
+    return form;
+  }
+  function updatePreview(form) {
+    const ta = form.querySelector("textarea");
+    const box = form.querySelector(".orr-ed-preview-box");
+    const v = ta.value;
+    if (box) {
+      box.hidden = !v.trim();
+      box.querySelector(".orr-ed-preview").innerHTML = v.trim() ? mdPreview(v) : "";
+    }
+    if (form.dataset.kind !== "edit") drafts.set(form.dataset.kind + ":" + form.dataset.thing, v);
+  }
+  function setEdStatus(form, text, isError) {
+    const st = form.querySelector(".usertext-buttons .status");
+    if (!st) return;
+    st.textContent = text || "";
+    st.classList.toggle("error", !!isError);
+  }
+  function focusEditor(form) {
+    const ta = form.querySelector("textarea");
+    try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
+    form.scrollIntoView({ block: "nearest", behavior: SB });
+  }
+  async function openReply(el) {
+    const thing = thingOf(el);
+    if (!thing || (await needLogin("reply"))) return;
+    const name = thing.dataset.fullname;
+    const isMessage = thing.classList.contains("message");
+    const entry = thing.querySelector(":scope > .entry");
+    const child = isMessage ? null : thing.querySelector(":scope > .child");
+    const existing = (child && child.querySelector(":scope > form.orr-editor")) || (entry && entry.querySelector(":scope > form.orr-editor:not([data-kind='edit'])"));
+    if (existing) { focusEditor(existing); return; }
+    const form = makeEditor(isMessage ? "message" : "reply", name);
+    if (child) child.insertBefore(form, child.firstChild);
+    else if (entry) entry.appendChild(form); // a comment on a profile page, or an inbox item
+    focusEditor(form);
+  }
+  async function openEdit(el) {
+    const thing = thingOf(el);
+    if (!thing || (await needLogin("edit"))) return;
+    const entry = thing.querySelector(":scope > .entry");
+    if (!entry) return;
+    const open = entry.querySelector("form.orr-editor[data-kind='edit']");
+    if (open) { focusEditor(open); return; }
+    const name = thing.dataset.fullname;
+    const isPost = /^t3_/.test(name);
+    let src = null;
+    try {
+      const d = await fetchThingData(name); // your current markdown (the page only has the HTML)
+      src = d ? (isPost ? d.selftext : d.body) : null;
+    } catch (e) { /* below */ }
+    if (src == null) { showToast("couldn't load the text to edit — try again"); return; }
+    const form = makeEditor("edit", name, src);
+    if (isPost) {
+      let ex = entry.querySelector(":scope > .expando");
+      if (!ex) { ex = document.createElement("div"); ex.className = "expando"; entry.appendChild(ex); }
+      ex.style.display = "";
+      const btn = entry.querySelector(":scope > .expando-button");
+      if (btn) { btn.classList.remove("collapsed"); btn.classList.add("expanded"); btn.setAttribute("aria-expanded", "true"); }
+      const body = ex.querySelector(".usertext-body");
+      const box = body ? body.closest(".expando-container") || body : null;
+      if (box) { box.style.display = "none"; box.insertAdjacentElement("afterend", form); }
+      else ex.appendChild(form);
+    } else {
+      const body = entry.querySelector(":scope > .usertext-body");
+      if (body) { body.style.display = "none"; body.insertAdjacentElement("afterend", form); }
+      else entry.appendChild(form);
+    }
+    focusEditor(form);
+  }
+  function closeEditor(form) {
+    if (form.classList.contains("orr-bigedit")) toggleBigEditor(form);
+    const kind = form.dataset.kind;
+    if (kind === "top") {
+      form.querySelector("textarea").value = "";
+      drafts.delete("top:" + form.dataset.thing);
+      updatePreview(form);
+      setEdStatus(form, "");
+      return;
+    }
+    if (kind === "edit") {
+      const hidden = form.previousElementSibling;
+      if (hidden && hidden.style.display === "none") hidden.style.display = "";
+    }
+    form.remove(); // (an unsent reply stays in drafts for next time)
+  }
+  function toggleBigEditor(form) {
+    const on = form.classList.toggle("orr-bigedit");
+    document.documentElement.classList.toggle("orr-bigedit-open", !!document.querySelector(".orr-editor.orr-bigedit"));
+    const a = form.querySelector(".orr-ed-big");
+    if (a) a.textContent = on ? "small editor" : "big editor";
+    focusEditor(form);
+  }
+  function toggleFormattingHelp(form, link) {
+    const open = form.querySelector(".orr-markhelp");
+    if (open) open.remove();
+    else form.querySelector(".bottom-area").insertAdjacentHTML("afterend", MARKHELP_HTML);
+    link.setAttribute("aria-expanded", open ? "false" : "true");
+  }
+  // What Reddit answered for a new / edited comment → its full data. Old-style
+  // answers carry only a few fields, so read it back through /api/info.json.
+  async function postedThing(j, fallbackName) {
+    const t = j && j.json && j.json.data && j.json.data.things && j.json.data.things[0];
+    const d = (t && t.data) || {};
+    const name = d.name || (/^t\d_/.test(d.id || "") ? d.id : t && t.kind && d.id ? t.kind + "_" + d.id : "") || fallbackName || "";
+    if (name && !/^t4_/.test(name)) {
+      try { const full = await fetchThingData(name); if (full) return full; } catch (e) { /* below */ }
+    }
+    if (d.author && d.body_html != null) return d;
+    return name ? { name, id: name.replace(/^t\d_/, "") } : null;
+  }
+  async function submitEditor(form) {
+    if (form.dataset.busy) return;
+    const ta = form.querySelector("textarea");
+    const btn = form.querySelector("button.save");
+    const text = ta.value;
+    if (!text.trim()) { setEdStatus(form, "we need something here", true); ta.focus(); return; }
+    const kind = form.dataset.kind;
+    const target = form.dataset.thing;
+    form.dataset.busy = "1";
+    btn.disabled = true;
+    ta.readOnly = true;
+    setEdStatus(form, "submitting…");
+    try {
+      if (kind === "edit") {
+        const j = await authedPost("/api/editusertext?raw_json=1", { api_type: "json", thing_id: target, text });
+        applyEdit(form, target, (await postedThing(j, target)) || {}, text);
+      } else {
+        const j = await authedPost("/api/comment?raw_json=1", { api_type: "json", thing_id: target, text });
+        drafts.delete(kind + ":" + target);
+        placeNewComment(form, await postedThing(j, null), text);
+      }
+    } catch (e) {
+      setEdStatus(form, e.message, true);
+    } finally {
+      delete form.dataset.busy;
+      btn.disabled = false;
+      ta.readOnly = false;
+    }
+  }
+  function placeNewComment(form, d, text) {
+    const kind = form.dataset.kind;
+    const note = (html) => {
+      const entry = form.parentElement;
+      closeEditor(form);
+      if (entry) entry.insertAdjacentHTML("beforeend", `<div class="orr-sent-note">${html}</div>`);
+    };
+    if (kind === "message") { note("your reply has been sent."); return; }
+    if (!d || !d.name) { setEdStatus(form, "posted — reload the page to see it"); if (kind === "top") form.querySelector("textarea").value = ""; return; }
+    const data = Object.assign({ author: myName(), score: 1, likes: true, created_utc: Date.now() / 1000, replies: "" }, d);
+    if (!data.body_html) data.body_html = '<div class="md">' + mdPreview(text) + "</div>";
+    const post = document.querySelector("#siteTable > .thing.link");
+    const html = buildComment(data, { linkId: post ? post.dataset.fullname : "", nowMs: Date.now() });
+    if (kind === "top") {
+      const st = document.querySelector(".commentarea > .sitetable");
+      if (!st) return;
+      st.querySelectorAll(":scope > .thing:not([data-fullname])").forEach((x) => x.remove()); // "No comments yet."
+      st.insertAdjacentHTML("afterbegin", html);
+      closeEditor(form); // (clears the box; it stays for the next comment)
+    } else if (form.parentElement && form.parentElement.classList.contains("child")) {
+      const child = form.parentElement;
+      form.remove();
+      child.insertAdjacentHTML("afterbegin", html);
+    } else {
+      note(`your reply was posted${data.permalink ? ` — <a href="${esc(data.permalink)}">view it</a>` : ""}.`);
+      return;
+    }
+    const el = document.getElementById("thing_" + data.name);
+    if (!el) return;
+    patchTags(el);
+    enhanceNewItems(el);
+    enhanceComments(el);
+    flash(el);
+  }
+  function applyEdit(form, name, d, text) {
+    const isPost = /^t3_/.test(name);
+    const html = (isPost ? d.selftext_html : d.body_html) || '<div class="md">' + mdPreview(text) + "</div>";
+    const hidden = form.previousElementSibling;
+    if (hidden && hidden.style.display === "none") {
+      if (hidden.classList.contains("usertext-body")) hidden.innerHTML = html;
+      else { const b = hidden.querySelector(".usertext-body"); if (b) b.innerHTML = html; }
+      hidden.style.display = "";
+    } else if (isPost) {
+      form.insertAdjacentHTML("beforebegin", selfTextBox(html));
+    }
+    if (form.classList.contains("orr-bigedit")) toggleBigEditor(form);
+    form.remove();
+    const thing = document.getElementById("thing_" + name);
+    if (thing) { inlineImages(thing); flash(thing); }
+  }
+
+  // ---- delete (your own) ----
+  function confirmDelete(link) {
+    const li = link.parentElement;
+    if (!li || li.querySelector(".orr-del-confirm")) return;
+    link.style.display = "none";
+    const span = document.createElement("span");
+    span.className = "orr-del-confirm";
+    span.innerHTML = 'are you sure? <a href="javascript:void(0)" class="orr-del-yes" role="button">yes</a> / ' +
+      '<a href="javascript:void(0)" class="orr-del-no" role="button">no</a>';
+    li.appendChild(span);
+  }
+  function cancelDelete(el) {
+    const li = el.closest("li");
+    const span = li && li.querySelector(".orr-del-confirm");
+    if (span) span.remove();
+    const link = li && li.querySelector(".orr-delete");
+    if (link) link.style.display = "";
+  }
+  async function doDelete(el) {
+    const thing = thingOf(el);
+    const span = el.closest(".orr-del-confirm");
+    if (!thing || !span || (await needLogin("delete"))) return;
+    span.textContent = "deleting…";
+    try {
+      await authedPost("/api/del", { id: thing.dataset.fullname });
+      markDeleted(thing);
+    } catch (e) {
+      cancelDelete(span);
+      showToast("couldn't delete: " + e.message);
+    }
+  }
+  function markDeleted(thing) {
+    const isPost = thing.classList.contains("link");
+    if (isPost && !document.querySelector(".commentarea")) { thing.classList.add("orr-hidden-post"); showToast("deleted"); return; }
+    const entry = thing.querySelector(":scope > .entry");
+    if (!entry) return;
+    const body = isPost ? entry.querySelector(":scope > .expando .usertext-body") : entry.querySelector(":scope > .usertext-body");
+    if (body) body.innerHTML = '<div class="md"><p>[deleted]</p></div>';
+    const author = entry.querySelector(":scope > .tagline a.author, :scope > .top-matter .tagline a.author");
+    if (author) { const s = document.createElement("span"); s.textContent = "[deleted]"; author.replaceWith(s); }
+    entry.querySelectorAll(".flat-list.buttons > li.orr-li-only, .flat-list.buttons > li.orr-own-only").forEach((li) => li.remove());
+    thing.classList.remove("orr-mine");
+    thing.setAttribute("data-author", "[deleted]");
+  }
+
+  // ---- join / leave (sidebar) ----
+  async function toggleSubscribe(opt) {
+    const box = opt.closest(".subscribe-button");
+    if (!box || box.dataset.busy || (await needLogin("join subreddits"))) return;
+    const joining = opt.classList.contains("add");
+    const wasIn = box.querySelector(".option.remove").classList.contains("active");
+    if (box.dataset.base == null) box.dataset.base = String((parseInt(box.getAttribute("data-subscribers"), 10) || 0) - (wasIn ? 1 : 0));
+    const paint = (inSub) => {
+      box.querySelector(".option.add").classList.toggle("active", !inSub);
+      box.querySelector(".option.remove").classList.toggle("active", inSub);
+      const num = box.parentElement && box.parentElement.querySelector(".subscribers .number");
+      if (num) num.textContent = formatNumber(parseInt(box.dataset.base, 10) + (inSub ? 1 : 0));
+    };
+    paint(joining);
+    box.dataset.busy = "1";
+    try {
+      await authedPost("/api/subscribe", { action: joining ? "sub" : "unsub", sr: box.getAttribute("data-sr"), skip_initial_defaults: "true" });
+      aboutCache.clear(); // about.json's user_is_subscriber changed
+    } catch (e) {
+      paint(wasIn);
+      showToast("couldn't " + (joining ? "join" : "leave") + ": " + e.message);
+    } finally {
+      delete box.dataset.busy;
+    }
+  }
+
+  // ---- inbox ----
+  // Like old reddit, opening the inbox marks what it shows as read (they keep the
+  // "new" highlight on the page); "mark unread" / "mark read" flip one back.
+  function markShownRead(scope) {
+    const route = ORR.isMessageRoute(location);
+    if (!route || route.where === "sent") return;
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const items = Array.from(root.querySelectorAll(".thing.message[data-new='true']"));
+    if (!items.length) return;
+    authedPost("/api/read_message", { id: items.map((t) => t.dataset.fullname).join(",") })
+      .then(() => {
+        items.forEach((t) => {
+          t.dataset.new = "false";
+          const a = t.querySelector(":scope > .entry .flat-list.buttons .orr-markread");
+          if (a) a.textContent = "mark unread";
+        });
+        refreshHeader();
+      })
+      .catch(() => { /* they stay unread */ });
+  }
+  async function toggleMarkRead(el) {
+    const thing = thingOf(el);
+    if (!thing || thing.dataset.orrMarking || (await needLogin("do that"))) return;
+    const unread = thing.dataset.new === "true";
+    const paint = (isUnread) => {
+      thing.dataset.new = String(isUnread);
+      thing.classList.toggle("new", isUnread);
+      el.textContent = isUnread ? "mark read" : "mark unread";
+    };
+    paint(!unread);
+    thing.dataset.orrMarking = "1";
+    try {
+      await authedPost(unread ? "/api/read_message" : "/api/unread_message", { id: thing.dataset.fullname });
+      refreshHeader();
+    } catch (e) {
+      paint(unread);
+      showToast("couldn't do that: " + e.message);
+    } finally {
+      delete thing.dataset.orrMarking;
+    }
+  }
+  async function loadMessages(url, firstLoad) {
+    const route = ORR.isMessageRoute(url);
+    if (!route) return;
+    const params = { after: url.searchParams.get("after"), count: url.searchParams.get("count") };
+    hideGuard();
+    let watchdog = null;
+    if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
+    const fetchBox = async (after, count) => {
+      const q = new URLSearchParams({ raw_json: "1", limit: "25", mark: "false" });
+      if (after) { q.set("after", after); q.set("count", String(count || 25)); }
+      const res = await redditFetch(location.origin + route.basePath + "/.json?" + q.toString());
+      if (!res.ok) { const e = new Error("HTTP " + res.status); e.status = res.status; e.retryAfter = retryAfterOf(res); throw e; }
+      return res.json();
+    };
+    let json;
+    try {
+      await fetchMe();
+      if (!myName()) { const e = new Error("logged out"); e.status = 403; throw e; } // the inbox needs a login: leave it to Reddit
+      json = await fetchBox(params.after, params.count);
+    } catch (err) {
+      if (watchdog) clearTimeout(watchdog);
+      if (firstLoad) { active = false; unhideGuard(); } else failNav(url, err.status || 0);
+      return;
+    }
+    if (watchdog) clearTimeout(watchdog);
+    await ensureCss();
+    const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    active = true; // before replaceBody(): see loadListing's comment on why
+    replaceBody(buildMessagesPage(route, json, { me: meCached, startCount, nowMs: Date.now() }), "messages: " + route.where);
+    unhideGuard();
+    patchHeader();
+    markShownRead(document);
+    const l0 = (json && json.data) || {};
+    setupInfinite(
+      async (after, count) => {
+        const j2 = await fetchBox(after, count);
+        const kids = (((j2 && j2.data) || {}).children || []).filter((c) => c.data && !document.getElementById("thing_" + c.data.name));
+        const html = kids.map((c) => buildMessage(c.data, { sent: route.where === "sent" })).join("");
+        return { itemsHtml: html, after: ((j2 && j2.data) || {}).after, addedCount: kids.length };
+      },
+      l0.after,
+      startCount + (l0.children || []).length
+    );
+  }
+
+  // Clicks on the account buttons (wired from wireNav's click handler).
+  function handleActionClick(e) {
+    const t = e.target;
+    if (!t || !t.closest) return false;
+    const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    let el;
+    if ((el = t.closest(".thing > .midcol > .arrow"))) { stop(); vote(thingOf(el), el.classList.contains("up") || el.classList.contains("upmod") ? 1 : -1); return true; }
+    if ((el = t.closest("a.orr-save"))) { stop(); toggleSave(el); return true; }
+    if ((el = t.closest("a.orr-hide"))) { stop(); toggleHide(el); return true; }
+    if ((el = t.closest("a.orr-report"))) { stop(); if (!el.classList.contains("orr-reported")) openReport(el); return true; }
+    if ((el = t.closest(".orr-rf-cancel"))) { stop(); const f = el.closest("form"); if (f) f.remove(); return true; }
+    if ((el = t.closest("a.orr-reply"))) { stop(); openReply(el); return true; }
+    if ((el = t.closest("a.orr-edit"))) { stop(); openEdit(el); return true; }
+    if ((el = t.closest("a.orr-delete"))) { stop(); confirmDelete(el); return true; }
+    if ((el = t.closest("a.orr-del-yes"))) { stop(); doDelete(el); return true; }
+    if ((el = t.closest("a.orr-del-no"))) { stop(); cancelDelete(el); return true; }
+    if ((el = t.closest("form.orr-editor button.cancel"))) { stop(); closeEditor(el.closest("form")); return true; }
+    if ((el = t.closest("a.orr-ed-big"))) { stop(); toggleBigEditor(el.closest("form")); return true; }
+    if ((el = t.closest("a.orr-ed-help"))) { stop(); toggleFormattingHelp(el.closest("form"), el); return true; }
+    if ((el = t.closest(".subscribe-button .option"))) { stop(); toggleSubscribe(el); return true; }
+    if ((el = t.closest("a.orr-markread"))) { stop(); toggleMarkRead(el); return true; }
+    return false;
+  }
+  function wireActions() {
+    // live preview while typing
+    document.addEventListener("input", (e) => {
+      const f = e.target && e.target.closest && e.target.closest("form.orr-editor");
+      if (f && e.target.tagName === "TEXTAREA") updatePreview(f);
+    });
+    // a report reason picked → can submit
+    document.addEventListener("change", (e) => {
+      const f = e.target && e.target.closest && e.target.closest("form.orr-reportform");
+      if (!f) return;
+      const b = f.querySelector(".orr-rf-submit");
+      if (b) b.disabled = !f.querySelector("input[name='orr-reason']:checked");
+      if (e.target.name === "orr-reason" && e.target.getAttribute("data-kind") === "other") {
+        const o = f.querySelector("input[name='other_reason']");
+        if (o) o.focus();
+      }
+    });
+    document.addEventListener("focusin", (e) => { // typing an "other" reason picks "other"
+      if (!(e.target && e.target.name === "other_reason")) return;
+      const f = e.target.closest("form.orr-reportform");
+      const r = f && f.querySelector("input[name='orr-reason'][data-kind='other']");
+      if (r && !r.checked) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (!active) return;
+      const t = e.target;
+      // Ctrl/Cmd+Enter sends the comment; Esc leaves the big editor
+      const f = t && t.closest && t.closest("form.orr-editor");
+      if (f && t.tagName === "TEXTAREA") {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitEditor(f); }
+        else if (e.key === "Escape" && f.classList.contains("orr-bigedit")) { e.preventDefault(); toggleBigEditor(f); }
+        return;
+      }
+      // Enter / Space on a focused vote arrow votes
+      if ((e.key === "Enter" || e.key === " ") && t && t.classList && t.classList.contains("arrow") && t.closest(".midcol")) {
+        e.preventDefault();
+        e.stopPropagation();
+        vote(thingOf(t), t.classList.contains("up") || t.classList.contains("upmod") ? 1 : -1);
+      }
+    }, true);
+  }
+  // The keyboard shortcuts' target: the selected item, else (on a comments page) the post.
+  function kbTarget() {
+    return kbCurrent() || (document.querySelector(".commentarea") ? document.querySelector("#siteTable > .thing.link") : null);
+  }
+
   function wireNav() {
     if (wired) return;
     wired = true;
+    wireActions();
 
     document.addEventListener(
       "click",
       (e) => {
         if (!active) return;
+        if (handleActionClick(e)) return; // vote / save / hide / report / reply / edit / delete / join / inbox
         // Reveal blurred NSFW/spoiler media on first click.
         const blurEl = e.target.closest && e.target.closest(".expando.orr-nsfw:not(.orr-revealed), .expando.orr-spoiler:not(.orr-revealed)");
         if (blurEl) {
@@ -5445,8 +6592,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
           return;
         }
         if (url.origin !== location.origin) return; // external link → normal nav
-        // Only intercept routes we rebuild; let wiki/etc navigate normally.
-        if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url) && !ORR.isWikiRoute(url)) return;
+        // Only intercept routes we rebuild; let everything else navigate normally.
+        if (!isRebuiltRoute(url)) return;
         e.preventDefault();
         e.stopPropagation();
         scrollPositions[scrollKey()] = window.scrollY; // remember where we were
@@ -5463,6 +6610,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       (e) => {
         if (!active) return;
         const form = e.target;
+        if (form && form.classList && form.classList.contains("orr-editor")) { e.preventDefault(); e.stopPropagation(); submitEditor(form); return; }
+        if (form && form.classList && form.classList.contains("orr-reportform")) { e.preventDefault(); e.stopPropagation(); submitReport(form); return; }
         if (!form || form.id !== "search") return;
         e.preventDefault();
         e.stopPropagation();
@@ -5495,7 +6644,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     window.addEventListener("popstate", () => {
       if (!active) return;
       const url = new URL(location.href);
-      if (ORR.isListingRoute(url) || ORR.isCommentsRoute(url) || ORR.isUserRoute(url) || ORR.isSearchRoute(url) || (ORR.isWikiRoute && ORR.isWikiRoute(url))) {
+      if (isRebuiltRoute(url)) {
         pendingScrollRestore = scrollPositions[scrollKey()] != null ? scrollPositions[scrollKey()] : 0;
         loadPage(url, false);
       }
@@ -5564,8 +6713,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let preSupported = false;
     try {
       const preUrl = new URL(location.href);
-      preSupported = !!(ORR.isListingRoute(preUrl) || ORR.isCommentsRoute(preUrl) || ORR.isUserRoute(preUrl) ||
-        ORR.isSearchRoute(preUrl) || (ORR.isWikiRoute && ORR.isWikiRoute(preUrl)));
+      preSupported = isRebuiltRoute(preUrl);
       if (preSupported) hideGuard();
     } catch (e) { /* ignore */ }
     let prefs;
@@ -5619,7 +6767,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       loadAnswers(); // frame Reddit Answers in old-reddit chrome; leave the app itself
       return;
     }
-    if (!ORR.isListingRoute(url) && !ORR.isCommentsRoute(url) && !ORR.isUserRoute(url) && !ORR.isSearchRoute(url) && !(ORR.isWikiRoute && ORR.isWikiRoute(url))) {
+    if (!isRebuiltRoute(url)) {
       unhideGuard();
       return; // unsupported route → leave it to new Reddit
     }
@@ -5686,7 +6834,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         });
       }
       if ((changes.filters || changes.favoriteSubs || changes.userTags || changes.threadVisits ||
-           changes.subPrefs || changes.keyBindings) && active) {
+           changes.subPrefs || changes.keyBindings || changes.userVotes) && active) {
         ORR.getData().then((d) => {
           dataCache = d;
           if (changes.threadVisits) markThreadNew(document); // refresh "N new" badges + orr-has-new

@@ -125,7 +125,9 @@
     ["next", "Next item", "j"], ["prev", "Previous item", "k"], ["open", "Open selected", "o"],
     ["expand", "Expand / collapse", "x"], ["comments", "Open comments", "c"], ["goto", "Go to subreddit", "g"],
     ["nextNew", "Next new comment", "n"], ["prevNew", "Prev new comment", "p"],
-    ["collapseTop", "Collapse/expand all threads", "["], ["focusThread", "Focus this thread", "]"], ["help", "Toggle help", "?"],
+    ["collapseTop", "Collapse/expand all threads", "["], ["focusThread", "Focus this thread", "]"],
+    ["upvote", "Upvote (logged in)", "a"], ["downvote", "Downvote (logged in)", "z"], ["reply", "Reply / comment (logged in)", "r"],
+    ["save", "Save / unsave (logged in)", "s"], ["hide", "Hide / unhide post (logged in)", "h"], ["help", "Toggle help", "?"],
   ];
 
   function paintSliderOut() {

@@ -2,6 +2,8 @@
 // scroll down step by step, logging what changes — items, "load more" stubs, page
 // height, scroll position jumps, page/console errors, failed requests.
 //   node firefox-scroll.mjs <ext-dir> <out-dir> <url> [steps]
+//   FF_PRIVATE=1 runs it in permanent private browsing (browser.privatebrowsing.autostart),
+//   like a profile set to "never remember history".
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { firefox } from "playwright";
 import net from "node:net";
@@ -14,12 +16,16 @@ const STEPS = parseInt(stepsArg || "14", 10);
 fs.mkdirSync(outDir, { recursive: true });
 const PORT = 6000 + Math.floor(Math.random() * 1000);
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "orr-ff-"));
+// Private windows only run add-ons the user allowed there; grant it like the "Run in
+// Private Windows" switch does (Firefox migrates this file into its permission store).
+if (process.env.FF_PRIVATE) fs.writeFileSync(path.join(profile, "extension-preferences.json"), JSON.stringify({ "old-reddit-redirect@extension.local": { permissions: ["internal:privateBrowsingAllowed"], origins: [] } }));
 const ctx = await firefox.launchPersistentContext(profile, {
   headless: false, viewport: { width: 1400, height: 900 },
   args: ["-start-debugger-server", String(PORT)],
   firefoxUserPrefs: {
     "devtools.debugger.remote-enabled": true, "devtools.debugger.prompt-connection": false,
     "devtools.chrome.enabled": true, "xpinstall.signatures.required": false,
+    ...(process.env.FF_PRIVATE ? { "browser.privatebrowsing.autostart": true } : {}),
   },
 });
 
@@ -62,7 +68,7 @@ await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
 await page.waitForSelector("#siteTable .thing.link, .commentarea", { timeout: 30000 }).catch(() => {});
 await page.waitForTimeout(4000);
 const snap = () => page.evaluate(() => ({
-  y: Math.round(scrollY), h: document.documentElement.scrollHeight,
+  rebuilt: !!document.querySelector("#siteTable, .commentarea"), y: Math.round(scrollY), h: document.documentElement.scrollHeight,
   comments: document.querySelectorAll(".commentarea .thing.comment").length,
   stubs: document.querySelectorAll("a.orr-more").length,
   loading: Array.from(document.querySelectorAll("a.orr-more")).filter((a) => a.dataset.orrLoading).map((a) => a.textContent.slice(0, 40)),

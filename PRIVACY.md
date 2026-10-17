@@ -1,6 +1,6 @@
 # Privacy Policy — Old Reddit
 
-_Last updated: 2026-07-24_
+_Last updated: 2026-10-17_
 
 **Old Reddit** ("the extension") does **not collect, store, transmit, sell, or
 share any personal data.** It has no analytics, no tracking, no accounts, and no
@@ -22,7 +22,9 @@ device and is never sent to the developer or any third party. It consists only o
 - your own **filter lists** (subreddits / users / domains / keywords you choose to hide);
 - your own **user tags** (labels you attach to Reddit usernames);
 - a list of **which comment threads you've opened**, with timestamps, used solely to
-  highlight comments that are new since your last visit.
+  highlight comments that are new since your last visit;
+- a tally of **your own votes per Reddit user** (e.g. "+3"), shown next to their
+  name — counted from votes you cast through the extension.
 
 You can clear all of it at any time by removing the extension.
 
@@ -34,6 +36,13 @@ in or not) — the same requests your browser already makes when you use Reddit.
 Examples: subreddit and comment listings (`…/.json`, or — when logged out — the
 same pages' HTML that Reddit's own site loads), your identity for the header
 (`/api/me.json`), and subreddit info (`…/about.json`).
+
+When you're logged in and **you** act — vote, save or unsave, hide, report, post a
+comment or reply, edit or delete your own post or comment, join or leave a
+subreddit, or open / mark messages in your inbox — the extension sends that action
+to Reddit's own API (`reddit.com/api/…`) with your session, exactly as old Reddit's
+website did. Nothing is sent unless you take the action (opening your inbox marks
+the messages it shows as read, as on old Reddit).
 
 These requests go **to Reddit, and only to Reddit.** The extension sends **no data
 to the developer or to any other party**, and contacts no third-party servers.

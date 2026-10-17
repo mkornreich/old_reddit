@@ -24,6 +24,13 @@ What it does:
 - **Filters** — hide posts by subreddit / user / domain / title keyword (Options).
 - **User tags & hover cards** — colored labels on users; hover a name or subreddit
   for a quick info card.
+- **Logged in, it's interactive** — vote (arrows show your votes), **save**, **hide**,
+  **report**, **reply** / comment with a live markdown preview and a "big editor",
+  **edit** and **delete** your own posts and comments, **join / leave** from the
+  sidebar, an old-reddit **inbox** (`/message/…`: replies, mentions, messages; mark
+  read / unread, reply), your **saved / upvoted / downvoted / hidden** tabs, and
+  RES-style vote weight (`[+3]` after users you've voted on). Shortcuts: `a`/`z`
+  vote, `r` reply, `s` save, `h` hide.
 
 > Earlier versions were a lighter CSS **skin** of new Reddit (and before that, a
 > **redirect** to old.reddit.com). Both were superseded by this full rebuild — see
@@ -227,8 +234,12 @@ attributes) and maps it onto the JSON shape the renderer expects.
   Reddit. Adult (NSFW) communities and posts first show
   old reddit's "over 18?" page: one click on **continue**, remembered on that device. Anything that fails **falls back** to letting
   normal Reddit render — it never leaves the page blank.
-- **Read-only.** Voting, saving, posting, and commenting are **not** wired up (they
-  need an OAuth write token). The arrows/buttons render for looks but are inert.
+- **Logged in: voting, saving, hiding, reporting, replying, editing, deleting,
+  joining, and the inbox** go through Reddit's classic API the way old reddit's own
+  JavaScript did — your session cookie plus the account's modhash from
+  `/api/me.json`, same-origin, and only when you click (or press a shortcut). Logged
+  out, the buttons stay hidden and the vote arrows point you to the login page.
+  Not rebuilt: composing a new message, single message threads, and new modmail.
 - **Listings, comments, user profiles, and search.** Post permalinks render old
   Reddit's comments page (nested tree, "sorted by" menu, "load more" via
   morechildren); `/user/{name}` renders the profile (overview/submitted/comments
@@ -278,7 +289,9 @@ A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs
 - **Route** — [common.js](common.js) maps the URL to a listing / comments / user /
   search route (else it leaves new Reddit alone).
 - **Fetch** — a same-origin `fetch('{path}/.json', {credentials:'include'})` (and
-  `/api/me.json`, `/about.json`, `morechildren`, …) rides your logged-in session.
+  `/api/me.json`, `/about.json`, `morechildren`, …) rides your logged-in session;
+  actions you take (vote, save, comment, …) POST to Reddit's classic `/api/…` with
+  the modhash.
   Logged out, those `403`, so listings and threads are parsed from Reddit's own
   server-rendered HTML instead (`/svc/shreddit/…` partials and the thread page).
 - **Render** — [rebuild.js](rebuild.js) builds old Reddit's real markup from the JSON

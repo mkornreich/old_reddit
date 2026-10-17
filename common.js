@@ -71,7 +71,7 @@
     const s = await areaGet(syncArea(), { filters: null, favoriteSubs: null });
     const l = await areaGet(api.storage.local, {
       filters: null, favoriteSubs: null, userTags: null, threadVisits: null, visitedPosts: null, collapsedComments: null,
-      commentSorts: null, recentSubs: null, subPrefs: null, keyBindings: null, ui: null,
+      commentSorts: null, recentSubs: null, subPrefs: null, keyBindings: null, ui: null, userVotes: null,
     });
     return {
       filters: s.filters || l.filters || { subreddits: [], users: [], domains: [], keywords: [], flairs: [], highlights: [] },
@@ -85,6 +85,7 @@
       subPrefs: l.subPrefs || {},       // per-subreddit overrides: sub -> {night,sort,t,autoExpand}
       keyBindings: l.keyBindings || {}, // action -> key (overrides defaults)
       ui: l.ui || {},                   // numeric UI prefs: {contentWidth,fontSize,videoSpeed,videoVolume}
+      userVotes: l.userVotes || {},     // your net votes per user (RES "vote weight"): name(lowercase) -> net
     };
   }
 
@@ -187,6 +188,17 @@
     return null;
   }
 
+  // Your inbox (logged in): /message/{inbox,unread,messages,comments,selfreply,mentions,sent}/.
+  // (A single message thread, compose and modmail stay native.)
+  const MESSAGE_BOXES = ["inbox", "unread", "messages", "comments", "selfreply", "mentions", "sent"];
+  function isMessageRoute(loc) {
+    const pathname = loc && loc.pathname != null ? loc.pathname : String(loc || "");
+    const segs = pathname.split("/").filter(Boolean);
+    if (segs[0] === "message" && segs.length === 2 && MESSAGE_BOXES.includes(segs[1]))
+      return { scope: "message", where: segs[1], basePath: "/message/" + segs[1] };
+    return null;
+  }
+
   // Reddit Answers (/answers/…) — not an old-reddit feature and not rebuildable
   // (it's a shadow-DOM app), but we frame it in an old-reddit-style top bar.
   function isAnswersRoute(loc) {
@@ -208,5 +220,6 @@
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
     getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute, isWikiRoute,
+    isMessageRoute,
   };
 })();
