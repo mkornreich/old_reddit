@@ -41,6 +41,10 @@ the `env -u` above does the same. New scripts should import it too.
 | `popup-check.mjs <ext> <out>` | Opens the extension's own popup and options pages and checks every image on them loaded (the popup logo was once missing from the Chrome build). |
 | `quick-actions.mjs <ext> <out>` | Tagline filter/tag icons (PR #29 + follow-up), live and logged out: hidden until hover, filter → hide + toast + undo, tag → badge with stable icon order across reloads, logged-out hover cards with karma/cake day and weekly visitors, tag-only icons on comment pages. Exits non-zero on failure. |
 | `user-pages.mjs <ext> <out> [user]` | Logged-out user profiles in the old layout: overview (posts + comments "on <post> in r/sub"), submitted, comments sorted by top, the karma and cake-day sidebar, infinite scroll without duplicates, clicking a listing author, and a profile whose posts are hidden (old layout plus a message). Exits non-zero on failure. |
+| `front-tabs.mjs <ext> <out>` | Logged-out front page and r/all sort tabs really sort (PR #30): post ages per tab (new ≈ 0 h, top/hour < 1.5 h), the "best" default, tab tooltips, front-page infinite scroll. Exits non-zero on failure. |
+| `firefox-scroll.mjs <ext> <out> <url> [steps]`, `chromium-scroll.mjs` (same args) | Scroll a page step by step and log comment/stub counts, page height, scroll jumps, page/console errors and failed requests. |
+| `hover-scroll.mjs firefox\|chromium <ext> <out> <url>` | Scroll in small steps with the pointer resting over the content, and count hover cards / image previews that pop up and the hover-card fetches they trigger. |
+| `firefox-csp.mjs <ext> <out> <url>` | Firefox: the document's CSP and every CSP console message. The "blocked … default-src 'none'" errors on logged-out `.json` come from Reddit's 403 block page, not the page's real policy. |
 | `media-checks.mjs <ext>` | A GIF post loops muted, the reCAPTCHA badge stays hidden, and a single-comment permalink shows just that thread with the infobar. |
 | `expand.mjs <ext> <out> <url> [n]` | Clicks the first *n* expandos (image, gallery, video) and screenshots them. |
 | `firefox.mjs <ext> <out> <listing> <thread>` | Installs the extension as a temporary add-on in Playwright's Firefox (over the Remote Debugging Protocol) and runs the listing, thread and load-more checks. |
@@ -66,6 +70,8 @@ the `env -u` above does the same. New scripts should import it too.
 | `probe12.mjs [user] [sub]` | Logged-out hover-card data: `/svc/shreddit/user-hover-card/<name>` (~8 KB: cake day, post + comment karma) and `/svc/shreddit/community-hover-card/<sub>` (~5 KB: description, weekly visitors and contributions), versus the 37–74 KB right-rail partial. |
 | `probe13.mjs <out> [user]` | Logged-out profiles: the page HTML has only ~8 items, but the feed partials `/svc/shreddit/profiles/profile_{overview,posts,comments}-more-posts/…` serve 25 at a time (`shreddit-post` + `shreddit-profile-comment`), with no bot check. |
 | `probe14.mjs [user]` | Profile feed paging (`after=base64(fullname)`) and sorting. Sorting is a query parameter (`&sort=top&t=all`); the path segment is ignored. |
+| `probe15.mjs` | Front-page feeds logged out: `home-feed` ignores `sort`/`t` (every sort is the same 0.8–91 h mix); `popular-feed` honours them (new = 0 h, top/hour 0.4–1 h, controversial ratio ≈ 0.5). |
+| `probe16.mjs <permalink>` | Follows a thread's top-level "more comments" chain to the end and counts comments by depth. Shows where Reddit's own chain stops, e.g. r/Salary: 15 + 8 + 48 top-level. |
 | `save.mjs <outdir> <path>…` | Saves raw HTML of Reddit paths (input for `offline.mjs`). `ACCEPT_PARTIAL=1` requests Reddit's partial rendering, like the extension does. |
 
 Saved HTML and screenshots are Reddit content and test output, so they're gitignored.
