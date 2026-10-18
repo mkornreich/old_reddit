@@ -7,6 +7,7 @@
 //   node firefox-loggedin.mjs <firefox-binary> <ext-dir> <out-dir> <url> [steps]
 //   FF_PRIVATE=1  permanent private browsing (a profile set to "never remember history")
 //   NO_LOGIN=1    skip the login wait and keep the window off the desktop (logged-out run)
+//   KEEP_OPEN=1   after the run, leave the window open (for rdp-*.mjs) until you close it
 // The browser also listens on the printed RDP port, so rdp-scroll.mjs / rdp-eval.mjs can
 // keep testing in the same logged-in window.
 import net from "node:net";
@@ -127,4 +128,8 @@ console.log("console", JSON.stringify(consoleErr.slice(0, 20)));
 console.log("failed", JSON.stringify(failed.slice(0, 20)));
 console.log("api", JSON.stringify(api));
 await page.screenshot({ path: path.join(outDir, "scroll-end.png") });
+if (process.env.KEEP_OPEN) {
+  console.log("keeping the window open — RDP port " + PORT + "; close the window to finish");
+  await new Promise((r) => ctx.on("close", r));
+}
 await cleanup();

@@ -53,6 +53,7 @@ const writes = []; // every POST the extension made
 let failNextVote = false;
 let lastCommentText = "";
 let loggedIn = true;
+let banned = false; // banned from the thread's subreddit: about.json says so, comments get Reddit's "500 reddit broke!"
 const json = (route, body, status) => route.fulfill({ status: status || 200, contentType: "application/json; charset=UTF-8", body: JSON.stringify(body) });
 const fakeComment = (name, text, parent) => ({ kind: "t1", data: {
   name, id: name.slice(3), author: ME, body: text, body_html: '<div class="md"><p>' + text.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]) + "</p></div>",
@@ -75,6 +76,7 @@ await ctx.route(/^https:\/\/www\.reddit\.com\/(api|message|user|r)\//, async (ro
     const form = Object.fromEntries(new URLSearchParams(req.postData() || ""));
     writes.push({ path: p, form, modhashHeader: req.headers()["x-modhash"] || "" });
     if (p === "/api/vote" && failNextVote) { failNextVote = false; return json(route, { message: "Internal Server Error", error: 500 }, 500); }
+    if (p === "/api/comment" && banned) return route.fulfill({ status: 500, contentType: "text/html; charset=UTF-8", body: "<html><head><title>reddit broke!</title></head></html>" });
     if (p === "/api/comment") {
       lastCommentText = form.text;
       const name = "t1_newc" + ++commentSeq;
@@ -99,7 +101,7 @@ await ctx.route(/^https:\/\/www\.reddit\.com\/(api|message|user|r)\//, async (ro
   if (p.startsWith("/message/") && p.endsWith(".json")) return json(route, p.startsWith("/message/sent") ? { kind: "Listing", data: { children: [] } } : inbox);
   if (p === `/user/${ME}/saved/.json`) return json(route, saved);
   if (p === `/user/${ME}/about.json`) return json(route, { kind: "t2", data: { name: ME, link_karma: 10, comment_karma: 20, created_utc: 1.6e9 } });
-  if (p.toLowerCase() === `/r/${SUB.toLowerCase()}/about.json`) return json(route, about);
+  if (p.toLowerCase() === `/r/${SUB.toLowerCase()}/about.json`) return json(route, banned ? Object.assign({}, about, { data: Object.assign({}, about.data, { user_is_banned: true }) }) : about);
   if (p.toLowerCase() === `/r/${SUB.toLowerCase()}/about/rules.json`) return json(route, rules);
   if (p.endsWith(".json") && p.indexOf("/comments/" + post.id) >= 0) return json(route, thread);
   if (p.toLowerCase() === `/r/${SUB.toLowerCase()}/.json`) return json(route, listing);
@@ -267,6 +269,30 @@ await page.click(".side .subscribe-button .option.remove.active");
 await settle();
 check("leave", lastWrite("/api/subscribe").form.action === "unsub");
 await page.screenshot({ path: path.join(outDir, "thread.png") });
+
+// ---- banned from the subreddit: a refused reply says why; a fresh load says so up front ----
+banned = true;
+await page.click(`${sel(c2.name)} > .entry .orr-reply`);
+const banBox = `${sel(c2.name)} > .child > form.orr-editor textarea`;
+await page.waitForSelector(banBox);
+await page.fill(banBox, "will this post?");
+await page.click(`${sel(c2.name)} > .child > form.orr-editor button.save`);
+await settle(1500);
+const banState = (n) => page.evaluate((n) => ({
+  status: n ? ((document.querySelector(`#thing_${n} > .child > form.orr-editor .status`) || {}).textContent || "") : "",
+  note: (document.querySelector(".commentarea > .orr-closed-note") || {}).textContent || "",
+  topForm: !!document.querySelector(".orr-topform form"),
+  replyShown: Array.from(document.querySelectorAll(".commentarea .orr-reply")).some((a) => getComputedStyle(a.closest("li")).display !== "none"),
+}), n);
+const rb = await banState(c2.name);
+check("a refused comment says you're banned (Reddit's 500)", /banned from r\//.test(rb.status) && /banned/.test(rb.note) && !rb.topForm && !rb.replyShown, JSON.stringify(rb));
+check("…and keeps what you typed", (await page.inputValue(banBox).catch(() => "")) === "will this post?");
+await page.reload({ waitUntil: "domcontentloaded" });
+await page.waitForSelector(".commentarea", { timeout: 30000 });
+await page.waitForSelector(".commentarea > .orr-closed-note", { timeout: 10000 }).catch(() => {});
+const pb = await banState(null);
+check("banned: the thread says so up front — no comment box, no reply links", /banned from r\//.test(pb.note) && !pb.topForm && !pb.replyShown, JSON.stringify(pb));
+banned = false;
 
 // ---- listing: hide + undo ----
 await page.goto(`https://www.reddit.com/r/${SUB}/`, { waitUntil: "domcontentloaded", timeout: 45000 });

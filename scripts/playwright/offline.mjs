@@ -155,12 +155,16 @@ const li = await page.evaluate(() => {
       /option remove active/.test(R.buildSidebar({ data: { name: "t5_x", display_name: "s", subscribers: 3, user_is_subscriber: true } }, null)),
     message: /thing message new was-comment/.test(msg) && /href="\/r\/s\/comments\/a\/t\/m\/\?context=3"/.test(msg) && /full comments \(4\)/.test(msg) && />mark read</.test(msg) && /orr-msg-reply/.test(msg),
     msgPage: /tabmenu[^]*class="selected"><a class="choice" href="\/message\/unread\/">unread/.test(page.inner),
+    commentBlock: (R.commentBlock({ data: { display_name: "x", user_is_banned: true } }) || {}).code === "banned" &&
+      (R.commentBlock({ data: { display_name: "x", restrict_commenting: true } }) || {}).code === "restricted" &&
+      R.commentBlock({ data: { display_name: "x", restrict_commenting: true, user_is_contributor: true } }) === null &&
+      R.commentBlock({ data: { display_name: "x", user_is_banned: false } }) === null && R.commentBlock(null) === null,
   };
 });
 li.md.forEach((h, i) => console.log("md" + i + ": " + h));
 check("markdown preview never emits handlers / script URLs / unknown tags", li.unsafe === 0, "unsafe=" + li.unsafe);
 check("markdown preview: nested list", li.nested);
-["upvoted", "downvoted", "unvoted", "savedHidden", "lockedNoReply", "linkNoEdit", "archivedPage", "topForm", "ownTabs", "sidebarJoin", "message", "msgPage"]
+["upvoted", "downvoted", "unvoted", "savedHidden", "lockedNoReply", "linkNoEdit", "archivedPage", "topForm", "ownTabs", "sidebarJoin", "message", "msgPage", "commentBlock"]
   .forEach((k) => check("logged-in markup: " + k, li[k] === true));
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));

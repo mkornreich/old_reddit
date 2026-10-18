@@ -343,6 +343,15 @@
     return (d.saved ? ' data-saved="true"' : "") + (d.hidden ? ' data-hidden="true"' : "") +
       (d.archived ? ' data-archived="true"' : "") + (d.locked ? ' data-locked="true"' : "");
   }
+  // Why you can't comment in a subreddit, from its about.json (logged in) — or null.
+  function commentBlock(about) {
+    const d = (about && about.data) || about || {};
+    const sub = d.display_name || "";
+    if (d.user_is_banned) return { code: "banned", text: `you're banned from r/${sub}, so you can't comment there.` };
+    if (d.restrict_commenting && !d.user_is_contributor && !d.user_is_moderator)
+      return { code: "restricted", text: `only approved users can comment in r/${sub}.` };
+    return null;
+  }
   // The vote arrows (and, for posts, the score between them). Clickable for
   // everyone, like old reddit's: logged out they nudge you to log in.
   function midcolHtml(d, scoreHtml) {
@@ -1412,6 +1421,7 @@
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
+    commentBlock,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -5131,6 +5141,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       addOtherDiscussions(data);
       addMarkUnreadButton();
       loadSidebar({ scope: "sub", sub: realSub });
+      checkCommentBlock(realSub); // banned / approved users only → say so instead of a comment box
     };
     const post = data && data[0] && data[0].data && data[0].data.children && data[0].data.children[0] && data[0].data.children[0].data;
     if (jsonBlocked && post && post.over_18 && !(await over18Confirmed())) {
@@ -5700,6 +5711,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       try { res = await once(); } catch (e) { throw orrError("network error — try again", "NETWORK"); }
     }
     if (res.status === 429) throw orrError("Reddit says you're doing that too much — wait a minute and try again", "RATELIMIT");
+    if (res.status === 403) throw orrError("Reddit refused that (403 forbidden)", "HTTP403");
     if (!res.ok) throw orrError("Reddit answered with an error (" + res.status + ")", "HTTP" + res.status);
     let j = null;
     try { j = await res.json(); } catch (e) { /* some endpoints answer with an empty body */ }
@@ -6101,7 +6113,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         placeNewComment(form, await postedThing(j, null), text);
       }
     } catch (e) {
-      setEdStatus(form, e.message, true);
+      let msg = e.message;
+      // (Reddit answers a comment from someone banned from the subreddit with a bare
+      // "500 reddit broke!", so any HTTP error gets the subreddit checked)
+      if (kind !== "edit" && /^HTTP\d|NOTALLOWED|BANNED|RESTRICTED/i.test(e.code || "")) msg = await explainCommentRefusal(form, e);
+      if (form.isConnected) setEdStatus(form, msg, true);
     } finally {
       delete form.dataset.busy;
       btn.disabled = false;
@@ -6157,6 +6173,64 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     form.remove();
     const thing = document.getElementById("thing_" + name);
     if (thing) { inlineImages(thing); flash(thing); }
+  }
+
+  // ---- subreddits you can't comment in (banned, or approved users only) ----
+  // The thread page says so up front instead of offering a comment box that Reddit
+  // would refuse; a refusal that still happens (a stale page, a reply from your
+  // profile or inbox) is explained the same way.
+  async function freshAbout(sub) {
+    const r = await redditFetch(location.origin + "/r/" + encodeURIComponent(sub) + "/about.json?raw_json=1");
+    if (!r.ok) return null;
+    const about = await r.json();
+    const hit = aboutCache.get(sub.toLowerCase());
+    if (hit) hit.v = Object.assign({}, hit.v, { about }); // the sidebar's copy too
+    return about;
+  }
+  function applyCommentBlock(block) {
+    const area = document.querySelector(".commentarea");
+    if (!area || !block) return;
+    area.classList.add("orr-noreply"); // hides every reply link
+    let note = area.querySelector(":scope > .orr-closed-note");
+    if (!note) {
+      note = document.createElement("div");
+      note.className = "orr-li-only orr-closed-note orr-cant-comment";
+      const top = area.querySelector(":scope > .orr-topform");
+      const ta = top && top.querySelector("textarea");
+      if (top && !(ta && ta.value.trim())) top.replaceWith(note);
+      else area.insertBefore(note, top || area.querySelector(":scope > .sitetable")); // (keep what you typed)
+    }
+    note.textContent = block.text;
+    // reply boxes nobody has typed in yet go too (ones with text keep it, and say why)
+    area.querySelectorAll("form.orr-editor:not([data-kind='edit'])").forEach((f) => {
+      if (!f.querySelector("textarea").value.trim()) f.remove();
+    });
+  }
+  async function checkCommentBlock(sub) {
+    if (!sub || jsonBlocked) return;
+    await fetchMe();
+    if (!myName()) return;
+    let v = null;
+    try { v = await fetchAboutRules(sub); } catch (e) { return; }
+    const block = commentBlock(v && v.about);
+    const post = document.querySelector("#siteTable > .thing.link");
+    if (block && post && (post.getAttribute("data-subreddit") || "").toLowerCase() === sub.toLowerCase()) applyCommentBlock(block);
+  }
+  // A comment Reddit refused: say why if the subreddit tells us (banned / approved
+  // only), else the likely reasons for a 403.
+  async function explainCommentRefusal(form, e) {
+    const target = document.getElementById("thing_" + form.dataset.thing);
+    const post = document.querySelector("#siteTable > .thing.link");
+    const sub = (target && target.getAttribute("data-subreddit")) || (post && post.getAttribute("data-subreddit")) || "";
+    let block = null;
+    if (sub) { try { block = commentBlock(await freshAbout(sub)); } catch (err) { /* below */ } }
+    if (block) {
+      const onThisThread = post && (post.getAttribute("data-subreddit") || "").toLowerCase() === sub.toLowerCase();
+      if (onThisThread) applyCommentBlock(block);
+      return block.text;
+    }
+    if (e.code === "HTTP403" && sub) return e.message + ` — the thread may be locked, or you may not be allowed to comment in r/${sub}.`;
+    return e.message;
   }
 
   // ---- delete (your own) ----
