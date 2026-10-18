@@ -35,7 +35,13 @@ const ctx = await firefox.launchPersistentContext(profile, {
     ...(process.env.FF_PRIVATE ? { "browser.privatebrowsing.autostart": true } : {}),
   },
 });
-const cleanup = async () => { await ctx.close().catch(() => {}); fs.rmSync(profile, { recursive: true, force: true }); };
+// (Firefox can still be writing to the profile as it shuts down — remove it again after a moment;
+// it may hold the login session)
+const cleanup = async () => {
+  await ctx.close().catch(() => {});
+  for (let i = 0; i < 3; i++) { fs.rmSync(profile, { recursive: true, force: true }); await new Promise((r) => setTimeout(r, 1500)); }
+  fs.rmSync(profile, { recursive: true, force: true });
+};
 
 // Minimal RDP client: messages are "<length>:<json>".
 function rdpInstall(dir) {
