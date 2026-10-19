@@ -1,33 +1,42 @@
-// Pinch-zoom the page (Chrome's page scale, like a trackpad pinch), then send sideways and
-// downward two-finger scrolls; report whether the visual viewport pans.
-//   node pinch-pan.mjs <ext-dir|-> <url>   ("-" = no extension, for comparison)
+// Pinch zoom (4×): sideways scrolls and Shift + scroll pan the magnified view by exactly one
+// step each — A) with real wheel input, where the browser pans the view itself (the extension
+// must not double it), and B) with wheel events the browser doesn't act on, like a Linux
+// touchpad's sideways swipe in Chrome (user report: "nothing moves") — the extension pans.
+//   node pinch-pan.mjs <ext-dir> [url]
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
-const [extDir, url] = process.argv.slice(2);
+const [extDir, url = "https://www.reddit.com/r/sysadmin/"] = process.argv.slice(2);
+let fail = 0;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "orr-pw-"));
-const extArgs = extDir !== "-" ? [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`] : [];
-const ctx = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: false, viewport: { width: 1200, height: 800 },
+const ctx = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: false, viewport: { width: 914, height: 800 },
   userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
-  ignoreDefaultArgs: ["--enable-automation"], args: [...extArgs, "--disable-blink-features=AutomationControlled"] });
+  ignoreDefaultArgs: ["--enable-automation"], args: [`--disable-extensions-except=${extDir}`, `--load-extension=${extDir}`, "--disable-blink-features=AutomationControlled"] });
 await ctx.addInitScript(() => { try { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); } catch (e) {} });
-const page = await ctx.newPage();
-await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-await page.waitForTimeout(6000);
-const cdp = await ctx.newCDPSession(page);
-await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2.5 }).catch((e) => console.log("scale failed", e.message));
-await page.waitForTimeout(1200);
-const vv = () => page.evaluate(() => ({ scale: +visualViewport.scale.toFixed(2), left: Math.round(visualViewport.pageLeft), top: Math.round(visualViewport.pageTop), rebuilt: document.documentElement.classList.contains("orr-rebuilt") }));
-await page.mouse.move(600, 400);
-const wheel = async (dx, dy) => { for (let i = 0; i < 4; i++) { await page.mouse.wheel(dx, dy); await page.waitForTimeout(150); } await page.waitForTimeout(500); };
-const a = await vv();
-await wheel(120, 0); const b = await vv();
-await wheel(-60, 0); const c = await vv();
-await wheel(0, 120); const d = await vv();
-console.log(JSON.stringify({ url: url.slice(0, 50), pinched: a, right: b, left: c, down: d, panRight: b.left > a.left, panLeft: c.left < b.left, panDown: d.top > c.top }));
-// wheel listeners that can cancel scrolling
-const { result } = await cdp.send("Runtime.evaluate", { expression: "window" });
-const { listeners: wl } = await cdp.send("DOMDebugger.getEventListeners", { objectId: result.objectId });
-const { result: dres } = await cdp.send("Runtime.evaluate", { expression: "document" });
-const { listeners: dl } = await cdp.send("DOMDebugger.getEventListeners", { objectId: dres.objectId });
-console.log("wheel/touch listeners:", JSON.stringify([...wl.map((l) => ["window", l.type, l.passive]), ...dl.map((l) => ["document", l.type, l.passive])].filter((x) => /wheel|touch|gesture/.test(x[1]))));
+const run = async (label, step) => {
+  const page = await ctx.newPage();
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.waitForSelector("#siteTable .thing, .commentarea", { timeout: 30000 }); await page.waitForTimeout(2500);
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 4 }); await page.waitForTimeout(800);
+  await page.mouse.move(450, 400);
+  const x = () => page.evaluate(() => Math.round(visualViewport.pageLeft));
+  const xs = [await x()];
+  for (let i = 0; i < 5; i++) { await step(page, false); await page.waitForTimeout(200); xs.push(await x()); }
+  const shift = [await x()];
+  for (let i = 0; i < 4; i++) { await step(page, true); await page.waitForTimeout(200); shift.push(await x()); }
+  const steps = (a) => a.slice(1).map((v, i) => v - a[i]);
+  const ok = steps(xs).every((d) => d === 20) && steps(shift).every((d) => d === 20);
+  console.log((ok ? "PASS " : "FAIL ") + label.padEnd(34), "sideways:", JSON.stringify(xs), " shift+scroll:", JSON.stringify(shift));
+  if (!ok) fail++;
+  await page.close();
+};
+// A: real wheel input (the browser pans the zoomed view itself here)
+await run("A real wheel (browser pans)", async (page, shift) => { if (shift) { await page.keyboard.down("Shift"); await page.mouse.wheel(0, 80); await page.keyboard.up("Shift"); } else await page.mouse.wheel(80, 0); });
+// B: wheel events the browser doesn't act on (like the user's touchpad)
+await run("B synthetic (browser doesn't pan)", (page, shift) => page.evaluate((shift) => {
+  const t = document.elementFromPoint(450 / 4 + visualViewport.offsetLeft, 400 / 4 + visualViewport.offsetTop) || document.body;
+  t.dispatchEvent(new WheelEvent("wheel", { deltaX: shift ? 0 : 20, deltaY: shift ? 20 : 0, shiftKey: shift, bubbles: true, cancelable: true, view: window }));
+}, shift));
 await ctx.close(); fs.rmSync(profile, { recursive: true, force: true });
+console.log(fail ? fail + " FAILED" : "ALL PASS");
+process.exit(fail ? 1 : 0);

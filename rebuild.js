@@ -3190,7 +3190,81 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return p;
   }
 
+  // ---- pinch zoom: sideways scrolling pans the magnified view ----
+  // Pinch-zoomed in (visualViewport.scale > 1), Chrome on Linux didn't pan the magnified view
+  // with a touchpad's sideways swipe when the page itself has no sideways overflow (user
+  // report: "nothing moves", pinch 4×) — while elsewhere the browser pans it fine. So on the
+  // first sideways scroll after zooming in (and separately for Shift + scroll, like the
+  // SideScroll extension), wait two frames: if the browser moved the view, leave it be; if
+  // not, pan it ourselves from then on. Pages can't set the visual viewport's offset, but
+  // asking a 1px marker just past its edge to scrollIntoView moves it. The wheel listener is
+  // attached only while zoomed in.
+  let pinchWheelOn = false;
+  const pinchNative = { side: null, shift: null }; // does the browser pan the zoomed view itself? (null = not seen yet)
+  let pinchProbing = false;
+  function panPinchView(dx) {
+    const vv = window.visualViewport;
+    if (!vv || !document.body) return false;
+    const before = vv.pageLeft;
+    const m = document.createElement("div");
+    m.setAttribute("aria-hidden", "true");
+    m.style.cssText = "position:absolute;width:1px;height:1px;pointer-events:none;visibility:hidden;margin:0;padding:0;";
+    const x = dx > 0 ? vv.pageLeft + vv.width + dx - 1 : vv.pageLeft + dx;
+    m.style.left = Math.max(0, Math.round(x)) + "px";
+    m.style.top = Math.round(vv.pageTop + vv.height / 2) + "px";
+    document.body.appendChild(m);
+    try { m.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); } catch (e) { m.scrollIntoView(false); }
+    m.remove();
+    return Math.abs(vv.pageLeft - before) > 0.5;
+  }
+  // Something under the pointer that scrolls sideways itself (a wide code block or table)
+  // keeps its own sideways scrolling.
+  function scrollsSideways(el, dx) {
+    for (let n = el && el.nodeType === 1 ? el : el && el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      const ox = getComputedStyle(n).overflowX;
+      if ((ox === "auto" || ox === "scroll") && n.scrollWidth > n.clientWidth + 1) {
+        if (dx > 0 ? n.scrollLeft < n.scrollWidth - n.clientWidth - 1 : n.scrollLeft > 0) return true;
+      }
+    }
+    return false;
+  }
+  function onPinchWheel(e) {
+    const vv = window.visualViewport;
+    if (!active || !vv || vv.scale <= 1.01 || e.ctrlKey || e.defaultPrevented) return; // (ctrl+wheel = the pinch itself)
+    let dx = 0, kind = "side";
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) dx = e.deltaX;
+    else if (e.shiftKey && e.deltaY) { dx = e.deltaY; kind = "shift"; } // Shift + scroll = sideways
+    else return;
+    if (e.deltaMode === 1) dx *= 16; else if (e.deltaMode === 2) dx *= vv.width;
+    if (scrollsSideways(e.target, dx)) return;
+    if (pinchNative[kind] === true) return; // the browser pans it itself
+    // (deltas already come in zoomed-page pixels — the browser's own pan moves the view by deltaX)
+    if (pinchNative[kind] === false) { if (panPinchView(dx) && e.cancelable) e.preventDefault(); return; }
+    // First sideways scroll while zoomed in: does the browser pan the view itself? (Not at the
+    // edge it's scrolling towards, where nothing would move either way.)
+    const x0 = vv.pageLeft;
+    const room = dx > 0 ? document.documentElement.scrollWidth - (x0 + vv.width) : x0;
+    if (pinchProbing || room < 1) return;
+    pinchProbing = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      pinchProbing = false;
+      if (pinchNative[kind] !== null) return;
+      pinchNative[kind] = Math.abs(vv.pageLeft - x0) > 0.5;
+      if (!pinchNative[kind]) panPinchView(dx); // it didn't: catch up this first step
+    }));
+  }
+  function syncPinchWheel() {
+    const zoomed = !!window.visualViewport && window.visualViewport.scale > 1.01;
+    if (zoomed && !pinchWheelOn) window.addEventListener("wheel", onPinchWheel, { passive: false });
+    else if (!zoomed && pinchWheelOn) {
+      window.removeEventListener("wheel", onPinchWheel, { passive: false });
+      pinchNative.side = pinchNative.shift = null; // check again next time
+    }
+    pinchWheelOn = zoomed;
+  }
+
   function wireEnhancements() {
+    if (window.visualViewport) { window.visualViewport.addEventListener("resize", syncPinchWheel); syncPinchWheel(); }
     document.addEventListener("keydown", handleKeydown, true);
     let rivalScrollTimer = null;
     window.addEventListener("scroll", () => {
