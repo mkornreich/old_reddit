@@ -1747,6 +1747,8 @@
     el.style.setProperty("--orr-font-scale", customFont ? String(fs / 100) : "");
     el.classList.toggle("orr-custom-width", w > 0);
     el.classList.toggle("orr-custom-font", customFont);
+    // phones / tablets keep fit-to-width (no zoom-in minimum width)
+    el.classList.toggle("orr-touch-ua", typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || ""));
   }
   // Auto night mode on a simple local-time schedule (dark 8pm–7am).
   function applyNightSchedule() {
@@ -1847,10 +1849,16 @@ html.orr-custom-width body { max-width:var(--orr-content-width); margin-left:aut
 /* Zoomed in (fewer CSS pixels across), the 300px sidebar used to squeeze posts and comments
    into a one-word-wide column with nothing to scroll to. Keep a readable minimum width so
    the page overflows and scrolls sideways instead (trackpad / shift+wheel). Your custom
-   content width wins if it's narrower; touch screens keep their own fit-to-width. */
-@media (hover:hover) and (pointer:fine) {
-  html.orr-rebuilt body { min-width:min(820px, var(--orr-content-width, 820px)); }
-}
+   content width wins if it's narrower; phones and tablets (html.orr-touch-ua) keep their
+   own fit-to-width. (Not a hover/pointer media query: Chrome on Linux can report a
+   touchpad laptop as hover:none.) */
+html.orr-rebuilt:not(.orr-touch-ua) body { min-width:min(820px, var(--orr-content-width, 820px)); }
+/* …and let it scroll: new Reddit's styles that survive the purge (styles its components
+   attach to the document, <style class=…>, inline styles on <html>) can set overflow
+   hidden on html/body — clipping whatever is off-screen, with no scrollbar. The image
+   viewer and the big editor still lock scrolling while open. */
+html.orr-rebuilt:not(.orr-lb-open):not(.orr-bigedit-open) { overflow:visible !important; }
+html.orr-rebuilt body { overflow:visible !important; }
 html.orr-custom-font #siteTable, html.orr-custom-font .commentarea { zoom:var(--orr-font-scale); }
 /* image lightbox */
 html.orr-lb-open { overflow:hidden; }
