@@ -1,7 +1,9 @@
 // Pinch zoom (4×): sideways scrolls and Shift + scroll pan the magnified view by exactly one
 // step each — A) with real wheel input, where the browser pans the view itself (the extension
 // must not double it; at most the very first step), and B) with wheel events the browser doesn't act on, like a Linux
-// touchpad's sideways swipe in Chrome (user report: "nothing moves") — the extension pans.
+// touchpad's sideways swipe in Chrome (user report: "nothing moves") — the extension pans; and
+// C) like B, with the view shifting by itself (a pinch settling) while the extension is finding
+// out — it must recover and pan within a few scrolls.
 //   node pinch-pan.mjs <ext-dir> [url]
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
@@ -40,6 +42,34 @@ await run("B synthetic (browser doesn't pan)", (page, shift) => page.evaluate((s
   const t = document.elementFromPoint(450 / 4 + visualViewport.offsetLeft, 400 / 4 + visualViewport.offsetTop) || document.body;
   t.dispatchEvent(new WheelEvent("wheel", { deltaX: shift ? 0 : 20, deltaY: shift ? 20 : 0, shiftKey: shift, bubbles: true, cancelable: true, view: window }));
 }, shift));
+// C: like B, but the view shifts by itself while the extension is still finding out (a pinch
+// settling — the user's case: it concluded "the browser pans" and stepped aside). It must notice
+// the view then stays put and pan after all, within a few scrolls.
+{
+  const page = await ctx.newPage();
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.waitForSelector("#siteTable .thing, .commentarea", { timeout: 30000 }); await page.waitForTimeout(2500);
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 4 }); await page.waitForTimeout(800);
+  const synth = () => page.evaluate(() => {
+    const t = document.elementFromPoint(100 + visualViewport.offsetLeft, 100 + visualViewport.offsetTop) || document.body;
+    t.dispatchEvent(new WheelEvent("wheel", { deltaX: 20, bubbles: true, cancelable: true, view: window }));
+  });
+  const settle = () => page.evaluate(() => { // move the view 30px right from the page itself
+    const vv = visualViewport, m = document.createElement("div");
+    m.style.cssText = "position:absolute;width:1px;height:1px;left:" + Math.round(vv.pageLeft + vv.width + 29) + "px;top:" + Math.round(vv.pageTop + 10) + "px";
+    document.body.appendChild(m); m.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); m.remove();
+  });
+  const x = () => page.evaluate(() => Math.round(visualViewport.pageLeft));
+  const xs = [await x()];
+  await synth(); await settle(); await page.waitForTimeout(250); xs.push(await x());
+  for (let i = 0; i < 11; i++) { await synth(); await page.waitForTimeout(150); xs.push(await x()); }
+  const d = xs.slice(1).map((v, i) => v - xs[i]);
+  const ok = d.slice(-4).every((v) => v === 20);
+  console.log((ok ? "PASS " : "FAIL ") + "C settling view, then no pans".padEnd(34), "sideways:", JSON.stringify(xs));
+  if (!ok) fail++;
+  await page.close();
+}
 await ctx.close(); fs.rmSync(profile, { recursive: true, force: true });
 console.log(fail ? fail + " FAILED" : "ALL PASS");
 process.exit(fail ? 1 : 0);

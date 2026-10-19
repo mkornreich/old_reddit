@@ -3203,6 +3203,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   const pinchNative = { side: null, shift: null }; // does the browser pan the zoomed view itself? (null = not seen yet)
   let pinchProbe = null; // { kind, x0, sum } while finding out
   let pinchLastX = null; // where our last pan left the view (to notice the browser panning too)
+  let pinchStill = null; // { kind, x, scale, n } — sideways scrolls in a row that left the view put
   // localStorage.orrDebug = "1" (in the page's console) logs what the pinch panning decides
   function pinchLog() {
     let on = false;
@@ -3255,7 +3256,19 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     else return;
     if (e.deltaMode === 1) dx *= 16; else if (e.deltaMode === 2) dx *= vv.width;
     if (scrollsSideways(e.target, dx)) return;
-    if (pinchNative[kind] === true) return; // the browser pans it itself
+    if (pinchNative[kind] === true) {
+      // The browser pans it itself — unless several sideways scrolls in a row leave the view
+      // exactly where it was (at the same zoom): then that verdict was wrong (e.g. it saw the
+      // view settling after a pinch), so pan it ourselves after all.
+      const st = pinchStill;
+      if (st && st.kind === kind && Math.abs(st.scale - vv.scale) < 0.001 && Math.abs(st.x - vv.pageLeft) < 0.5) st.n++;
+      else pinchStill = { kind, x: vv.pageLeft, scale: vv.scale, n: 0 };
+      if (pinchStill.n < 5) return;
+      pinchNative[kind] = false;
+      pinchStill = null;
+      pinchLastX = null;
+      pinchLog(kind, "the view isn't moving after all — panning it ourselves");
+    }
     // (deltas already come in zoomed-page pixels — the browser's own pan moves the view by deltaX)
     if (pinchNative[kind] === false) {
       if (pinchLastX != null && Math.abs(vv.pageLeft - pinchLastX) > 0.5) {
@@ -3275,11 +3288,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const x0 = vv.pageLeft;
     const room = dx > 0 ? document.documentElement.scrollWidth - (x0 + vv.width) : x0;
     if (room < 1) { pinchLog("at the edge — nothing to pan"); return; }
-    const probe = pinchProbe = { kind, x0, sum: dx };
+    const probe = pinchProbe = { kind, x0, scale0: vv.scale, sum: dx };
     setTimeout(() => {
       pinchProbe = null;
       if (pinchNative[kind] !== null) return;
-      pinchNative[kind] = Math.abs(vv.pageLeft - probe.x0) > 0.5;
+      if (Math.abs(vv.scale - probe.scale0) > 0.001) { pinchLog(kind, "still zooming — will check again"); return; }
+      // only a move in the scroll's direction counts (a pinch settling can shift the view either way)
+      pinchNative[kind] = (vv.pageLeft - probe.x0) * Math.sign(probe.sum) > 0.5;
       pinchLog(kind, pinchNative[kind] ? "the browser pans by itself — leaving it" : "the browser didn't pan — panning it ourselves");
       if (!pinchNative[kind] && panPinchView(probe.sum)) pinchLastX = vv.pageLeft; // catch up those steps
     }, 120);
@@ -3287,6 +3302,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function syncPinchWheel() {
     const zoomed = !!window.visualViewport && window.visualViewport.scale > 1.01;
     pinchLastX = null; // (zooming moves the view by itself)
+    pinchStill = null;
     if (zoomed && !pinchWheelOn) { window.addEventListener("wheel", onPinchWheel, { passive: false }); pinchLog("zoomed in: watching sideways scrolls"); }
     else if (!zoomed && pinchWheelOn) {
       window.removeEventListener("wheel", onPinchWheel, { passive: false });
