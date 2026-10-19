@@ -1559,6 +1559,42 @@
   let infiniteOn = false;
   let infState = null; // { fetchPage, after, count, loading, sentinel, observer, attempt, retryTimer, retryInterval }
 
+  // The pages infinite scroll added, per page (scrollKey), so Back can put them back before
+  // restoring where you were. Without them only the first page re-renders, a deep scroll
+  // position no longer exists, and you land near the top with the post you came from gone.
+  const infPages = new Map(); // scrollKey → { chunks: [itemsHtml…], after, count } (most recent last)
+  const INF_PAGES_KEEP = 6;
+  let historyNavKey = null; // the page a Back/Forward is re-rendering (set by popstate)
+  function rememberInfPage(html, after, count) {
+    const key = scrollKey();
+    const rec = infPages.get(key) || { chunks: [] };
+    infPages.delete(key);
+    infPages.set(key, rec);
+    if (html) rec.chunks.push(html);
+    rec.after = after;
+    rec.count = count;
+    while (infPages.size > INF_PAGES_KEEP) infPages.delete(infPages.keys().next().value);
+  }
+  // On Back/Forward: put this page's extra pages back (skipping anything already shown)
+  // and carry on from where infinite scroll had got to. A fresh visit starts over.
+  function restoreInfPages(st) {
+    const key = scrollKey();
+    const restoring = historyNavKey === key;
+    historyNavKey = null;
+    const rec = infPages.get(key);
+    if (!restoring || !rec) { infPages.delete(key); return; }
+    const table = document.getElementById("siteTable");
+    if (!table || !rec.chunks.length) return;
+    const tmp = document.createElement("div");
+    rec.chunks.forEach((h) => tmp.insertAdjacentHTML("beforeend", h));
+    tmp.querySelectorAll(":scope > .thing[id]").forEach((t) => { if (document.getElementById(t.id)) t.remove(); });
+    while (tmp.firstChild) table.appendChild(tmp.firstChild);
+    enhanceNewItems(table);
+    st.after = rec.after;
+    st.count = rec.count;
+    if (!st.after) teardownInfinite(); // it had reached the end
+  }
+
   function setInfMsg(st, text, isError) {
     if (!st || !st.sentinel) return;
     const m = st.sentinel.querySelector(".orr-loading");
@@ -1580,7 +1616,7 @@
 
   // fetchPage(after, count) -> Promise<{ itemsHtml, after, addedCount }>
   function setupInfinite(fetchPage, after, count) {
-    if (!infiniteOn || !after) return;
+    if (!infiniteOn || !after) { historyNavKey = null; return; }
     const st = document.getElementById("siteTable");
     if (!st || !st.parentNode) return;
     const nb = document.querySelector(".nav-buttons"); // manual pager gives way to auto-load
@@ -1592,6 +1628,9 @@
     sentinel.innerHTML = '<span class="orr-loading">loading more…</span>';
     st.parentNode.insertBefore(sentinel, st.nextSibling);
     infState = { fetchPage, after, count: count || 0, loading: false, sentinel, observer: null, attempt: 0, retryTimer: null, retryInterval: null };
+    const st0 = infState;
+    restoreInfPages(st0); // Back/Forward: the pages you'd scrolled through
+    if (infState !== st0) return; // (they reached the end: nothing more to load)
     if (typeof IntersectionObserver === "undefined") return;
     const obs = new IntersectionObserver(
       (entries) => {
@@ -1630,6 +1669,7 @@
       }
       st.count += res.addedCount || 0;
       st.after = res.after || null;
+      rememberInfPage(res.itemsHtml, st.after, st.count);
       st.attempt = 0;
       st.loading = false;
       if (!st.after) {
@@ -4020,6 +4060,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function navigateTo(path) {
     const u = new URL(path, location.origin);
     scrollPositions[scrollKey()] = window.scrollY;
+    historyNavKey = null;
     history.pushState(null, "", u.pathname + u.search);
     window.scrollTo(0, 0);
     loadPage(u, false);
@@ -6765,6 +6806,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         e.preventDefault();
         e.stopPropagation();
         scrollPositions[scrollKey()] = window.scrollY; // remember where we were
+        historyNavKey = null;
         history.pushState(null, "", url.pathname + url.search);
         window.scrollTo(0, 0);
         loadPage(url, false);
@@ -6793,6 +6835,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         if (restrict && restrict.checked) usp.set("restrict_sr", "1");
         const target = action + "?" + usp.toString();
         scrollPositions[scrollKey()] = window.scrollY; // so Back restores the listing
+        historyNavKey = null;
         history.pushState(null, "", target);
         window.scrollTo(0, 0);
         loadPage(new URL(target, location.origin), false);
@@ -6814,6 +6857,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const url = new URL(location.href);
       if (isRebuiltRoute(url)) {
         pendingScrollRestore = scrollPositions[scrollKey()] != null ? scrollPositions[scrollKey()] : 0;
+        historyNavKey = scrollKey(); // put back the pages infinite scroll had added here
         loadPage(url, false);
       }
     });
