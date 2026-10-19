@@ -24,6 +24,9 @@ What it does:
 - **Filters** — hide posts by subreddit / user / domain / title keyword (Options).
 - **User tags & hover cards** — colored labels on users; hover a name or subreddit
   for a quick info card.
+- **Hover previews** — hover an image post's link to see its picture; in search
+  results, hover a result's picture or title to read the post (its text, picture
+  and where a link post points) without opening it.
 - **Logged in, it's interactive** — vote (arrows show your votes), **save**, **hide**,
   **report**, **reply** / comment with a live markdown preview and a "big editor",
   **edit** and **delete** your own posts and comments, **join / leave** from the

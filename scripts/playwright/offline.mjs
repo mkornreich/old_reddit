@@ -245,6 +245,40 @@ for (const f of files.filter(isSearch)) {
   check("search results continue on a partial", !!r.next && /^\/svc\/shreddit\/(r\/[^/]+\/)?search\/\?/.test(r.next), r.next);
 }
 if (files.some(isSearch)) check("search results carry thumbnails", searchThumbs > 0, searchThumbs + " thumbnails");
+// Search-result hover peek: a thread page read only up to its post's end (how fetchPostOnly
+// stops early) gives the same post; the peek shows its text / picture / link, escaped
+for (const f of files.filter((x) => !isSearch(x) && /\/comments\/|_comments_/.test(path.basename(x)))) {
+  const r = await page.evaluate((html) => {
+    const R = globalThis.ORR_REBUILD;
+    const end = html.indexOf("</shreddit-post>");
+    if (end < 0) return null;
+    const full = R.postFromShreddit(R.parseHtmlDoc(html).querySelector("shreddit-post"));
+    const cut = R.postFromShreddit(R.parseHtmlDoc(html.slice(0, end + 16)).querySelector("shreddit-post"));
+    const peek = R.postPeekHtml(R.postPeekParts(cut));
+    return {
+      same: JSON.stringify(full) === JSON.stringify(cut), kb: Math.round(end / 1024), of: Math.round(html.length / 1024),
+      text: !!cut.selftext_html, peekText: /class="orr-peek-text"/.test(peek), img: /class="orr-peek-media"/.test(peek), peek: peek.slice(0, 100),
+    };
+  }, fs.readFileSync(f, "utf8"));
+  if (!r) continue;
+  console.log("\n== peek " + path.basename(f).slice(0, 60) + "  " + JSON.stringify(r));
+  check("a thread page cut at its post's end parses to the same post", r.same, r.kb + " of " + r.of + " KB");
+  check("the peek shows the post's text when it has one", r.peekText === r.text);
+}
+const peeks = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  return [
+    R.postPeekHtml(null),
+    R.postPeekHtml(R.postPeekParts({ is_self: true, url: "https://www.reddit.com/r/a/comments/x/y/" })),
+    R.postPeekHtml(R.postPeekParts({ is_self: false, url: "https://example.com/a?b=<i>", preview: { images: [{ source: { url: "https://external-preview.redd.it/p.jpg?a=1&b=2" } }] } })),
+    R.postPeekHtml(R.postPeekParts({ is_self: false, url: "https://i.redd.it/x.png", preview: { images: [{ source: { url: "javascript:alert(1)" } }] } })),
+    R.postPeekHtml(R.postPeekParts({ is_gallery: true, url: "https://www.reddit.com/gallery/x", gallery_data: { items: [{ media_id: "m0" }, { media_id: "m1" }] }, media_metadata: { m0: { s: { u: "https://i.redd.it/a.jpg" } } } })),
+  ];
+});
+check("peek: nothing / link / escaping / no script URLs / gallery",
+  /couldn't load/.test(peeks[0]) && /no description/.test(peeks[1]) &&
+  /example\.com\/a\?b=&lt;i&gt;/.test(peeks[2]) && /src="https:\/\/external-preview\.redd\.it\/p\.jpg\?a=1&amp;b=2"/.test(peeks[2]) &&
+  !/javascript:/.test(peeks[3]) && /no description/.test(peeks[3]) && /2 images/.test(peeks[4]) && /i\.redd\.it\/a\.jpg/.test(peeks[4]), JSON.stringify(peeks));
 // Logged-out search URL: posts only, old reddit's sort / time / restrict_sr mapped onto new Reddit's
 const spath = await page.evaluate(() => {
   const R = globalThis.ORR_REBUILD;

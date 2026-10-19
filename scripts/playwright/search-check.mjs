@@ -2,6 +2,8 @@
 // results partials instead. Checks a search URL is rebuilt with full result rows (title,
 // time, author, subreddit, votes, comments), that scrolling adds pages without repeats,
 // that the sort / time links work, and that a subreddit search stays in that subreddit.
+// Hovering a result's picture (or a picture-less result's title) peeks at the post — its
+// text / picture / link — fetching only the top of its thread page, once.
 //   node search-check.mjs <ext-dir> <out-dir> [search-url] [--firefox]
 // (--firefox: Playwright's Firefox with the add-on installed over RDP; stage the
 //  extension with `stage-ext.mjs … --firefox` for that)
@@ -52,7 +54,8 @@ if (useFirefox) {
   await ctx.addInitScript(() => { try { Object.defineProperty(navigator, "webdriver", { get: () => undefined }); } catch (e) {} });
 }
 const page = await ctx.newPage();
-const errors = [];
+const errors = [], threadReqs = [];
+page.on("request", (r) => { if (/\/comments\/[a-z0-9]+\//.test(r.url()) && r.resourceType() === "fetch") threadReqs.push(r.url().replace("https://www.reddit.com", "")); });
 page.on("pageerror", (e) => { if (!/\.announce is not a function/.test(e.message)) errors.push(String(e.message).slice(0, 160)); });
 let fail = 0;
 const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name + (info ? "  " + info : "")); if (!ok) fail++; };
@@ -88,9 +91,45 @@ check("search page rebuilt with results", s0.rebuilt && s0.items >= 7, s0.items 
 check("every result has a time and an author (or [deleted])", !s0.noTime && !s0.noAuthor, JSON.stringify([s0.noTime, s0.noAuthor]));
 check("results are numbered 1, 2, 3…", s0.ranks.every((r, i) => r === i + 1), JSON.stringify(s0.ranks));
 check("no empty \"()\" domain", s0.first && !s0.first.domain);
+// hover peek
+const peek = async (sel) => {
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(400);
+  const loc = page.locator(sel).first();
+  if (!(await loc.count())) return null;
+  await loc.hover();
+  await page.waitForFunction(() => { const el = document.getElementById("orr-hoverpost"); return el && el.style.display === "block" && !/loading…/.test(el.textContent) &&
+    Array.from(el.querySelectorAll("img")).every((i) => i.complete); }, null, { timeout: 20000 }).catch(() => {});
+  return page.evaluate(() => {
+    const el = document.getElementById("orr-hoverpost");
+    return el && { shown: el.style.display === "block", text: !!el.querySelector(".orr-peek-text"), media: !!el.querySelector(".orr-peek-media img"),
+      link: (el.querySelector(".orr-peek-link") || {}).textContent || "", none: (el.querySelector(".orr-peek-none") || {}).textContent || "",
+      img: (el.querySelector(".orr-peek-media img") || {}).naturalWidth || 0,
+      clipped: el.classList.contains("orr-peek-clipped"), sample: el.textContent.replace(/\s+/g, " ").trim().slice(0, 90) };
+  });
+};
+const p1 = await peek("#siteTable > .thing.link a.thumbnail");
+await page.screenshot({ path: path.join(outDir, "search-peek-picture.png") });
+console.log("peek (picture):", JSON.stringify(p1));
+check("hovering a result's picture peeks at the post", !!p1 && p1.shown && (p1.text || p1.media || !!p1.link), JSON.stringify(p1));
+check("its picture loads (a ~640px rendition)", !p1 || !p1.media || (p1.img > 0 && p1.img <= 1080), JSON.stringify(p1 && p1.img));
+const p2 = await peek("#siteTable > .thing.link:not(:has(a.thumbnail)) a.title");
+await page.screenshot({ path: path.join(outDir, "search-peek-title.png") });
+console.log("peek (title):", JSON.stringify(p2));
+check("hovering a picture-less result's title shows its text", !p2 || (p2.shown && (p2.text || !!p2.none)), JSON.stringify(p2));
+await page.mouse.move(5, 5);
+await page.waitForTimeout(500);
+check("the peek goes away when the pointer leaves", await page.evaluate(() => { const el = document.getElementById("orr-hoverpost"); return !el || el.style.display !== "block"; }));
+const before = threadReqs.length;
+await peek("#siteTable > .thing.link a.thumbnail");
+check("a second hover reuses the fetched post", threadReqs.length === before && before <= 2, JSON.stringify(threadReqs));
 await page.mouse.move(600, 500);
+await page.waitForTimeout(1500);
+const scrollFrom = threadReqs.length;
 for (let i = 0; i < 10; i++) { await page.mouse.wheel(0, 1200); await page.waitForTimeout(900); }
 await page.waitForTimeout(2000);
+// (results scrolling by under a resting pointer don't each pop up a peek)
+check("no peeks while results scroll under a resting pointer", threadReqs.length - scrollFrom === 0, JSON.stringify(threadReqs.slice(scrollFrom)));
 const s1 = await state();
 console.log(JSON.stringify(s1));
 check("scrolling loads more results", s1.items > s0.items, s0.items + " → " + s1.items);

@@ -1415,6 +1415,35 @@
     return { className: "search-page listing-page", inner };
   }
 
+  // Hovering a search result peeks at the post: its picture, where a link post points,
+  // and its text. The parts come from a t3's data (postPeekParts) or, logged in, from the
+  // row's own hidden expando.
+  function postPeekParts(d) {
+    if (!d) return null;
+    const g = d.is_gallery && d.gallery_data && d.gallery_data.items && d.gallery_data.items[0];
+    const gm = g && d.media_metadata && d.media_metadata[g.media_id];
+    const pv = d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source;
+    const x = d.crosspost_parent_list && d.crosspost_parent_list[0];
+    const url = String(d.url || "");
+    const own = /^https?:\/\/(www\.)?reddit\.com\//i.test(url) || /^https:\/\/(i|v)\.redd\.it\//i.test(url);
+    return {
+      img: d.orr_peek_img || (gm && gm.s && (gm.s.u || gm.s.gif)) || (pv && pv.url) || "",
+      video: !!d.is_video,
+      gallery: g ? d.gallery_data.items.length : 0,
+      link: !d.is_self && /^https?:\/\//i.test(url) && !own ? url : "",
+      html: d.selftext_html || (x && x.selftext_html) || "",
+    };
+  }
+  function postPeekHtml(p) {
+    if (!p) return '<div class="orr-peek-none">couldn\'t load this post</div>';
+    let h = "";
+    if (/^https:\/\//.test(p.img || ""))
+      h += `<div class="orr-peek-media">${p.video ? '<span class="orr-peek-badge">&#9654; video</span>' : p.gallery > 1 ? `<span class="orr-peek-badge">${esc(p.gallery)} images</span>` : ""}<img src="${esc(p.img)}" alt=""></div>`;
+    if (p.link) h += `<div class="orr-peek-link">${esc(p.link.replace(/^https?:\/\/(www\.)?/i, "").slice(0, 120))}</div>`;
+    if (p.html) h += `<div class="orr-peek-text">${p.html}</div>`; // (a post body: already sanitised markup)
+    return h || '<div class="orr-peek-none">no description</div>';
+  }
+
   globalThis.ORR_REBUILD = {
     esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType, foldReadSubtrees,
@@ -1425,7 +1454,7 @@
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
-    commentBlock, linkifyEmails, canonicalThreadPath, searchPostsFromHtml, htmlSearchPath,
+    commentBlock, linkifyEmails, canonicalThreadPath, searchPostsFromHtml, htmlSearchPath, postPeekParts, postPeekHtml,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -1882,6 +1911,21 @@ html.orr-lb-open { overflow:hidden; }
 /* RES-style hover preview */
 #orr-hoverimg { position:fixed; z-index:2147483630; display:none; pointer-events:none; background:#fff; border:1px solid #888; box-shadow:0 4px 20px rgba(0,0,0,.4); padding:2px; }
 #orr-hoverimg img { display:block; max-width:44vw; max-height:80vh; }
+/* search results: hover peek at a post (picture, link, text) */
+#orr-hoverpost { position:fixed; z-index:2147483630; display:none; pointer-events:none; box-sizing:border-box; width:min(520px, 46vw);
+  max-height:80vh; overflow:hidden; background:#fff; color:#222; border:1px solid #888; box-shadow:0 4px 20px rgba(0,0,0,.4);
+  padding:8px 10px; font:12px verdana,arial,sans-serif; line-height:1.45; }
+#orr-hoverpost .orr-peek-media { position:relative; margin-bottom:6px; }
+#orr-hoverpost .orr-peek-media:not(.orr-peek-loaded) { min-height:120px; background:#eee; }
+#orr-hoverpost .orr-peek-media:not(.orr-peek-loaded):before { content:"loading image\\2026"; position:absolute; left:8px; top:8px; color:#888; font-style:italic; }
+#orr-hoverpost .orr-peek-media img { display:block; max-width:100%; max-height:45vh; margin:0 auto; }
+#orr-hoverpost .orr-peek-badge { position:absolute; left:4px; top:4px; padding:1px 6px; border-radius:3px; background:rgba(0,0,0,.65); color:#fff; font-size:11px; }
+#orr-hoverpost .orr-peek-link { color:#888; margin-bottom:6px; word-break:break-all; }
+#orr-hoverpost .orr-peek-none { color:#888; font-style:italic; }
+#orr-hoverpost .md { font-size:12px; max-width:none; }
+#orr-hoverpost .md img { max-width:100%; height:auto; }
+#orr-hoverpost.orr-peek-clipped:after { content:"\\2026 open the post to read the rest"; position:absolute; left:0; right:0; bottom:0;
+  padding:22px 10px 6px; background:linear-gradient(rgba(255,255,255,0), #fff 55%); color:#888; font-style:italic; }
 .orr-pdf { width:100%; height:80vh; background:#fff; }
 .orr-directaudio { width:100%; max-width:640px; display:block; }
 /* post expando images/videos scale to fit the window (never cut off); click opens the lightbox */
@@ -2073,6 +2117,9 @@ html.orr-night .tabmenu li a, html.orr-night #header-bottom-right, html.orr-nigh
 html.orr-night #header-bottom-right { background:#2a2f31 !important; }
 html.orr-night .thing.comment .child { border-color:#343536 !important; }
 html.orr-night #orr-hovercard { background:#242526 !important; color:#d7dadc !important; }
+html.orr-night #orr-hoverpost { background:#1a1a1b !important; color:#d7dadc !important; border-color:#474748 !important; }
+html.orr-night #orr-hoverpost .orr-peek-media:not(.orr-peek-loaded) { background:#272729; }
+html.orr-night #orr-hoverpost.orr-peek-clipped:after { background:linear-gradient(rgba(26,26,27,0), #1a1a1b 55%); }
 html.orr-night .menuarea { background:transparent !important; color:#d7dadc !important; }
 html.orr-night .orr-inline-img img { border-color:#343536 !important; }
 html.orr-night .side, html.orr-night .side * { background-color:transparent !important; }
@@ -3434,15 +3481,34 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (!hoverPreviewOn) return;
       const a = e.target.closest && e.target.closest(".thing.link a.title, .thing.link a.thumbnail");
       if (!a) return;
+      if (onSearchPage()) return; // (search results peek on pointer movement: see mousemove)
       const src = hoverPreviewSrc(a.closest(".thing.link"));
       if (!src) return;
       clearTimeout(hoverImgTimer);
       hoverImgTimer = setTimeout(() => showHoverImg(src), 200);
     }, true);
     document.addEventListener("mousemove", (e) => {
+      const moved = e.clientX !== lastMouseX || e.clientY !== lastMouseY;
       lastMouseX = e.clientX; lastMouseY = e.clientY;
+      // Search results: peek when the pointer moves onto a result's picture or title —
+      // not when results scroll by under a resting pointer (browsers send mouseover then,
+      // and a peek per title would pop up all through a scroll).
+      if (moved && hoverPreviewOn && onSearchPage()) {
+        const a = e.target.closest && e.target.closest(".thing.link a.title, .thing.link a.thumbnail");
+        const thing = a && a.closest(".thing.link");
+        if (thing && thing !== peekPending && thing.getAttribute("data-fullname") !== peekFor) {
+          peekPending = thing;
+          clearTimeout(hoverImgTimer);
+          hoverImgTimer = setTimeout(() => {
+            peekPending = null;
+            if (a.matches(":hover")) showPostPeek(thing);
+          }, 300);
+        }
+      }
       const el = document.getElementById("orr-hoverimg");
       if (el && el.style.display === "block") positionHoverImg(el, e.clientX, e.clientY);
+      const pk = document.getElementById("orr-hoverpost");
+      if (pk && pk.style.display === "block") positionHoverImg(pk, e.clientX, e.clientY);
     }, true);
     document.addEventListener("mouseout", (e) => {
       const a = e.target.closest && e.target.closest(".thing.link a.title, .thing.link a.thumbnail");
@@ -3887,7 +3953,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   // ---- RES-style hover preview (peek an image/gif without clicking) ----
   let hoverImgTimer = null;
-  function hideHoverImg() { clearTimeout(hoverImgTimer); const el = document.getElementById("orr-hoverimg"); if (el) el.style.display = "none"; }
+  function hideHoverImg() {
+    clearTimeout(hoverImgTimer);
+    peekPending = null;
+    const el = document.getElementById("orr-hoverimg");
+    if (el) el.style.display = "none";
+    const pk = document.getElementById("orr-hoverpost");
+    if (pk) pk.style.display = "none";
+    peekFor = null;
+  }
   function positionHoverImg(el, x, y) {
     const vw = window.innerWidth, vh = window.innerHeight;
     const w = el.offsetWidth || 400, h = el.offsetHeight || 300;
@@ -3899,6 +3973,75 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!thing) return null;
     const gi = thing.querySelector(".expando .orr-gimg, .expando img.preview, .expando-container img");
     return gi && gi.getAttribute("src") ? gi.getAttribute("src") : null; // only image/gallery posts
+  }
+  // Search results: hovering a result's picture or title peeks at the post — its text,
+  // its picture, where a link post points. Logged in, the row's hidden expando has it;
+  // logged out, the results carry none of it, so the post is fetched (just the post, see
+  // fetchPostOnly) and kept for the next hover.
+  const peekCache = new Map(); // fullname → Promise<html>
+  let peekFor = null, peekPending = null; // the post shown / waiting out the hover delay
+  function onSearchPage() { return !!document.body && document.body.classList.contains("search-page"); }
+  function peekFromRow(thing) {
+    const md = thing.querySelector(".expando .md");
+    const a = thing.querySelector("a.title");
+    const href = (a && a.getAttribute("href")) || "";
+    return postPeekHtml({
+      img: hoverPreviewSrc(thing) || "",
+      video: !!thing.querySelector(".expando video, .expando .orr-video"),
+      link: /^https?:\/\//i.test(href) && !/^https?:\/\/([a-z0-9-]+\.)?(reddit\.com|redd\.it)\//i.test(href) ? href : "",
+      html: md ? md.outerHTML : "",
+    });
+  }
+  function peekHtmlFor(thing) {
+    if (!jsonBlocked || thing.querySelector(".expando")) return Promise.resolve(peekFromRow(thing));
+    const name = thing.getAttribute("data-fullname") || "";
+    const path = thing.getAttribute("data-permalink") || "";
+    if (peekCache.has(name)) return peekCache.get(name);
+    if (!/^\/(r|user)\/[^/]+\/comments\/[a-z0-9]+\//i.test(path)) return Promise.resolve(postPeekHtml(null));
+    const p = fetchPostOnly(path).then((d) => postPeekHtml(postPeekParts(d)), () => {
+      peekCache.delete(name); // (try again on the next hover)
+      return postPeekHtml(null);
+    });
+    peekCache.set(name, p);
+    if (peekCache.size > 150) peekCache.delete(peekCache.keys().next().value);
+    return p;
+  }
+  function fitPeek(el) {
+    el.classList.remove("orr-peek-clipped");
+    el.classList.toggle("orr-peek-clipped", el.scrollHeight > el.clientHeight + 2);
+    positionHoverImg(el, lastMouseX, lastMouseY);
+  }
+  function showPostPeek(thing) {
+    if (!thing || !thing.isConnected) return;
+    let el = document.getElementById("orr-hoverpost");
+    if (!el) { el = document.createElement("div"); el.id = "orr-hoverpost"; document.body.appendChild(el); }
+    const name = thing.getAttribute("data-fullname") || "";
+    if (peekFor === name) return; // (already showing / loading it: the pointer just moved within the row's link)
+    peekFor = name;
+    let ready = false;
+    peekHtmlFor(thing).then((html) => {
+      ready = true;
+      if (peekFor !== name) return; // the pointer moved on
+      el.innerHTML = html;
+      el.style.display = "block";
+      el.querySelectorAll("img").forEach((img) => img.addEventListener("load", () => {
+        const box = img.closest(".orr-peek-media");
+        if (box) box.classList.add("orr-peek-loaded");
+        if (peekFor === name) fitPeek(el);
+      }, { once: true }));
+      el.querySelectorAll(".orr-peek-media img").forEach((img) => img.addEventListener("error", () => {
+        img.closest(".orr-peek-media").remove(); // (an expired / missing image: just the text)
+        if (!el.firstChild) el.innerHTML = '<div class="orr-peek-none">no description</div>';
+        if (peekFor === name) fitPeek(el);
+      }, { once: true }));
+      fitPeek(el);
+    });
+    setTimeout(() => {
+      if (ready || peekFor !== name) return;
+      el.innerHTML = '<div class="orr-peek-none">loading…</div>';
+      el.style.display = "block";
+      fitPeek(el);
+    }, 0);
   }
   function showHoverImg(src) {
     let el = document.getElementById("orr-hoverimg");
@@ -5178,6 +5321,51 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       { kind: "Listing", data: { children: [{ kind: "t3", data: post }] } },
       { kind: "Listing", data: { children: tree } },
     ];
+  }
+
+  // Just the post from a thread page, for a hover peek. The post comes first (~60 KB of a
+  // page that runs to ~1 MB with its comments), so read until it's complete and stop.
+  async function fetchPostOnly(pathname) {
+    const res = await redditFetch(location.origin + pathname, { credentials: "include", headers: { Accept: HTML_ACCEPT } });
+    if (!res.ok) {
+      const err = new Error("HTTP " + res.status);
+      err.status = res.status;
+      throw err;
+    }
+    let text = "";
+    const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+    if (!reader) text = await res.text();
+    else {
+      const dec = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const from = Math.max(0, text.length - 20);
+        text += dec.decode(value, { stream: true });
+        if (text.indexOf("</shreddit-post>", from) >= 0 || text.length > 2e6) {
+          reader.cancel().catch(() => {}); // the comments aren't needed
+          break;
+        }
+      }
+    }
+    const el = parseHtmlDoc(text).querySelector("shreddit-post");
+    const d = el && postFromShreddit(el);
+    // a ~640px rendition for the peek, not the full-size original the expando uses
+    const img = d && el.querySelector("[slot='post-media-container'] img[data-post-media-primary], gallery-carousel li[slot^='page-'] img[srcset]");
+    if (img) d.orr_peek_img = srcNear(img, 640);
+    return d;
+  }
+  // The srcset candidate closest to `want` px wide (at least it, if there is one).
+  function srcNear(img, want) {
+    let best = "", bw = 0;
+    (img.getAttribute("srcset") || "").split(",").forEach((part) => {
+      const m = /^\s*(\S+)\s+(\d+)w\s*$/.exec(part);
+      if (!m) return;
+      const w = +m[2];
+      if (!best || (bw < want ? w > bw : w >= want && w < bw)) { best = m[1]; bw = w; }
+    });
+    const src = best || img.getAttribute("src") || "";
+    return /^https:\/\//.test(src) ? src : "";
   }
 
   // ---- logged-out user profiles: Reddit's profile feed partials ----
