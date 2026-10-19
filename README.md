@@ -228,8 +228,12 @@ attributes) and maps it onto the JSON shape the renderer expects.
   videos play inline with sound. The sidebar shows new Reddit's community widgets
   (rules, bookmarks, …) rather than old Reddit's sidebar text, and stickies show
   without a post time or author. User profiles work too (overview, submitted and
-  comments, every sort, with karma and cake day in the sidebar). Search, wiki pages,
-  a profile's private tabs (saved, upvoted…), r/all, multireddits and combined
+  comments, every sort, with karma and cake day in the sidebar). Search works too
+  (every sort and time filter, a subreddit's own search), read from new Reddit's
+  search results: they don't say what kind of post each one is, so every title opens
+  its thread, there's no `(domain)`, and posts without a picture get no thumbnail;
+  Reddit leaves NSFW posts out of logged-out search. Wiki pages,
+  a profile's private tabs (saved, upvoted…), multireddits and combined
   `r/a+b` listings have no logged-out data source, so those fall back to normal
   Reddit. Adult (NSFW) communities and posts first show
   old reddit's "over 18?" page: one click on **continue**, remembered on that device. Anything that fails **falls back** to letting
@@ -292,7 +296,7 @@ A single content script ([common.js](common.js) + [rebuild.js](rebuild.js)) runs
   `/api/me.json`, `/about.json`, `morechildren`, …) rides your logged-in session;
   actions you take (vote, save, comment, …) POST to Reddit's classic `/api/…` with
   the modhash.
-  Logged out, those `403`, so listings and threads are parsed from Reddit's own
+  Logged out, those `403`, so listings, threads and search are parsed from Reddit's own
   server-rendered HTML instead (`/svc/shreddit/…` partials and the thread page).
 - **Render** — [rebuild.js](rebuild.js) builds old Reddit's real markup from the JSON
   and swaps out new Reddit's `<body>`, styled by

@@ -4,7 +4,7 @@
 // full document loads, and no fetches by new Reddit's own router (`screen_view_count`).
 // Clicks only on-screen links — Playwright would scroll an off-screen target into view
 // first, which no user does (and which once looked like "Back loses your place").
-//   node nav-check.mjs <ext-dir> [listing-url]
+//   node nav-check.mjs <ext-dir> [listing-url]   (a search results URL works too)
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright";
 import fs from "node:fs";
@@ -65,7 +65,7 @@ check("Back: every post back, same scroll position", back.path === deep.path && 
 check("Back: the post you came from is on screen", backSeen === "yes", backSeen);
 check("Forward then Back again", /\/comments\//.test(fwd.path) && back2.items >= deep.items && Math.abs(back2.y - deep.y) <= 2, JSON.stringify([fwd, back2]));
 // a fresh visit (a link to the listing, not Back) starts over at page 1, at the top
-await page.evaluate((u) => { const a = document.createElement("a"); a.href = new URL(u).pathname; a.id = "orr-test-link"; a.textContent = "x"; document.querySelector(".content").prepend(a); }, listingUrl);
+await page.evaluate((u) => { const a = document.createElement("a"); const l = new URL(u); a.href = l.pathname + l.search; a.id = "orr-test-link"; a.textContent = "x"; document.querySelector(".content").prepend(a); }, listingUrl);
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.click("#orr-test-link");
 await settleOn("#siteTable .thing.link");

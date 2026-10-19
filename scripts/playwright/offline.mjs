@@ -1,4 +1,5 @@
 // Offline check of the logged-out HTML parsers against saved Reddit HTML (no network).
+// (a file with "search" in its name is a search results page / partial)
 // Loads common.js + rebuild.js into a blank page and runs ORR_REBUILD's parsers.
 //   node offline.mjs <repo-dir> <saved.html>...
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
@@ -15,7 +16,8 @@ await page.addScriptTag({ content: "globalThis.chrome = { runtime: { getURL: (p)
 for (const f of ["common.js", "rebuild.js"]) await page.addScriptTag({ content: fs.readFileSync(path.join(repo, f), "utf8") });
 let fail = 0;
 const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name + (info ? "  " + info : "")); if (!ok) fail++; };
-for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(x)))) {
+const isSearch = (x) => /search/.test(path.basename(x));
+for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(x)) && !isSearch(x))) {
   const html = fs.readFileSync(f, "utf8");
   const r = await page.evaluate((html) => {
     const R = globalThis.ORR_REBUILD;
@@ -217,6 +219,48 @@ const canon = await page.evaluate(() => {
 });
 check("short thread links follow Reddit's redirect (same post, reddit only)",
   JSON.stringify(canon) === JSON.stringify(["/r/Salary/comments/1x5awcf/software_engineer_x/", "/r/Salary/comments/1x5awcf/software_engineer_x/", null, null, null, "/r/Salary/comments/1x5awcf/slug_y/", null]), JSON.stringify(canon));
+// Logged-out search results (*search* in the file name): new Reddit's search page or its
+// /svc/shreddit/…/search/ partial → t3 data (no <shreddit-post> there), plus the next page
+let searchThumbs = 0;
+for (const f of files.filter(isSearch)) {
+  const r = await page.evaluate((html) => {
+    const R = globalThis.ORR_REBUILD;
+    const { posts, next } = R.searchPostsFromHtml(R.parseHtmlDoc(html));
+    return {
+      n: posts.length, next: next && next.replace(/cursor=.*/, "cursor=…"),
+      first: posts[0] && { name: posts[0].name, title: posts[0].title.slice(0, 50), sub: posts[0].subreddit, by: posts[0].author, score: posts[0].score, comments: posts[0].num_comments, thumb: (posts[0].thumbnail || "").slice(0, 40) },
+      bad: posts.filter((p) => !/^t3_[a-z0-9]+$/.test(p.name) || !/^\/(r|user)\/[^/]+\/comments\/[a-z0-9]+\//.test(p.permalink) || !p.title || !p.subreddit || !p.author || !(p.created_utc > 1.1e9)).map((p) => p.name),
+      counted: posts.filter((p) => p.score > 0 || p.num_comments > 0).length,
+      thumbs: posts.filter((p) => p.thumbnail).length,
+      items: (() => { try { return posts.map((p) => R.buildItem(p, { showSub: true, expandoButton: true })).join(""); } catch (e) { return "ERR " + e; } })(),
+      page: R.buildSearchPage({ data: { children: posts.map((d) => ({ kind: "t3", data: d })), after: next } }, { params: { q: "x" } }).inner.length,
+    };
+  }, fs.readFileSync(f, "utf8"));
+  console.log("\n== " + path.basename(f));
+  console.log(JSON.stringify(Object.assign({}, r, { items: r.items.length })));
+  check("search results parse", r.n >= 3 && !r.bad.length, JSON.stringify(r.bad));
+  check("search results carry vote / comment counts", r.counted >= r.n / 2, r.counted + " of " + r.n);
+  searchThumbs += r.thumbs;
+  check("search results build (no empty domain)", /class="thing /.test(r.items) && !/\(<a href="\/domain\/\/">/.test(r.items) && r.page > 0);
+  check("search results continue on a partial", !!r.next && /^\/svc\/shreddit\/(r\/[^/]+\/)?search\/\?/.test(r.next), r.next);
+}
+if (files.some(isSearch)) check("search results carry thumbnails", searchThumbs > 0, searchThumbs + " thumbnails");
+// Logged-out search URL: posts only, old reddit's sort / time / restrict_sr mapped onto new Reddit's
+const spath = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  return [
+    R.htmlSearchPath({ sub: null }, { q: "Gemma 5 LLM capabilities", sort: "relevance", t: "all" }),
+    R.htmlSearchPath({ sub: "LocalLLaMA" }, { q: "gemma", sort: "top", t: "week", restrict_sr: true }),
+    R.htmlSearchPath({ sub: "LocalLLaMA" }, { q: "gemma", sort: "new", t: "all", restrict_sr: false }),
+    R.htmlSearchPath({ sub: "../x" }, { q: "a&b", restrict_sr: true }),
+  ];
+});
+check("logged-out search paths", JSON.stringify(spath) === JSON.stringify([
+  "/svc/shreddit/search/?q=Gemma+5+LLM+capabilities&type=posts",
+  "/svc/shreddit/r/LocalLLaMA/search/?q=gemma&type=posts&sort=top&t=week",
+  "/svc/shreddit/search/?q=gemma&type=posts&sort=new",
+  "/svc/shreddit/search/?q=a%26b&type=posts",
+]), JSON.stringify(spath));
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");

@@ -48,6 +48,7 @@
   }
 
   function thumbnailHtml(d, permalink) {
+    if (d.orr_no_thumb) return ""; // (post type unknown: no self/link icon to pick)
     const t = d.thumbnail;
     if (t && /^https?:\/\//.test(t) && !d.over_18) {
       const w = d.thumbnail_width || 70;
@@ -428,7 +429,7 @@
       `<p class="title">` +
       `<a class="title may-blank" href="${esc(linkHref)}" tabindex="1">${esc(d.title)}</a>` +
       flairHtml + spoilerTag + nsfwTag +
-      ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` +
+      (d.domain ? ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` : "") +
       `</p>` +
       // (time/author can be unknown: a logged-out sticky comes from a highlight card that carries neither)
       `<p class="tagline">${d.created_utc || d.author ? "submitted" : ""}` +
@@ -1424,7 +1425,7 @@
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
-    commentBlock, linkifyEmails, canonicalThreadPath,
+    commentBlock, linkifyEmails, canonicalThreadPath, searchPostsFromHtml, htmlSearchPath,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -4966,6 +4967,113 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return json;
   }
 
+  // Logged out, search.json is refused too: new Reddit's search results partial (posts
+  // only) instead. A subreddit search with "limit my search to r/…" searches just that
+  // subreddit; without it, all of Reddit, like old reddit.
+  function htmlSearchPath(route, params) {
+    const q = new URLSearchParams();
+    q.set("q", params.q || "");
+    q.set("type", "posts");
+    if (params.sort && params.sort !== "relevance") q.set("sort", params.sort);
+    if (params.t && params.t !== "all") q.set("t", params.t);
+    const sub = route.sub && params.restrict_sr && /^[A-Za-z0-9_]+$/.test(route.sub) ? route.sub : "";
+    return "/svc/shreddit" + (sub ? "/r/" + sub : "") + "/search/?" + q.toString();
+  }
+
+  // One page of new Reddit's search results (~7 posts) → t3 data, plus the partial that
+  // continues it. There's no <shreddit-post> here: each result's title link sits in a
+  // <search-telemetry-tracker> whose tracking JSON names the post, its author and its
+  // subreddit; the card around it has the time, the vote and comment counts and a
+  // thumbnail. (Nothing says what kind of post it is or where a link post points, so
+  // every title opens the thread.)
+  function searchPostsFromHtml(doc) {
+    const posts = [];
+    doc.querySelectorAll("a[data-testid='post-title']").forEach((a) => {
+      const tr = a.closest("search-telemetry-tracker[data-faceplate-tracking-context]");
+      let ctx = null;
+      try { ctx = tr && JSON.parse(tr.getAttribute("data-faceplate-tracking-context")); } catch (e) { /* not a post */ }
+      const post = (ctx && ctx.post) || {};
+      if (!/^t3_[a-z0-9]+$/i.test(post.id || "") || posts.some((p) => p.name === post.id)) return;
+      const card = a.closest("[data-testid='search-sdui-post'], [data-testid='search-post-with-content-preview']") || tr.parentElement || tr;
+      const sr = ctx.subreddit || {};
+      const href = a.getAttribute("href") || "";
+      const id = post.id.slice(3);
+      const d = {
+        name: post.id, id,
+        permalink: /^\/(r|user)\/[^/]+\/comments\/[a-z0-9]+\//i.test(href) ? href : "/comments/" + id + "/",
+        title: post.title || a.getAttribute("aria-label") || a.textContent.replace(/\s+/g, " ").trim(),
+        author: (ctx.profile && ctx.profile.name) || "[deleted]",
+        subreddit: sr.name || (/^\/r\/([^/]+)\//.exec(href) || [])[1] || "",
+        domain: "", score: 0, num_comments: 0,
+        over_18: !!post.nsfw, spoiler: !!post.spoiler, subreddit_nsfw: !!sr.nsfw,
+      };
+      d.url = absUrl(d.permalink);
+      const ts = card.querySelector("faceplate-timeago[ts]");
+      d.created_utc = ts ? isoToUtc(ts.getAttribute("ts")) : 0;
+      // "1.2K votes · 345 comments"
+      card.querySelectorAll("[data-testid='search-counter-row'] faceplate-number").forEach((n) => {
+        const v = parseInt(n.getAttribute("number"), 10);
+        const num = isNaN(v) ? parseCount(n.textContent) || 0 : v;
+        const what = (n.parentElement || n).textContent;
+        if (/comment/i.test(what)) d.num_comments = num;
+        else if (/vote/i.test(what)) d.score = num;
+      });
+      const th = card.querySelector("[data-testid='search_post_thumbnail']");
+      const thumb = th ? smallestSrc(th) : "";
+      // Old reddit draws no thumbnail where a post has none. (Which icon it would
+      // get, text or link, can't be told: the results don't say what kind of post it is.)
+      if (/^https:\/\//.test(thumb)) d.thumbnail = thumb;
+      else if (!d.over_18) d.orr_no_thumb = true;
+      posts.push(d);
+    });
+    const more = doc.querySelector("faceplate-partial[src*='cursor=']");
+    const next = more && more.getAttribute("src");
+    return { posts, next: isPartialPath(next) && /\/search\/\?/.test(next) ? next : null };
+  }
+
+  // A page of search results in the .json shape: `after` is the partial for the next page.
+  async function fetchSearchHtml(route, params) {
+    const first = params.after && isPartialPath(params.after) ? params.after : htmlSearchPath(route, params);
+    const key = "html:" + first;
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    const posts = [];
+    let next = null, path = first;
+    // ~7 results a call: keep paging (bounded) until there's a page's worth
+    for (let i = 0; i < 3 && path; i++) {
+      const r = searchPostsFromHtml(await fetchHtmlDoc(path));
+      r.posts.forEach((d) => { if (!posts.some((p) => p.name === d.name)) posts.push(d); });
+      next = r.posts.length ? r.next : null;
+      if (posts.length >= 10) break;
+      path = next;
+    }
+    const json = { kind: "Listing", data: { children: posts.map((d) => ({ kind: "t3", data: d })), after: next, before: null } };
+    cache.set(key, { json, t: Date.now() });
+    return json;
+  }
+
+  async function fetchSearch(route, params) {
+    if (!jsonBlocked) {
+      const url = searchJsonUrl(route, params);
+      const hit = cache.get(url);
+      if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+      const res = await redditFetch(url);
+      if (!isJsonBlock(res)) {
+        if (!res.ok) {
+          const err = new Error("HTTP " + res.status);
+          err.status = res.status;
+          err.retryAfter = retryAfterOf(res);
+          throw err;
+        }
+        const json = await res.json();
+        cache.set(url, { json, t: Date.now() });
+        return json;
+      }
+      jsonBlocked = true;
+    }
+    return fetchSearchHtml(route, params);
+  }
+
   // Only ever fetch/POST same-origin Reddit partials taken from parsed HTML.
   function isPartialPath(p) {
     return typeof p === "string" && p.indexOf("/svc/shreddit/") === 0 && p.indexOf("..") < 0;
@@ -5655,19 +5763,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (firstLoad) watchdog = setTimeout(() => { if (!active) unhideGuard(); }, 8000);
     let json;
     try {
-      const jsonUrl = searchJsonUrl(route, params);
-      const hit = cache.get(jsonUrl);
-      if (hit && Date.now() - hit.t < CACHE_TTL) json = hit.json;
-      else {
-        const res = await redditFetch(jsonUrl);
-        if (!res.ok) {
-          const e = new Error("HTTP " + res.status);
-          e.status = res.status;
-          throw e;
-        }
-        json = await res.json();
-        cache.set(jsonUrl, { json, t: Date.now() });
-      }
+      json = await fetchSearch(route, params);
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
@@ -5680,7 +5776,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (watchdog) clearTimeout(watchdog);
     await ensureCss();
-    const startCount = params.after ? parseInt(params.count || "25", 10) : 0;
+    // (logged out, a "t3_…" after can't be followed: that's page 1 again)
+    const startCount = params.after && (!jsonBlocked || isPartialPath(params.after)) ? parseInt(params.count || "25", 10) || 0 : 0;
     active = true; // before replaceBody(): see loadListing's comment on why
     replaceBody(buildSearchPage(json, { route, params, startCount, me: meCached }), (params.q ? params.q + " — " : "") + "search — old reddit");
     unhideGuard();
@@ -5690,10 +5787,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const c0 = startCount + (l0.children || []).filter((c) => c.kind === "t3").length;
     setupInfinite(
       async (after, count) => {
-        const u = searchJsonUrl(route, Object.assign({}, params, { after, before: null, count }));
-        const r2 = await redditFetch(u);
-        if (!r2.ok) { const e = new Error("HTTP " + r2.status); e.status = r2.status; e.retryAfter = retryAfterOf(r2); throw e; }
-        const j2 = await r2.json();
+        const j2 = await fetchSearch(route, Object.assign({}, params, { after, before: null, count }));
         const kids = (((j2 && j2.data) || {}).children || []).filter((c) => c.kind === "t3");
         const html = kids
           .map((c, i) => buildItem(c.data, { rank: count + 1 + i, odd: (count + i) % 2 === 0, showSub: true, expandoButton: true }))
