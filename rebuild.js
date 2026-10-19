@@ -3249,20 +3249,35 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     for (let n = el && el.nodeType === 1 ? el : el && el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
       const ox = getComputedStyle(n).overflowX;
       if ((ox === "auto" || ox === "scroll") && n.scrollWidth > n.clientWidth + 1) {
-        if (dx > 0 ? n.scrollLeft < n.scrollWidth - n.clientWidth - 1 : n.scrollLeft > 0) return true;
+        if (dx > 0 ? n.scrollLeft < n.scrollWidth - n.clientWidth - 1 : n.scrollLeft > 0) return n;
       }
     }
-    return false;
+    return null;
   }
-  function onPinchWheel(e) {
+  let pinchSkipLogged = 0;
+  function pinchSkip(why) { // (debug: why a sideways scroll was left alone — at most every 2s)
+    const t = Date.now();
+    if (t - pinchSkipLogged > 2000) { pinchSkipLogged = t; pinchLog("left alone:", why); }
+  }
+  function onPinchWheel(e, fromPassive) {
     const vv = window.visualViewport;
-    if (!active || !vv || vv.scale <= 1.01 || e.ctrlKey || e.defaultPrevented) return; // (ctrl+wheel = the pinch itself)
+    if (!active || !vv || vv.scale <= 1.01 || e.ctrlKey) return; // (ctrl+wheel = the pinch itself)
+    if (document.getElementById("orr-lightbox")) return; // the image viewer pans its own image
     let dx = 0, kind = "side";
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) dx = e.deltaX;
     else if (e.shiftKey && e.deltaY) { dx = e.deltaY; kind = "shift"; } // Shift + scroll = sideways
     else return;
     if (e.deltaMode === 1) dx *= 16; else if (e.deltaMode === 2) dx *= vv.width;
-    if (scrollsSideways(e.target, dx)) return;
+    const scroller = scrollsSideways(e.target, dx);
+    if (scroller) { pinchSkip("something under the pointer scrolls sideways itself: " + scroller.tagName.toLowerCase() + "." + String(scroller.className).split(" ")[0]); return; }
+    // A cancelable scroll (a real touchpad's, in the user's Chrome) we simply take over: pan
+    // the view ourselves and cancel the browser's own handling — no guessing whether it would
+    // have panned (theirs never does; elsewhere this keeps it from moving twice).
+    if (e.cancelable && !fromPassive) {
+      if (panPinchView(dx)) e.preventDefault();
+      else pinchSkip("at the edge — nothing to pan");
+      return;
+    }
     if (pinchNative[kind] === true) {
       // The browser pans it itself — unless several sideways scrolls in a row leave the view
       // exactly where it was (at the same zoom): then that verdict was wrong (e.g. it saw the
@@ -3324,7 +3339,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const vv = window.visualViewport;
     if (!active || pinchWheelOn || !vv || vv.scale <= 1.01) return;
     syncPinchWheel(); // from the next event on
-    onPinchWheel(e); // and this one (no preventDefault from a passive listener — nothing else moves it anyway)
+    onPinchWheel(e, true); // and this one (a passive listener can't cancel it)
   }
 
   // ---- pinch zoom: a horizontal scrollbar for the magnified view ----
