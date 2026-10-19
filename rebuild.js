@@ -854,6 +854,7 @@
     if (/^www\./i.test(raw)) return "https://" + raw;
     if (/^\/(?!\/)/.test(raw)) return raw;
     if (/^(r|u|user)\//i.test(raw)) return "/" + raw;
+    if (MAILTO_RE.test(raw)) return raw;
     return null;
   }
   function mdInline(text) {
@@ -872,6 +873,8 @@
       const href = mdSafeHref(url);
       return href ? pre + keep(`<a href="${esc(href)}" target="_blank" rel="noopener nofollow">${url}</a>`) : m;
     });
+    s = s.replace(/(^|[^\w.%+\-/\u0000])([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,24})(?![\w-])/g,
+      (m, pre, em) => pre + keep(`<a href="mailto:${esc(em)}">${esc(em)}</a>`)); // emails, like Reddit
     s = s.replace(/(^|[^\w/\u0000])(\/?)((?:r|u)\/[A-Za-z0-9_][A-Za-z0-9_-]{1,20})(?![\w-])/g,
       (m, pre, slash, path) => pre + keep(`<a href="/${path}">${slash}${path}</a>`));
     s = mdEmph(s).replace(/ {2,}\n/g, "<br>");
@@ -1421,7 +1424,7 @@
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
-    commentBlock,
+    commentBlock, linkifyEmails,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -3800,6 +3803,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function enhanceComments(scope) {
     if (!document.querySelector(".commentarea")) return;
+    linkifyEmails(scope || document);
     applyLoginState(scope || document);
     markOP();
     addParentLinks();
@@ -4097,10 +4101,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     wireEmbedGates(document);
     if (document.querySelector(".commentarea")) rememberVisit();
     observeMores();
+    linkifyEmails(document);
     applyLoginState(document);
     fetchMe().then(() => applyLoginState(document));
   }
   function enhanceNewItems(scope) {
+    linkifyEmails(scope || document);
     applyLoginState(scope || document);
     markShownRead(scope || document); // (inbox pages only)
     markVisited(scope || document);
@@ -4256,7 +4262,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       let attrs = "";
       if (tag === "A") {
         const href = n.getAttribute("href") || "";
-        if (/^(https?:\/\/|\/(?!\/)|#)/i.test(href)) attrs += ` href="${esc(href)}"`;
+        if (/^(https?:\/\/|\/(?!\/)|#)/i.test(href) || MAILTO_RE.test(href)) attrs += ` href="${esc(href)}"`;
       } else if (tag === "IMG") {
         const src = n.getAttribute("src") || "";
         if (!/^https:\/\//i.test(src)) return;
@@ -4275,6 +4281,45 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       out += MD_VOID[tag] ? `<${t}${attrs}>` : `<${t}${attrs}>${cleanMd(n, opts)}</${t}>`;
     });
     return out;
+  }
+
+  // An email link: mailto: plus an address (no other scheme, no markup characters).
+  const MAILTO_RE = /^mailto:[^\s"'<>()\\]+@[^\s"'<>()\\]+$/i;
+  // Email addresses written as plain text in a post / comment / sidebar become mailto:
+  // links, like on new Reddit. (Logged out, Reddit's own mailto links come through
+  // cleanMd; logged in, the JSON's HTML can carry them as plain text.) Built as DOM
+  // nodes, never markup; text already inside a link or code is left alone.
+  const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,24}(?![\w-])/g;
+  function linkifyEmails(scope) {
+    const root = scope && scope.querySelectorAll ? scope : document;
+    const mds = Array.from(root.querySelectorAll(".md"));
+    if (root.matches && root.matches(".md")) mds.push(root);
+    mds.forEach((md) => {
+      if (md.closest(".orr-editor")) return; // (the preview links its own)
+      const walker = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+      const hits = [];
+      while (walker.nextNode()) {
+        const t = walker.currentNode;
+        if (t.nodeValue.indexOf("@") >= 0 && !t.parentElement.closest("a, code, pre, textarea")) hits.push(t);
+      }
+      hits.forEach((t) => {
+        const text = t.nodeValue;
+        EMAIL_RE.lastIndex = 0;
+        let m, last = 0, frag = null;
+        while ((m = EMAIL_RE.exec(text))) {
+          frag = frag || document.createDocumentFragment();
+          frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+          const a = document.createElement("a");
+          a.href = "mailto:" + m[0];
+          a.textContent = m[0];
+          frag.appendChild(a);
+          last = m.index + m[0].length;
+        }
+        if (!frag) return;
+        frag.appendChild(document.createTextNode(text.slice(last)));
+        t.replaceWith(frag);
+      });
+    });
   }
 
   // A media player inside a comment/post body. GIFs (incl. giphy) are silent MP4s on
@@ -4965,7 +5010,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const rail = await fetchRail(sub); // logged out: about.json is blocked
       if (rail) html = buildRailSidebar(rail);
     }
-    if (html && side && side.isConnected) side.insertAdjacentHTML("beforeend", html);
+    if (html && side && side.isConnected) { side.insertAdjacentHTML("beforeend", html); linkifyEmails(side); }
   }
 
   async function fetchRail(sub) {
@@ -6172,7 +6217,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (form.classList.contains("orr-bigedit")) toggleBigEditor(form);
     form.remove();
     const thing = document.getElementById("thing_" + name);
-    if (thing) { inlineImages(thing); flash(thing); }
+    if (thing) { inlineImages(thing); linkifyEmails(thing); flash(thing); }
   }
 
   // ---- subreddits you can't comment in (banned, or approved users only) ----

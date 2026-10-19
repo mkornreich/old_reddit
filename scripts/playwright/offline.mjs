@@ -166,6 +166,40 @@ check("markdown preview never emits handlers / script URLs / unknown tags", li.u
 check("markdown preview: nested list", li.nested);
 ["upvoted", "downvoted", "unvoted", "savedHidden", "lockedNoReply", "linkNoEdit", "archivedPage", "topForm", "ownTabs", "sidebarJoin", "message", "msgPage", "commentBlock"]
   .forEach((k) => check("logged-in markup: " + k, li[k] === true));
+// Email addresses: Reddit's own mailto: links survive cleanMd (they used to lose their href —
+// blue text that went nowhere), plain-text addresses get linked, the preview links them too.
+const mail = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const d = new DOMParser().parseFromString('<div id=x><p><a href="mailto:security@namecheap.com" target="_blank">security@namecheap.com</a> ' +
+    '<a href="javascript:alert(1)">j</a> <a href="mailto:&lt;script&gt;@x">bad</a> <a href="mailto:nobody">noat</a></p></div>', "text/html");
+  const cleaned = R.cleanMd(d.getElementById("x"));
+  const md = document.createElement("div");
+  md.className = "md";
+  md.innerHTML = '<p>write to a.b+c@ex-ample.co.uk, or <a href="https://e.com">x@y.com</a> or <code>e@f.com</code>; not foo@bar or @name</p>';
+  document.body.appendChild(md);
+  R.linkifyEmails(document.body);
+  R.linkifyEmails(document.body); // twice: idempotent
+  const links = Array.from(md.querySelectorAll("a")).map((a) => a.getAttribute("href"));
+  md.remove();
+  return { cleaned, links, preview: R.mdPreview("mail me@x.com or [support](mailto:help@y.org) not a@b") };
+});
+console.log("\nmail:", JSON.stringify(mail));
+check("cleanMd keeps mailto: links, still drops script / malformed ones",
+  /<a href="mailto:security@namecheap.com">security@namecheap.com<\/a>/.test(mail.cleaned) && !/javascript:|script|mailto:nobody/.test(mail.cleaned));
+check("plain-text emails become mailto: links (not inside links / code)",
+  JSON.stringify(mail.links) === JSON.stringify(["mailto:a.b+c@ex-ample.co.uk", "https://e.com"]), JSON.stringify(mail.links));
+check("comment preview links emails", /<a href="mailto:me@x.com">me@x.com<\/a>/.test(mail.preview) && /<a href="mailto:help@y.org"[^>]*>support<\/a>/.test(mail.preview) && !/mailto:a@b/.test(mail.preview), mail.preview);
+for (const f of files.filter((x) => /mailto:/.test(fs.readFileSync(x, "utf8")) && !/right_rail|hover_card/.test(path.basename(x)))) {
+  const n = await page.evaluate((html) => {
+    const R = globalThis.ORR_REBUILD;
+    const doc = R.parseHtmlDoc(html);
+    const post = Array.from(doc.querySelectorAll("shreddit-post")).map(R.postFromShreddit).filter(Boolean)[0];
+    const tree = R.commentsFromHtml(doc, post ? post.name : "");
+    const all = JSON.stringify([tree, post ? post.selftext_html || "" : ""]);
+    return { src: (html.match(/href="mailto:[^"]+"/g) || []).length, kept: (all.match(/href=\\"mailto:[^"\\]+\\"/g) || []).length };
+  }, fs.readFileSync(f, "utf8"));
+  check("thread keeps its mailto: links: " + path.basename(f).slice(0, 50), n.kept >= n.src && n.src > 0, JSON.stringify(n));
+}
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");
