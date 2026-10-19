@@ -1859,6 +1859,13 @@ html.orr-rebuilt:not(.orr-touch-ua) body { min-width:min(820px, var(--orr-conten
    viewer and the big editor still lock scrolling while open. */
 html.orr-rebuilt:not(.orr-lb-open):not(.orr-bigedit-open) { overflow:visible !important; }
 html.orr-rebuilt body { overflow:visible !important; }
+/* pinch zoom: our horizontal scrollbar for the magnified view (sized/placed by placePinchBar) */
+#orr-pinchbar { position:absolute; z-index:2147483600; display:none; margin:0; padding:0; box-sizing:border-box; background:rgba(0,0,0,.12); cursor:pointer; touch-action:none; }
+#orr-pinchbar .orr-pinchbar-thumb { position:absolute; background:rgba(0,0,0,.45); cursor:grab; }
+#orr-pinchbar .orr-pinchbar-thumb:hover, #orr-pinchbar.orr-dragging .orr-pinchbar-thumb { background:rgba(0,0,0,.62); }
+#orr-pinchbar.orr-dragging .orr-pinchbar-thumb { cursor:grabbing; }
+html.orr-night #orr-pinchbar { background:rgba(255,255,255,.14); }
+html.orr-night #orr-pinchbar .orr-pinchbar-thumb { background:rgba(255,255,255,.5); }
 html.orr-custom-font #siteTable, html.orr-custom-font .commentarea { zoom:var(--orr-font-scale); }
 /* image lightbox */
 html.orr-lb-open { overflow:hidden; }
@@ -3320,8 +3327,85 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     onPinchWheel(e); // and this one (no preventDefault from a passive listener — nothing else moves it anyway)
   }
 
+  // ---- pinch zoom: a horizontal scrollbar for the magnified view ----
+  // The browser shows no usable scrollbar for a pinch-zoomed view (its own bars only cover
+  // the page's sideways overflow — none here), and the user's touchpad can't pan it. So while
+  // zoomed in, draw one along the bottom of what's on screen: the thumb shows where the view
+  // is across the page; drag it, or click the track to page left / right. It's sized in CSS
+  // pixels divided by the zoom, so it looks the same at any zoom, and moves the view with
+  // panPinchView (the visual viewport can't be moved any other way).
+  let pinchBar = null, pinchBarRaf = 0;
+  const PINCHBAR_PX = 14; // on-screen height
+  function pinchDocWidth() { return Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0); }
+  function placePinchBar() {
+    pinchBarRaf = 0;
+    const vv = window.visualViewport;
+    const want = active && vv && vv.scale > 1.01 && !document.getElementById("orr-lightbox");
+    if (!want) { if (pinchBar) pinchBar.style.display = "none"; return; }
+    if (!pinchBar || !pinchBar.isConnected) {
+      pinchBar = document.createElement("div");
+      pinchBar.id = "orr-pinchbar";
+      pinchBar.setAttribute("role", "scrollbar");
+      pinchBar.setAttribute("aria-orientation", "horizontal");
+      pinchBar.setAttribute("aria-label", "scroll the zoomed-in page sideways");
+      pinchBar.innerHTML = '<div class="orr-pinchbar-thumb"></div>';
+      pinchBar.addEventListener("pointerdown", onPinchBarDown);
+      document.body.appendChild(pinchBar);
+    }
+    const s = vv.scale, docW = pinchDocWidth();
+    const h = PINCHBAR_PX / s;
+    Object.assign(pinchBar.style, {
+      display: "block", left: vv.pageLeft + "px", top: (vv.pageTop + vv.height - h) + "px",
+      width: vv.width + "px", height: h + "px", borderRadius: h / 2 + "px",
+    });
+    const thumb = pinchBar.firstElementChild;
+    const tw = Math.max(vv.width * (vv.width / docW), 24 / s);
+    const tl = docW > vv.width ? (vv.pageLeft / (docW - vv.width)) * (vv.width - tw) : 0;
+    Object.assign(thumb.style, { width: tw + "px", left: tl + "px", top: 2 / s + "px", bottom: 2 / s + "px", borderRadius: h / 2 + "px" });
+    pinchBar.setAttribute("aria-valuenow", String(Math.round((vv.pageLeft / Math.max(1, docW - vv.width)) * 100)));
+  }
+  function schedulePinchBar() { if (!pinchBarRaf) pinchBarRaf = requestAnimationFrame(placePinchBar); }
+  // Drag the thumb, or press the track to page towards the click.
+  function onPinchBarDown(e) {
+    const vv = window.visualViewport;
+    if (!vv || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const thumb = pinchBar.firstElementChild;
+    const docW = pinchDocWidth();
+    const trackPx = (vv.width - thumb.getBoundingClientRect().width) * vv.scale; // on-screen pixels the thumb can travel
+    if (e.target !== thumb) { // track: a page towards the pointer
+      const r = thumb.getBoundingClientRect();
+      panPinchView((e.clientX < r.left ? -1 : 1) * vv.width * 0.9);
+      schedulePinchBar();
+      return;
+    }
+    const startX = e.screenX, startLeft = vv.pageLeft;
+    pinchBar.classList.add("orr-dragging");
+    try { pinchBar.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    const move = (ev) => {
+      if (trackPx <= 0) return;
+      const target = startLeft + ((ev.screenX - startX) / trackPx) * (docW - vv.width);
+      const dx = Math.max(0, Math.min(docW - vv.width, target)) - vv.pageLeft;
+      if (Math.abs(dx) >= 0.5) panPinchView(dx);
+      schedulePinchBar();
+    };
+    const up = () => {
+      pinchBar.classList.remove("orr-dragging");
+      pinchBar.removeEventListener("pointermove", move);
+      pinchBar.removeEventListener("pointerup", up);
+      pinchBar.removeEventListener("pointercancel", up);
+    };
+    pinchBar.addEventListener("pointermove", move);
+    pinchBar.addEventListener("pointerup", up);
+    pinchBar.addEventListener("pointercancel", up);
+  }
+
   function wireEnhancements() {
     if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", schedulePinchBar);
+      window.visualViewport.addEventListener("scroll", schedulePinchBar);
+      window.addEventListener("scroll", schedulePinchBar, { passive: true });
       window.visualViewport.addEventListener("resize", syncPinchWheel);
       window.addEventListener("wheel", pinchWatch, { passive: true });
       syncPinchWheel();
@@ -4314,6 +4398,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     linkifyEmails(document);
     applyLoginState(document);
     fetchMe().then(() => applyLoginState(document));
+    schedulePinchBar(); // (a new body: redraw the pinch-zoom scrollbar if zoomed in)
   }
   function enhanceNewItems(scope) {
     linkifyEmails(scope || document);
