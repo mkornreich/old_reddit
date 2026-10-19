@@ -1424,7 +1424,7 @@
     parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
-    commentBlock, linkifyEmails,
+    commentBlock, linkifyEmails, canonicalThreadPath,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -1437,6 +1437,23 @@
   let active = false; // rebuild currently owns the page
   let wired = false;
 
+  // New Reddit's own router is still loaded under the rebuilt page and listens for
+  // navigations (Navigation API): on every page we navigate to in-page it fetched that
+  // page again for itself, and on /message/… it could send you off to /login. While the
+  // rebuilt page is up, navigations on reddit are ours — this listener is registered at
+  // document_start, before Reddit's, so it can stop Reddit's from running. (A navigation
+  // we don't handle then simply loads as a normal page.)
+  try {
+    if (typeof navigation !== "undefined" && navigation && navigation.addEventListener) {
+      navigation.addEventListener("navigate", (e) => {
+        if (!active || e.hashChange || e.downloadRequest || e.navigationType === "reload") return;
+        let dest;
+        try { dest = new URL(e.destination.url); } catch (err) { return; }
+        if (dest.origin === location.origin) e.stopImmediatePropagation();
+      });
+    }
+  } catch (e) { /* no Navigation API (older Firefox): nothing to stop */ }
+
   // Respect the OS "reduce motion" setting for our scrolling/animation.
   const REDUCED_MOTION = typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const SB = REDUCED_MOTION ? "auto" : "smooth";
@@ -1448,15 +1465,17 @@
   function fetchMe() {
     if (mePromise) return mePromise;
     mePromise = redditFetch(location.origin + "/api/me.json")
-      .then((r) => (r.ok ? r.json() : null))
+      // A hiccup (rate limit, server error, network) isn't "logged out": keep who we
+      // knew you were rather than hiding every account button until the next page.
+      .then((r) => (r.ok ? r.json() : meCached && (r.status === 429 || r.status >= 500) ? meCached : null))
       .then((j) => {
         meCached = j && (j.name || (j.data && j.data.name)) ? j : null;
         applyLoginState();
         return meCached;
       })
       .catch(() => {
-        meCached = null;
-        return null;
+        if (!meCached) meCached = null;
+        return meCached;
       });
     return mePromise;
   }
@@ -1785,6 +1804,13 @@ html.orr-night .orr-oembed-quote { background:#1a1a1b; border-color:#343536; col
 .orr-vctl .orr-vloop.on { background:#ff4500; color:#fff; border-color:#ff4500; }
 /* content-width & font-size sliders (Options) */
 html.orr-custom-width body { max-width:var(--orr-content-width); margin-left:auto; margin-right:auto; }
+/* Zoomed in (fewer CSS pixels across), the 300px sidebar used to squeeze posts and comments
+   into a one-word-wide column with nothing to scroll to. Keep a readable minimum width so
+   the page overflows and scrolls sideways instead (trackpad / shift+wheel). Your custom
+   content width wins if it's narrower; touch screens keep their own fit-to-width. */
+@media (hover:hover) and (pointer:fine) {
+  html.orr-rebuilt body { min-width:min(820px, var(--orr-content-width, 820px)); }
+}
 html.orr-custom-font #siteTable, html.orr-custom-font .commentarea { zoom:var(--orr-font-scale); }
 /* image lightbox */
 html.orr-lb-open { overflow:hidden; }
@@ -4723,10 +4749,33 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
 
   // A thread page → the [postListing, commentListing] pair the .json would return.
+  // A thread link without its title slug (/r/x/comments/<id>/, /comments/<id>/) gets a
+  // stub page that only redirects to the full URL; the full path it names, if it's
+  // the same post on this site — else null.
+  function canonicalThreadPath(doc, pathname) {
+    const id = (/\/comments\/([a-z0-9]+)/i.exec(pathname) || [])[1];
+    const upd = doc.getElementById("canonical-url-updater");
+    let u = upd && upd.getAttribute("value");
+    if (!u) {
+      const call = doc.querySelector("#shreddit-redirect ac-call[method]");
+      const m = call && /location\.replace\("([^"]+)"\)/.exec(call.getAttribute("method") || "");
+      u = m && m[1];
+    }
+    if (!u || !id) return null;
+    let p;
+    try { p = new URL(u, "https://www.reddit.com"); } catch (e) { return null; }
+    if (!/(^|\.)reddit\.com$/i.test(p.hostname)) return null;
+    return new RegExp("^/r/[A-Za-z0-9_]+/comments/" + id + "/[^/?#]+/").test(p.pathname) && p.pathname !== pathname ? p.pathname : null;
+  }
   async function fetchCommentsHtml(pathname, sort, commentId) {
     const s = sort === "best" ? "confidence" : sort; // new Reddit's name for "best" (from PR #28)
-    const doc = await fetchHtmlDoc(pathname + (s ? "?sort=" + encodeURIComponent(s) : ""));
-    const postEl = doc.querySelector("shreddit-post");
+    const q = s ? "?sort=" + encodeURIComponent(s) : "";
+    let doc = await fetchHtmlDoc(pathname + q);
+    let postEl = doc.querySelector("shreddit-post");
+    if (!postEl) {
+      const full = canonicalThreadPath(doc, pathname); // a short link: follow its redirect once
+      if (full) { doc = await fetchHtmlDoc(full + q); postEl = doc.querySelector("shreddit-post"); }
+    }
     const post = postEl && postFromShreddit(postEl);
     if (!post) {
       const err = new Error("no post in thread HTML");

@@ -200,6 +200,23 @@ for (const f of files.filter((x) => /mailto:/.test(fs.readFileSync(x, "utf8")) &
   }, fs.readFileSync(f, "utf8"));
   check("thread keeps its mailto: links: " + path.basename(f).slice(0, 50), n.kept >= n.src && n.src > 0, JSON.stringify(n));
 }
+// A thread link without its slug: Reddit's stub names the full URL; follow only the same post on reddit
+const canon = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const stub = (v) => R.parseHtmlDoc(`<div id="canonical-url-updater" value="${v}"></div>`);
+  const p = "/r/Salary/comments/1x5awcf/";
+  return [
+    R.canonicalThreadPath(stub("https://www.reddit.com/r/Salary/comments/1x5awcf/software_engineer_x/"), p),
+    R.canonicalThreadPath(stub("https://www.reddit.com/r/Salary/comments/1x5awcf/software_engineer_x/"), "/comments/1x5awcf/"),
+    R.canonicalThreadPath(stub("https://www.reddit.com/r/Salary/comments/zzzzzz/other/"), p),
+    R.canonicalThreadPath(stub("https://evil.example/r/Salary/comments/1x5awcf/x/"), p),
+    R.canonicalThreadPath(stub("javascript:alert(1)"), p),
+    R.canonicalThreadPath(R.parseHtmlDoc('<div id="shreddit-redirect"><ac-call method="location.replace(&quot;/r/Salary/comments/1x5awcf/slug_y/&quot;)"></ac-call></div>'), p),
+    R.canonicalThreadPath(R.parseHtmlDoc("<p>nothing</p>"), p),
+  ];
+});
+check("short thread links follow Reddit's redirect (same post, reddit only)",
+  JSON.stringify(canon) === JSON.stringify(["/r/Salary/comments/1x5awcf/software_engineer_x/", "/r/Salary/comments/1x5awcf/software_engineer_x/", null, null, null, "/r/Salary/comments/1x5awcf/slug_y/", null]), JSON.stringify(canon));
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");

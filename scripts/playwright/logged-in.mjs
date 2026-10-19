@@ -108,6 +108,11 @@ await ctx.route(/^https:\/\/www\.reddit\.com\/(api|message|user|r)\//, async (ro
   return route.continue();
 });
 
+// This browser is really logged out to Reddit, and new Reddit's own scripts (still
+// running under the rebuilt page) send a logged-out visitor of /message/… to /login —
+// something a logged-in user never sees. Block that redirect so it can't race the test.
+const loginRedirects = [];
+await ctx.route(/^https:\/\/www\.reddit\.com\/login/, (route) => { loginRedirects.push(route.request().url().slice(0, 100)); return route.abort(); });
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => { if (!/\.announce is not a function/.test(e.message)) errors.push(String(e.message).slice(0, 200)); });
@@ -361,6 +366,7 @@ check("logged out: buttons hidden, no comment box", !lo.li && lo.save === "none"
 check("logged out: an arrow asks you to log in, sends nothing", /log in to vote/.test(nudge) && writes.length === nWrites, nudge);
 
 check("no page errors", errors.length === 0, JSON.stringify(errors));
+if (loginRedirects.length) console.log("(blocked new Reddit's own /login redirects: " + loginRedirects.length + ")");
 console.log("writes:", writes.map((w) => w.path + " " + (w.form.id || w.form.thing_id || w.form.action || "")).join(" | "));
 await ctx.close();
 fs.rmSync(profile, { recursive: true, force: true });
