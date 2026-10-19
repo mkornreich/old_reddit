@@ -34,6 +34,12 @@ const b = await st();
 // click the track left of the thumb → a page back
 await page.mouse.click((b.thumb.cx - b.thumb.w) / s - 2, b.thumb.cy / s); await page.waitForTimeout(300);
 const c = await st();
+// drag the thumb far past the right end: the view stops at the page's right edge
+const c2 = await st();
+await page.mouse.move(c2.thumb.cx / s, c2.thumb.cy / s); await page.mouse.down();
+for (let i = 1; i <= 12; i++) { await page.mouse.move((c2.thumb.cx + 100 * i) / s, c2.thumb.cy / s); await page.waitForTimeout(30); }
+await page.mouse.up(); await page.waitForTimeout(300);
+const end = await page.evaluate(() => ({ right: Math.round(visualViewport.pageLeft + visualViewport.width), viewW: document.documentElement.clientWidth, scrollX: Math.round(scrollX) }));
 if (out) await page.screenshot({ path: out });
 console.log(JSON.stringify({ noBarAt1, zoomed: { x: a.x, shown: a.shown, bar: a.bar, thumbW: Math.round(a.thumb.w) }, afterDrag: b.x, afterTrackClick: c.x }));
 await ctx.close(); fs.rmSync(profile, { recursive: true, force: true });
@@ -44,5 +50,6 @@ check("bar along the bottom of the zoomed view", a.shown && Math.abs(a.bar.h - 1
 check("thumb = share of the page in view (1/3)", Math.abs(a.thumb.w - a.bar.w / 3) < 3, String(Math.round(a.thumb.w)));
 check("dragging the thumb 200px pans the view", b.x >= 190 && b.x <= 210, a.x + " → " + b.x);
 check("clicking the track pages back", c.x < b.x, b.x + " → " + c.x);
+check("dragging past the end stops at the page's right edge", Math.abs(end.right - end.viewW) <= 2 && end.scrollX === 0, JSON.stringify(end));
 console.log(fail ? fail + " FAILED" : "ALL PASS");
 process.exit(fail ? 1 : 0);

@@ -3217,16 +3217,28 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     try { on = localStorage.getItem("orrDebug") === "1"; } catch (e) { /* no storage */ }
     if (on) console.log.apply(console, ["[orr pinch]"].concat(Array.prototype.slice.call(arguments)));
   }
+  // The page's own width: the viewport, or the body if it's wider (its min-width). Not
+  // scrollWidth — our marker and scrollbar are absolutely positioned and would count.
+  function pinchDocWidth() {
+    return Math.max(document.documentElement.clientWidth, document.body ? document.body.offsetWidth : 0);
+  }
   function panPinchView(dx) {
     const vv = window.visualViewport;
     if (!vv || !document.body) return false;
     const before = vv.pageLeft;
+    // never past either side of the page (a marker beyond the right edge would widen the page
+    // and the view would scroll on into empty space)
+    const target = Math.max(0, Math.min(pinchDocWidth() - vv.width, before + dx));
+    if (Math.abs(target - before) < 0.5) { pinchLog("pan", Math.round(dx), "at the edge"); return false; }
+    dx = target - before;
     const m = document.createElement("div");
     m.setAttribute("aria-hidden", "true");
     m.tabIndex = -1;
     m.style.cssText = "position:absolute;width:1px;height:1px;pointer-events:none;opacity:0;outline:none;margin:0;padding:0;";
-    const x = dx > 0 ? vv.pageLeft + vv.width + dx - 1 : vv.pageLeft + dx;
-    m.style.left = Math.max(0, Math.round(x)) + "px";
+    // (right: the marker's right edge lands at or just past the view's new right edge, but
+    // never past the page's; left: its left edge at the view's new left edge)
+    const x = dx > 0 ? Math.min(pinchDocWidth() - 1, Math.ceil(target + vv.width - 1)) : Math.floor(target);
+    m.style.left = Math.max(0, x) + "px";
     m.style.top = Math.round(vv.pageTop + vv.height / 2) + "px";
     document.body.appendChild(m);
     let how = "scrollIntoView";
@@ -3308,7 +3320,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // would move either way.
     if (pinchProbe) { if (pinchProbe.kind === kind) pinchProbe.sum += dx; return; }
     const x0 = vv.pageLeft;
-    const room = dx > 0 ? document.documentElement.scrollWidth - (x0 + vv.width) : x0;
+    const room = dx > 0 ? pinchDocWidth() - (x0 + vv.width) : x0;
     if (room < 1) { pinchLog("at the edge — nothing to pan"); return; }
     const probe = pinchProbe = { kind, x0, scale0: vv.scale, sum: dx };
     setTimeout(() => {
@@ -3351,7 +3363,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // panPinchView (the visual viewport can't be moved any other way).
   let pinchBar = null, pinchBarRaf = 0;
   const PINCHBAR_PX = 14; // on-screen height
-  function pinchDocWidth() { return Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0); }
   function placePinchBar() {
     pinchBarRaf = 0;
     const vv = window.visualViewport;

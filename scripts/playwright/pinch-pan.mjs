@@ -3,7 +3,8 @@
 // must not double it; at most the very first step), and B) with wheel events the browser doesn't act on, like a Linux
 // touchpad's sideways swipe in Chrome (user report: "nothing moves") — the extension pans; and
 // C) like B, with the view shifting by itself (a pinch settling) while the extension is finding
-// out — it must recover and pan within a few scrolls.
+// out — it must recover and pan within a few scrolls; D) panning far past the right side stops
+// at the page's edge (no running on into empty space, page not widened).
 //   node pinch-pan.mjs <ext-dir> [url]
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { chromium } from "playwright"; import fs from "node:fs"; import os from "node:os"; import path from "node:path";
@@ -67,6 +68,27 @@ await run("B synthetic (browser doesn't pan)", (page, shift) => page.evaluate((s
   const d = xs.slice(1).map((v, i) => v - xs[i]);
   const ok = d.slice(-4).every((v) => v === 20);
   console.log((ok ? "PASS " : "FAIL ") + "C settling view, then no pans".padEnd(34), "sideways:", JSON.stringify(xs));
+  if (!ok) fail++;
+  await page.close();
+}
+// D: panning far past the right side stops at the page's edge — the view must not run on
+// into empty space (it did: the marker past the edge widened the page) — and the page itself
+// must not get wider or scroll sideways.
+{
+  const page = await ctx.newPage();
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
+  await page.waitForSelector("#siteTable .thing, .commentarea", { timeout: 30000 }); await page.waitForTimeout(2500);
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 3 }); await page.waitForTimeout(800);
+  const before = await page.evaluate(() => ({ pageW: document.documentElement.scrollWidth, viewW: document.documentElement.clientWidth }));
+  for (let i = 0; i < 60; i++) {
+    await page.evaluate(() => { const t = document.elementFromPoint(100 + visualViewport.offsetLeft, 100 + visualViewport.offsetTop) || document.body;
+      t.dispatchEvent(new WheelEvent("wheel", { deltaX: 40, bubbles: true, cancelable: true, view: window })); });
+  }
+  await page.waitForTimeout(400);
+  const after = await page.evaluate(() => ({ x: Math.round(visualViewport.pageLeft), viewRight: Math.round(visualViewport.pageLeft + visualViewport.width), pageW: document.documentElement.scrollWidth, scrollX: Math.round(scrollX) }));
+  const ok = after.viewRight <= before.viewW + 1 && after.viewRight >= before.viewW - 2 && after.pageW === before.pageW && after.scrollX === 0;
+  console.log((ok ? "PASS " : "FAIL ") + "D stops at the right edge".padEnd(34), JSON.stringify({ before, after }));
   if (!ok) fail++;
   await page.close();
 }
