@@ -168,6 +168,8 @@
   // Determine a post's expandable inline content, or null. Returns { type, html }
   // where type feeds the old-reddit expando-button sprite (selftext/image/video…).
   function postExpando(d) {
+    // old-reddit HTML: the preview is fetched when it opens (see fillLazyExpando)
+    if (d.orr_lazy_expando) return { type: d.orr_lazy_expando, html: "" };
     const ex = postExpandoContent(d);
     // A post can carry its own body text AND media — new Reddit allows text on an
     // image, gallery, video or link post, and the text is often what the comments
@@ -420,6 +422,7 @@
       ` data-comments="${esc(d.num_comments || 0)}"` +
       accountDataAttrs(d) +
       (d.orr_text_unsent && !d.selftext_html ? ' data-orr-textcheck="1"' : "") +
+      (d.orr_lazy_expando ? ' data-orr-lazyexp="1"' : "") +
       ` data-ptype="${postType(d)}" data-crosspost="${d.crosspost_parent || (d.crosspost_parent_list && d.crosspost_parent_list.length) ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
       midcolHtml(d, `<div class="score ${vs}" title="${esc(d.score)}">${score}</div>`) +
@@ -1456,6 +1459,7 @@
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
     commentBlock, linkifyEmails, canonicalThreadPath, searchPostsFromHtml, htmlSearchPath, postPeekParts, postPeekHtml,
+    postFromOldThing, oldListingPath,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -1912,6 +1916,7 @@ html.orr-lb-open { overflow:hidden; }
 /* RES-style hover preview */
 #orr-hoverimg { position:fixed; z-index:2147483630; display:none; pointer-events:none; background:#fff; border:1px solid #888; box-shadow:0 4px 20px rgba(0,0,0,.4); padding:2px; }
 #orr-hoverimg img { display:block; max-width:44vw; max-height:80vh; }
+.expando .orr-lazy-msg { color:#888; font-style:italic; padding:4px 0; }
 /* search results: hover peek at a post (picture, link, text) */
 #orr-hoverpost { position:fixed; z-index:2147483630; display:none; pointer-events:none; box-sizing:border-box; width:min(520px, 46vw);
   max-height:80vh; overflow:hidden; background:#fff; color:#222; border:1px solid #888; box-shadow:0 4px 20px rgba(0,0,0,.4);
@@ -4014,21 +4019,60 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // out. Once its preview is open and on screen (so "show images" doesn't fetch every
   // post on the page at once), fetch the post and add the text under the media, the way
   // old reddit-style expandos show a media post's own text.
-  let textCheckObserver = null;
-  function checkUnsentText(thing) {
-    if (!thing || thing.getAttribute("data-orr-textcheck") !== "1") return;
-    const expando = thing.querySelector(":scope > .entry > .expando");
-    if (!expando) return;
-    if (typeof IntersectionObserver === "undefined") { loadUnsentText(thing, expando); return; }
-    if (!textCheckObserver) {
-      textCheckObserver = new IntersectionObserver((entries) => entries.forEach((en) => {
-        if (!en.isIntersecting) return;
-        textCheckObserver.unobserve(en.target);
-        const t = en.target.closest(".thing.link");
-        if (t && en.target.style.display !== "none") loadUnsentText(t, en.target);
+  // Run fn once el is open and near the screen.
+  let onScreenObserver = null;
+  const onScreenFns = new WeakMap();
+  function whenOnScreen(el, fn) {
+    if (typeof IntersectionObserver === "undefined") { fn(); return; }
+    if (!onScreenObserver) {
+      onScreenObserver = new IntersectionObserver((entries) => entries.forEach((en) => {
+        if (!en.isIntersecting || en.target.style.display === "none") return;
+        onScreenObserver.unobserve(en.target);
+        const f = onScreenFns.get(en.target);
+        onScreenFns.delete(en.target);
+        if (f) f();
       }), { rootMargin: "200px" });
     }
-    textCheckObserver.observe(expando);
+    onScreenFns.set(el, fn);
+    onScreenObserver.observe(el);
+  }
+  // A post's preview just opened: fill in what its listing left out.
+  function previewOpened(thing) {
+    const expando = thing && thing.querySelector(":scope > .entry > .expando");
+    if (!expando) return;
+    if (thing.getAttribute("data-orr-lazyexp") === "1") {
+      if (!expando.firstChild) expando.innerHTML = '<div class="orr-lazy-msg">loading…</div>';
+      whenOnScreen(expando, () => fillLazyExpando(thing, expando));
+    } else if (thing.getAttribute("data-orr-textcheck") === "1") {
+      whenOnScreen(expando, () => loadUnsentText(thing, expando));
+    }
+  }
+  // Old-reddit HTML (combined r/a+b listings) leaves out text posts' text and full
+  // galleries / videos — old reddit fetched them when a preview opened. Same here: fetch
+  // the post (just the top of its page, once) and build its preview from that.
+  function fillLazyExpando(thing, expando) {
+    if (thing.getAttribute("data-orr-lazyexp") !== "1") return;
+    thing.setAttribute("data-orr-lazyexp", "loading");
+    const permalink = thing.getAttribute("data-permalink") || "";
+    const p = postOnlyCached(permalink) || Promise.reject(new Error("no permalink"));
+    p.then((d) => {
+      thing.setAttribute("data-orr-lazyexp", "done");
+      if (!expando.isConnected) return;
+      const ex = d && postExpando(d);
+      expando.innerHTML = ex ? ex.html : '<div class="orr-lazy-msg">nothing more to show</div>';
+      const btn = thing.querySelector(":scope > .entry > .expando-button");
+      if (btn && ex) btn.className = "expando-button " + (btn.classList.contains("collapsed") ? "collapsed " : "expanded ") + ex.type;
+      linkifyEmails(expando);
+      inlineImages(expando);
+      wireRedditVideos(expando);
+      enhanceVideoControls(expando);
+      addDownloadButtons(expando);
+      wireEmbedGates(expando);
+      if (expando.style.display !== "none") expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "play"; try { v.play().catch(() => {}); } catch (e) {} });
+    }, () => {
+      thing.setAttribute("data-orr-lazyexp", "1"); // (try again next time it opens)
+      if (expando.isConnected) expando.innerHTML = `<div class="orr-lazy-msg">couldn't load this — <a href="${esc(permalink)}">open the post</a></div>`;
+    });
   }
   function loadUnsentText(thing, expando) {
     if (thing.getAttribute("data-orr-textcheck") !== "1") return;
@@ -5093,7 +5137,93 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return base + q.toString();
   }
 
+  // Logged out, Reddit still serves a combined listing (r/a+b) as old reddit's own server-
+  // rendered page — there's no new-Reddit feed for it. Read its <div class="thing link">s
+  // and its "next" link, so it gets infinite scroll like every other listing (issue #31).
+  function oldListingPath(route, params) {
+    const sort = route.sort || "hot";
+    const t = sort === "top" || sort === "controversial" ? windowBucket(params) || params.t || "" : "";
+    const q = new URLSearchParams();
+    if (t) q.set("t", t);
+    if (params.after) { q.set("count", String(parseInt(params.count, 10) || 25)); q.set("after", params.after); }
+    return route.basePath + "/" + (q.toString() ? "?" + q.toString() : "");
+  }
+
+  // One old-reddit <div class="thing link"> → the `data` of a t3 in Reddit's JSON. Its
+  // data-* attributes carry nearly everything; an image's preview is in the expando's
+  // cached HTML. Text posts' text and full galleries / videos aren't on the page (old
+  // reddit fetched them when a preview opened), so those previews fill in when opened
+  // (orr_lazy_expando), and an image post's own text is fetched then too (orr_text_unsent).
+  function postFromOldThing(el) {
+    const g = (n) => el.getAttribute("data-" + n) || "";
+    const name = g("fullname");
+    if (!/^t3_[a-z0-9]+$/i.test(name) || g("promoted") === "true") return null;
+    const cls = " " + (el.getAttribute("class") || "").replace(/&#32;/g, " ") + " ";
+    const permalink = g("permalink");
+    if (!/^\/(r|user)\/[^/]+\/comments\/[a-z0-9]+\//i.test(permalink)) return null;
+    const domain = g("domain");
+    const isSelf = /^self\./i.test(domain);
+    const title = el.querySelector(".entry a.title");
+    const num = (n) => { const v = parseInt(g(n), 10); return isNaN(v) ? null : v; };
+    const d = {
+      name, id: name.slice(3), permalink,
+      title: title ? title.textContent.replace(/\s+/g, " ").trim() : "",
+      author: g("author") || "[deleted]", subreddit: g("subreddit"), domain,
+      score: num("score") || 0, num_comments: num("comments-count") || 0,
+      created_utc: (num("timestamp") || 0) / 1000,
+      over_18: g("nsfw") === "true", spoiler: g("spoiler") === "true",
+      stickied: / stickied /.test(cls), locked: / locked /.test(cls),
+      is_self: isSelf,
+      url: absUrl(isSelf ? permalink : g("url") || permalink),
+    };
+    if (num("score") == null) d.hide_score = true;
+    const flair = el.querySelector(".entry .top-matter .linkflairlabel");
+    if (flair) d.link_flair_text = flair.textContent.trim() || flair.getAttribute("title") || "";
+    const th = el.querySelector(":scope > a.thumbnail img[src]");
+    const ts = th ? th.getAttribute("src").replace(/^\/\//, "https://") : "";
+    if (/^https:\/\//.test(ts)) d.thumbnail = ts;
+    const btn = el.querySelector(".entry .expando-button");
+    const cached = el.querySelector(".expando[data-cachedhtml]");
+    const media = cached ? parseHtmlDoc(cached.getAttribute("data-cachedhtml")) : null;
+    const img = media && media.querySelector("img.preview[src]");
+    if (g("is-gallery") === "true") { d.is_gallery = true; d.orr_lazy_expando = "image gallery"; }
+    else if (/^https:\/\/v\.redd\.it\//.test(d.url) || (media && media.querySelector("[data-mpd-url], [data-hls-url]"))) { d.is_video = true; d.orr_lazy_expando = "video"; }
+    else if (img && !externalMediaExpando(d.url)) {
+      const src = isImageUrl(d.url) ? d.url : img.getAttribute("src").replace(/^\/\//, "https://");
+      d.post_hint = "image";
+      d.preview = { images: [{ source: { url: src, width: parseInt(img.getAttribute("width"), 10) || undefined, height: parseInt(img.getAttribute("height"), 10) || undefined } }] };
+      d.orr_text_unsent = true;
+    } else if (btn && /\bselftext\b/.test(btn.getAttribute("class") || "")) d.orr_lazy_expando = "selftext"; // (text post, or a link post with text)
+    // (YouTube and other embeds come from d.url, as for every post)
+    return d;
+  }
+
+  async function fetchOldListingHtml(route, params) {
+    const path = oldListingPath(route, params);
+    const key = "html:" + path;
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.t < CACHE_TTL) return hit.json;
+    const doc = await fetchHtmlDoc(path);
+    const posts = [];
+    doc.querySelectorAll("#siteTable .thing.link[data-fullname]").forEach((el) => {
+      const d = postFromOldThing(el);
+      if (d && !posts.some((p) => p.name === d.name)) posts.push(d);
+    });
+    if (!posts.length && !params.after) {
+      const err = new Error("empty combined listing"); // (a banned / private sub in it, say: Reddit's own page explains)
+      err.status = 403;
+      throw err;
+    }
+    const next = doc.querySelector(".nav-buttons .next-button a[href]");
+    const m = next && /[?&]after=(t3_[a-z0-9]+)/i.exec(next.getAttribute("href") || "");
+    const adult = !params.after && posts.length > 0 && posts.filter((p) => p.over_18).length * 2 >= posts.length;
+    const json = { kind: "Listing", data: { children: posts.map((d) => ({ kind: "t3", data: d })), after: m ? m[1] : null, before: null }, orr_adult: adult };
+    cache.set(key, { json, t: Date.now() });
+    return json;
+  }
+
   async function fetchListingHtml(route, params) {
+    if (route.combined) return fetchOldListingHtml(route, params);
     // Logged out, r/all is Reddit's front feed (Reddit redirects it to "/"), which
     // has "best": offer that tab there too, and make it the default like on the
     // front page. Logged in, the .json API has no r/all "best", so this only
@@ -5591,6 +5721,20 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (document.body) nativeCssObserver.observe(document.body, { childList: true });
   }
 
+  // The page's own <body> wasn't parsed yet when ours went in — its <head> scripts were
+  // still loading (old reddit's server-rendered pages: combined r/a+b listings). When the
+  // parser gets there it adds a second <body>: Firefox shows both, and its scripts (old
+  // reddit's own) would run. Drop it as it arrives; a detached body's scripts never run.
+  let lateBodyObserver = null;
+  function dropLateBodies() {
+    if (lateBodyObserver || document.readyState !== "loading" || typeof MutationObserver === "undefined") return;
+    lateBodyObserver = new MutationObserver((muts) => muts.forEach((m) => m.addedNodes.forEach((n) => {
+      if (n.nodeName === "BODY" && n !== document.body && active) n.remove();
+    })));
+    lateBodyObserver.observe(document.documentElement, { childList: true });
+    document.addEventListener("DOMContentLoaded", () => { lateBodyObserver.disconnect(); }, { once: true });
+  }
+
   function replaceBody(body, title) {
     teardownInfinite();
     teardownMores();
@@ -5598,7 +5742,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     fresh.className = body.className;
     fresh.innerHTML = body.inner;
     if (document.body) document.documentElement.replaceChild(fresh, document.body);
-    else document.documentElement.appendChild(fresh);
+    else {
+      document.documentElement.appendChild(fresh);
+      dropLateBodies();
+    }
     document.documentElement.classList.add("orr-rebuilt");
     purgeNativeCss();
     try {
@@ -7299,7 +7446,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
               enhanceVideoControls(expando); // speed / loop controls + remembered prefs
               addDownloadButtons(expando);
               wireEmbedGates(expando); // now visible → fetch its oEmbed preview if the platform's already permitted
-              checkUnsentText(expBtn.closest(".thing.link")); // a feed's media post: its text, if it has any
+              previewOpened(expBtn.closest(".thing.link")); // what the listing left out: a media post's text, an old-reddit preview
               // A manual expand is a deliberate "play this" action, independent of
               // the autoplay-in-feed setting — start it immediately either way.
               expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "play"; try { v.play().catch(() => {}); } catch (e) {} });

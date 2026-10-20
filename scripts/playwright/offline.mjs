@@ -1,5 +1,6 @@
 // Offline check of the logged-out HTML parsers against saved Reddit HTML (no network).
-// (a file with "search" in its name is a search results page / partial)
+// (a file with "search" in its name is a search results page / partial; one with old
+//  reddit's <div class="thing"> markup is a combined r/a+b listing)
 // Loads common.js + rebuild.js into a blank page and runs ORR_REBUILD's parsers.
 //   node offline.mjs <repo-dir> <saved.html>...
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
@@ -17,7 +18,9 @@ for (const f of ["common.js", "rebuild.js"]) await page.addScriptTag({ content: 
 let fail = 0;
 const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name + (info ? "  " + info : "")); if (!ok) fail++; };
 const isSearch = (x) => /search/.test(path.basename(x));
-for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(x)) && !isSearch(x))) {
+// old reddit's own server-rendered listing (Reddit still serves combined r/a+b that way)
+const isOldListing = (x) => /<div class="[^"]*\bthing\b[^"]*"[^>]*data-fullname="t3_/.test(fs.readFileSync(x, "utf8"));
+for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(x)) && !isSearch(x) && !isOldListing(x))) {
   const html = fs.readFileSync(f, "utf8");
   const r = await page.evaluate((html) => {
     const R = globalThis.ORR_REBUILD;
@@ -288,6 +291,42 @@ check("peek: nothing / link / escaping / no script URLs / gallery",
   /couldn't load/.test(peeks[0]) && /no description/.test(peeks[1]) &&
   /example\.com\/a\?b=&lt;i&gt;/.test(peeks[2]) && /src="https:\/\/external-preview\.redd\.it\/p\.jpg\?a=1&amp;b=2"/.test(peeks[2]) &&
   !/javascript:/.test(peeks[3]) && /no description/.test(peeks[3]) && /2 images/.test(peeks[4]) && /i\.redd\.it\/a\.jpg/.test(peeks[4]), JSON.stringify(peeks));
+// Combined r/a+b listings, logged out: old reddit's HTML → t3 data (issue #31)
+let oldThumbs = 0;
+for (const f of files.filter(isOldListing)) {
+  const r = await page.evaluate((html) => {
+    const R = globalThis.ORR_REBUILD;
+    const doc = R.parseHtmlDoc(html);
+    const els = Array.from(doc.querySelectorAll("#siteTable .thing.link[data-fullname]"));
+    const posts = els.map(R.postFromOldThing).filter(Boolean);
+    const kinds = {};
+    posts.forEach((p) => { const k = p.orr_lazy_expando ? "lazy " + p.orr_lazy_expando : p.post_hint === "image" ? "image" : p.is_self ? "self" : "link"; kinds[k] = (kinds[k] || 0) + 1; });
+    const items = posts.map((p) => R.buildItem(p, { showSub: true, expandoButton: true })).join("");
+    // a self post's expando button: only if old reddit had one (it has text)
+    const selfBtns = els.filter((el) => / self /.test(" " + el.className + " ")).map((el) => !!el.querySelector(".expando-button"));
+    const selfLazy = els.map((el) => [el, R.postFromOldThing(el)]).filter(([el, p]) => p && p.is_self).map(([el, p]) => !!p.orr_lazy_expando);
+    return {
+      els: els.length, posts: posts.length, promoted: els.filter((el) => el.getAttribute("data-promoted") === "true").length, kinds,
+      bad: posts.filter((p) => !p.title || !p.subreddit || !p.author || !(p.created_utc > 1.1e9) || !/^https:\/\//.test(p.url) || !p.domain).map((p) => p.name),
+      thumbs: posts.filter((p) => /^https:\/\//.test(p.thumbnail || "")).length,
+      counted: posts.filter((p) => p.score > 0 || p.num_comments > 0).length,
+      selfMatch: JSON.stringify(selfBtns) === JSON.stringify(selfLazy),
+      lazyAttr: (items.match(/data-orr-lazyexp="1"/g) || []).length === posts.filter((p) => p.orr_lazy_expando).length,
+      lazyBtn: (items.match(/class="expando-button collapsed/g) || []).length >= posts.filter((p) => p.orr_lazy_expando).length,
+      unsafe: /<script|onerror=|onclick=/i.test(items) || /javascript:(?!void\(0\))/i.test(items), // (old reddit's onclick="click_thing(this)" must not come along)
+      next: (/[?&]after=(t3_[a-z0-9]+)/i.exec((doc.querySelector(".nav-buttons .next-button a[href]") || { getAttribute: () => "" }).getAttribute("href")) || [])[1] || null,
+      paths: [R.oldListingPath({ basePath: "/r/a+b", sort: "hot" }, {}), R.oldListingPath({ basePath: "/r/a+b/top", sort: "top" }, { t: "week", after: "t3_x", count: 25 }), R.oldListingPath({ basePath: "/r/a+b/new", sort: "new" }, { t: "week", after: "t3_y", count: 50 })],
+    };
+  }, fs.readFileSync(f, "utf8"));
+  console.log("\n== old listing " + path.basename(f).slice(0, 60) + "  " + JSON.stringify(r));
+  check("old-reddit listing parses (every post but ads)", r.posts >= 10 && r.posts === r.els - r.promoted && !r.bad.length, JSON.stringify(r.bad));
+  check("old-reddit listing: vote / comment counts", r.counted >= r.posts / 2, r.counted + " counted");
+  oldThumbs += r.thumbs;
+  check("old-reddit listing: text / gallery / video previews fill in when opened", r.selfMatch && r.lazyAttr && r.lazyBtn && !r.unsafe, JSON.stringify(r.kinds));
+  check("old-reddit listing: next page", /^t3_/.test(r.next || ""), r.next);
+  check("old-reddit listing paths", JSON.stringify(r.paths) === JSON.stringify(["/r/a+b/", "/r/a+b/top/?t=week&count=25&after=t3_x", "/r/a+b/new/?count=50&after=t3_y"]), JSON.stringify(r.paths));
+}
+if (files.some(isOldListing)) check("old-reddit listings carry thumbnails", oldThumbs > 0, oldThumbs + " thumbnails");
 // Logged-out search URL: posts only, old reddit's sort / time / restrict_sr mapped onto new Reddit's
 const spath = await page.evaluate(() => {
   const R = globalThis.ORR_REBUILD;

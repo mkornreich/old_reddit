@@ -235,9 +235,11 @@ attributes) and maps it onto the JSON shape the renderer expects.
   (every sort and time filter, a subreddit's own search), read from new Reddit's
   search results: they don't say what kind of post each one is, so every title opens
   its thread, there's no `(domain)`, and posts without a picture get no thumbnail;
-  Reddit leaves NSFW posts out of logged-out search. Wiki pages,
-  a profile's private tabs (saved, upvoted…), multireddits and combined
-  `r/a+b` listings have no logged-out data source, so those fall back to normal
+  Reddit leaves NSFW posts out of logged-out search. Combined `r/a+b` listings work
+  too, with infinite scroll, read from the old-reddit page Reddit still serves for
+  them (a text post's text, a gallery or a video loads when you open its preview).
+  Wiki pages, a profile's private tabs (saved, upvoted…) and custom feeds (`/user/…/m/…`
+  multireddits) have no logged-out data source, so those fall back to normal
   Reddit. Adult (NSFW) communities and posts first show
   old reddit's "over 18?" page: one click on **continue**, remembered on that device. Anything that fails **falls back** to letting
   normal Reddit render — it never leaves the page blank.
