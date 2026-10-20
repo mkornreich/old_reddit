@@ -44,6 +44,12 @@ for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(
       mediaTextDropped: posts.filter((p) => !p.is_self && p.selftext_html && (() => { const ex = R.postExpando(p); return !ex || !/class="md"/.test(ex.html); })()).length,
       mediaWithText: posts.filter((p) => !p.is_self && p.selftext_html).length,
       awardImages: posts.filter((p) => p.preview && /snoovatar|snoo_assets/.test(JSON.stringify(p.preview))).length,
+      // a feed's media post without text is marked "text may be unsent" (fetched when its preview opens);
+      // never a text post, one that has its text, or a post on its own thread page
+      textUnsent: posts.filter((p) => p.orr_text_unsent).length,
+      textUnsentBad: Array.from(doc.querySelectorAll("shreddit-post")).map((el) => [el, R.postFromShreddit(el)]).filter(([el, p]) => p && p.orr_text_unsent &&
+        (p.is_self || p.selftext_html || el.getAttribute("view-context") === "CommentsPage" || !(p.post_hint === "image" || p.is_gallery || p.is_video))).length,
+      textCheckAttr: posts.filter((p) => p.orr_text_unsent).every((p) => /data-orr-textcheck="1"/.test(R.buildItem(p, { expandoButton: true }))),
       t1, more, orphans, maxDepth,
       bodySample: html0.slice(0, 120),
       bodyUnsafe: /<script|on\w+=|javascript:/i.test(tree.map((c) => (c.data && c.data.body_html) || "").join("")),
@@ -61,14 +67,17 @@ for (const f of files.filter((x) => !/right_rail|hover_card/.test(path.basename(
   check("multi_media posts are self posts with their body", r.multiNoBody === 0);
   check("no empty post body (no empty expando)", r.emptyBodies === 0, "empty=" + r.emptyBodies);
   check("a media post's own text is shown with its media", r.mediaTextDropped === 0, r.mediaWithText + " media post(s) with text");
+  check("only a feed's text-less media posts wait for their text", r.textUnsentBad === 0 && r.textCheckAttr, r.textUnsent + " marked");
 }
 const sanit = await page.evaluate(() => {
   const R = globalThis.ORR_REBUILD;
-  const d = new DOMParser().parseFromString('<div id=x><p onclick="alert(1)">hi <a href="javascript:alert(1)">j</a> <a href="https://e.com/" style="x">ok</a><img src="http://x/a.png" onerror="alert(1)"><img src="https://i.redd.it/a.png" onerror="z"><script>alert(1)</script><span class="md-spoiler-text evil">s</span><faceplate-x><b>kept</b></faceplate-x></p></div>', "text/html");
+  const d = new DOMParser().parseFromString('<div id=x><p onclick="alert(1)">hi <a href="javascript:alert(1)">j</a> <a href="https://e.com/" style="x">ok</a><img src="http://x/a.png" onerror="alert(1)"><img src="https://i.redd.it/a.png" onerror="z"><script>alert(1)</script><span class="md-spoiler-text evil">s</span><faceplate-x><b>kept</b></faceplate-x>' +
+    '<object data="x.swf" type="application/x-shockwave-flash"><a href="https://e.com/o">in object</a></object></p></div>', "text/html");
   return R.cleanMd(d.getElementById("x"));
 });
 console.log("\ncleanMd:", sanit);
 check("cleanMd strips handlers/js/script/http img", !/onclick|onerror|javascript:|<script|http:\/\/x|style=|evil/.test(sanit) && /<b>kept<\/b>/.test(sanit) && /https:\/\/i\.redd\.it\/a\.png/.test(sanit));
+check("cleanMd keeps a link nested in <object> (feeds' text), not the object", /<a href="https:\/\/e\.com\/o">in object<\/a>/.test(sanit) && !/<object|swf|data=/.test(sanit), sanit);
 // Spoilers / screen-reader text / sidebar headings
 const extra = await page.evaluate(() => {
   const R = globalThis.ORR_REBUILD;
@@ -195,12 +204,12 @@ for (const f of files.filter((x) => /mailto:/.test(fs.readFileSync(x, "utf8")) &
   const n = await page.evaluate((html) => {
     const R = globalThis.ORR_REBUILD;
     const doc = R.parseHtmlDoc(html);
-    const post = Array.from(doc.querySelectorAll("shreddit-post")).map(R.postFromShreddit).filter(Boolean)[0];
-    const tree = R.commentsFromHtml(doc, post ? post.name : "");
-    const all = JSON.stringify([tree, post ? post.selftext_html || "" : ""]);
+    const posts = Array.from(doc.querySelectorAll("shreddit-post")).map(R.postFromShreddit).filter(Boolean);
+    const tree = R.commentsFromHtml(doc, posts[0] ? posts[0].name : "");
+    const all = JSON.stringify([tree, posts.map((p) => p.selftext_html || "")]); // (a feed: any post's text)
     return { src: (html.match(/href="mailto:[^"]+"/g) || []).length, kept: (all.match(/href=\\"mailto:[^"\\]+\\"/g) || []).length };
   }, fs.readFileSync(f, "utf8"));
-  check("thread keeps its mailto: links: " + path.basename(f).slice(0, 50), n.kept >= n.src && n.src > 0, JSON.stringify(n));
+  check("page keeps its mailto: links: " + path.basename(f).slice(0, 50), n.kept >= n.src && n.src > 0, JSON.stringify(n));
 }
 // A thread link without its slug: Reddit's stub names the full URL; follow only the same post on reddit
 const canon = await page.evaluate(() => {

@@ -419,6 +419,7 @@
       ` data-promoted="${d.promoted || d.is_created_from_ads_ui ? "true" : "false"}"` +
       ` data-comments="${esc(d.num_comments || 0)}"` +
       accountDataAttrs(d) +
+      (d.orr_text_unsent && !d.selftext_html ? ' data-orr-textcheck="1"' : "") +
       ` data-ptype="${postType(d)}" data-crosspost="${d.crosspost_parent || (d.crosspost_parent_list && d.crosspost_parent_list.length) ? "true" : "false"}">` +
       `<span class="rank">${esc(opts.rank || "")}</span>` +
       midcolHtml(d, `<div class="score ${vs}" title="${esc(d.score)}">${score}</div>`) +
@@ -3978,7 +3979,6 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // its picture, where a link post points. Logged in, the row's hidden expando has it;
   // logged out, the results carry none of it, so the post is fetched (just the post, see
   // fetchPostOnly) and kept for the next hover.
-  const peekCache = new Map(); // fullname → Promise<html>
   let peekFor = null, peekPending = null; // the post shown / waiting out the hover delay
   function onSearchPage() { return !!document.body && document.body.classList.contains("search-page"); }
   function peekFromRow(thing) {
@@ -3994,17 +3994,55 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function peekHtmlFor(thing) {
     if (!jsonBlocked || thing.querySelector(".expando")) return Promise.resolve(peekFromRow(thing));
-    const name = thing.getAttribute("data-fullname") || "";
-    const path = thing.getAttribute("data-permalink") || "";
-    if (peekCache.has(name)) return peekCache.get(name);
-    if (!/^\/(r|user)\/[^/]+\/comments\/[a-z0-9]+\//i.test(path)) return Promise.resolve(postPeekHtml(null));
-    const p = fetchPostOnly(path).then((d) => postPeekHtml(postPeekParts(d)), () => {
-      peekCache.delete(name); // (try again on the next hover)
-      return postPeekHtml(null);
-    });
-    peekCache.set(name, p);
-    if (peekCache.size > 150) peekCache.delete(peekCache.keys().next().value);
+    const p = postOnlyCached(thing.getAttribute("data-permalink") || "");
+    return p ? p.then((d) => postPeekHtml(postPeekParts(d)), () => postPeekHtml(null)) : Promise.resolve(postPeekHtml(null));
+  }
+  // Just a post (see fetchPostOnly), once per post: the search peek and a listing's
+  // "text the feed left out" both use it. A failed fetch is forgotten, to retry later.
+  const postOnlyCache = new Map(); // permalink → Promise<t3 data | null>
+  function postOnlyCached(path) {
+    if (!/^\/(r|user)\/[^/]+\/comments\/[a-z0-9]+\//i.test(path)) return null;
+    if (postOnlyCache.has(path)) return postOnlyCache.get(path);
+    const p = fetchPostOnly(path);
+    p.catch(() => postOnlyCache.delete(path));
+    postOnlyCache.set(path, p);
+    if (postOnlyCache.size > 150) postOnlyCache.delete(postOnlyCache.keys().next().value);
     return p;
+  }
+
+  // An image / gallery / video post from a logged-out feed may have text the feed left
+  // out. Once its preview is open and on screen (so "show images" doesn't fetch every
+  // post on the page at once), fetch the post and add the text under the media, the way
+  // old reddit-style expandos show a media post's own text.
+  let textCheckObserver = null;
+  function checkUnsentText(thing) {
+    if (!thing || thing.getAttribute("data-orr-textcheck") !== "1") return;
+    const expando = thing.querySelector(":scope > .entry > .expando");
+    if (!expando) return;
+    if (typeof IntersectionObserver === "undefined") { loadUnsentText(thing, expando); return; }
+    if (!textCheckObserver) {
+      textCheckObserver = new IntersectionObserver((entries) => entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        textCheckObserver.unobserve(en.target);
+        const t = en.target.closest(".thing.link");
+        if (t && en.target.style.display !== "none") loadUnsentText(t, en.target);
+      }), { rootMargin: "200px" });
+    }
+    textCheckObserver.observe(expando);
+  }
+  function loadUnsentText(thing, expando) {
+    if (thing.getAttribute("data-orr-textcheck") !== "1") return;
+    thing.setAttribute("data-orr-textcheck", "loading");
+    const p = postOnlyCached(thing.getAttribute("data-permalink") || "");
+    if (!p) { thing.setAttribute("data-orr-textcheck", "done"); return; }
+    p.then((d) => {
+      thing.setAttribute("data-orr-textcheck", "done");
+      if (!d || !d.selftext_html || !expando.isConnected || expando.querySelector(".orr-post-text")) return;
+      expando.insertAdjacentHTML("beforeend", selfTextBox(d.selftext_html, "orr-post-text"));
+      const box = expando.lastElementChild;
+      linkifyEmails(box);
+      inlineImages(box);
+    }, () => thing.setAttribute("data-orr-textcheck", "1")); // (try again next time it opens)
   }
   function fitPeek(el) {
     el.classList.remove("orr-peek-clipped");
@@ -4688,7 +4726,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // the fetched page beyond plain formatting, links and images reaches our DOM.
   const MD_KEEP = { P: 1, BR: 1, HR: 1, A: 1, EM: 1, STRONG: 1, B: 1, I: 1, DEL: 1, S: 1, SUP: 1, SUB: 1, CODE: 1, PRE: 1, BLOCKQUOTE: 1, UL: 1, OL: 1, LI: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1, TABLE: 1, THEAD: 1, TBODY: 1, TR: 1, TH: 1, TD: 1, SPAN: 1, IMG: 1 };
   // (screen-reader-only text would show up as stray visible text once unwrapped)
-  const MD_DROP = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, SVG: 1, BUTTON: 1, INPUT: 1, FORM: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, LINK: 1, META: 1, "FACEPLATE-SCREEN-READER-CONTENT": 1 };
+  // (not <object>: a feed wraps a post's whole text in a link to the post, and wraps each
+  // link inside it in an <object> to nest them — dropping those dropped every link, words
+  // and all; unwrapped like any other tag, only what's inside it is kept)
+  const MD_DROP = { SCRIPT: 1, STYLE: 1, TEMPLATE: 1, IFRAME: 1, EMBED: 1, SVG: 1, BUTTON: 1, INPUT: 1, FORM: 1, TEXTAREA: 1, SELECT: 1, NOSCRIPT: 1, LINK: 1, META: 1, "FACEPLATE-SCREEN-READER-CONTENT": 1 };
   const MD_VOID = { BR: 1, HR: 1, IMG: 1 };
   // opts.headingsAsStrong: render h1/h2 as bold text (sidebar widgets title every rule with an h2)
   function cleanMd(node, opts) {
@@ -4940,6 +4981,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const bodyHtml = hasBody ? '<div class="md">' + cleaned + "</div>" : "";
     if (hasBody && (d.is_self || ownBody)) d.selftext_html = bodyHtml; // (a link post can carry body text too)
     else if (hasBody && type === "crosspost") d.crosspost_parent_list = [{ is_self: true, selftext_html: bodyHtml }]; // the original's text
+    // Feeds send an image / gallery / video post without its text, even when it has some
+    // (only the post's own page carries it): the listing fetches it when the preview opens.
+    if (!body && !d.is_self && type !== "crosspost" && (d.post_hint === "image" || d.is_gallery || d.is_video) &&
+        el.getAttribute("view-context") !== "CommentsPage") d.orr_text_unsent = true;
     return d;
   }
 
@@ -7254,6 +7299,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
               enhanceVideoControls(expando); // speed / loop controls + remembered prefs
               addDownloadButtons(expando);
               wireEmbedGates(expando); // now visible → fetch its oEmbed preview if the platform's already permitted
+              checkUnsentText(expBtn.closest(".thing.link")); // a feed's media post: its text, if it has any
               // A manual expand is a deliberate "play this" action, independent of
               // the autoplay-in-feed setting — start it immediately either way.
               expando.querySelectorAll("video").forEach((v) => { v.dataset.orrWant = "play"; try { v.play().catch(() => {}); } catch (e) {} });
