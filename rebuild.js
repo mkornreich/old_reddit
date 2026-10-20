@@ -594,7 +594,7 @@
       `<div class="content" role="main">` +
       (route.sort === "top" || route.sort === "controversial" ? timeMenuHtml(route, opts.t, opts.days, opts.hours) : "") +
       `<div id="siteTable" class="sitetable linklisting">` +
-      (items || `<div class="thing">Nothing here.</div>`) +
+      (items || `<p id="noresults" class="error">there doesn't seem to be anything here</p>`) +
       `</div>` +
       navButtonsHtml(route, listing, count, opts.t) +
       `</div>`;
@@ -5090,12 +5090,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (posts.length >= 10 || !next) break;
       path = htmlListingPath(route, params, next);
     }
-    if (!posts.length && !params.after) {
+    // An empty feed is either a subreddit with nothing in this tab right now (r/Android's
+    // top of the past 24 hours, a day after its last post) or one we can't see — banned,
+    // private, or no such subreddit — whose feed is just as empty. Reddit's small
+    // community hover card tells them apart (it's empty for the latter): show the empty
+    // listing like old reddit, or leave the page to Reddit's own message.
+    if (!posts.length && !params.after && !(route.scope === "sub" && !route.combined && (await hoverPartial("sub", route.sub)))) {
       const err = new Error("empty logged-out listing");
       err.status = 403;
       throw err;
     }
-    const adult = route.scope === "sub" && !params.after &&
+    const adult = route.scope === "sub" && !params.after && posts.length > 0 && // (an empty feed says nothing)
       (posts.some((p) => p.subreddit_nsfw) || posts.filter((p) => p.over_18).length * 2 >= posts.length);
     // A sticky that's also in the feed keeps its fuller feed data, moved to the top.
     const stickies = (await stickiesP).map((s) => {
