@@ -6567,6 +6567,38 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (errs && errs.length) throw orrError(String(errs[0][1] || errs[0][0] || "Reddit refused that"), String(errs[0][0] || ""));
     return j || {};
   }
+  // Log out the way new Reddit's own user menu does: a JSON POST to
+  // /svc/shreddit/account/logout carrying the csrf_token cookie (its fetch wrapper adds
+  // that to every same-origin JSON POST). Old reddit's /logout link only opened a
+  // new-Reddit page, still logged in. Then the page again, logged out — or the front page
+  // from one that needs a login (your inbox, saved, upvoted…).
+  async function logOut(link) {
+    if (link.dataset.orrBusy) return;
+    link.dataset.orrBusy = "1";
+    link.textContent = "logging out…";
+    const m = /(?:^|;\s*)csrf_token=([^;]*)/.exec(document.cookie);
+    const body = { 0: "1" };
+    if (m && m[1]) body.csrf_token = decodeURIComponent(m[1]);
+    let res = null;
+    try {
+      res = await fetch(location.origin + "/svc/shreddit/account/logout", {
+        method: "POST", credentials: "include",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (e) { /* below */ }
+    if (!res || !res.ok) {
+      delete link.dataset.orrBusy;
+      link.textContent = "logout";
+      showToast("couldn't log out — " + (res ? "Reddit answered " + res.status : "network error") + "; try again");
+      return;
+    }
+    const ur = ORR.isUserRoute(location);
+    const needsLogin = (ORR.isMessageRoute && ORR.isMessageRoute(location)) || (ur && OWN_USER_TABS.indexOf(ur.section) >= 0);
+    if (needsLogin) location.assign("/");
+    else location.reload();
+  }
+
   // Full data for one post / comment (raw_json, like the rest of the page).
   async function fetchThingData(name) {
     const r = await redditFetch(location.origin + "/api/info.json?raw_json=1&id=" + encodeURIComponent(name));
@@ -7259,6 +7291,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if ((el = t.closest("a.orr-ed-help"))) { stop(); toggleFormattingHelp(el.closest("form"), el); return true; }
     if ((el = t.closest(".subscribe-button .option"))) { stop(); toggleSubscribe(el); return true; }
     if ((el = t.closest("a.orr-markread"))) { stop(); toggleMarkRead(el); return true; }
+    if ((el = t.closest("#header-bottom-right a#logout"))) { stop(); logOut(el); return true; }
     return false;
   }
   function wireActions() {
