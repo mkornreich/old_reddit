@@ -4663,6 +4663,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (s) s.remove();
     hideSkeleton();
   }
+  // A first load we couldn't rebuild: give the page back to Reddit, and say why in the
+  // console ("sometimes I see new Reddit" can't be diagnosed otherwise). The next page
+  // new Reddit moves to gets another try (see watchNativeNavigation).
+  function fallBack(why, err) {
+    fallbackStreak++;
+    active = false;
+    unhideGuard();
+    const st = err && err.status != null ? " (" + (err.status ? "HTTP " + err.status : "network error / blocked request") + ")" : "";
+    try { console.info("[Classic Layout for Reddit] showing Reddit's own page: " + why + st); } catch (e) { /* no console */ }
+  }
 
   // A lightweight old-reddit-ish loading skeleton, shown on first paint.
   function showSkeleton() {
@@ -5735,7 +5745,37 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     document.addEventListener("DOMContentLoaded", () => { lateBodyObserver.disconnect(); }, { once: true });
   }
 
+  // New Reddit moves between pages without a reload (its own router), so a page left to
+  // it — one we couldn't rebuild, or one we don't rebuild, like /settings — stayed new
+  // Reddit through every link clicked from there until a hard refresh: "sometimes I see
+  // new Reddit". Watch its page changes and rebuild the ones we can. After a few failed
+  // tries in a row (Reddit refusing this connection, say), leave it be until a reload.
+  let fallbackStreak = 0;
+  let nativeNavWatched = false;
+  function watchNativeNavigation() {
+    if (nativeNavWatched) return;
+    nativeNavWatched = true;
+    let last = location.pathname + location.search;
+    const check = () => {
+      const here = location.pathname + location.search;
+      if (here === last) return;
+      last = here;
+      if (active || fallbackStreak >= 3 || location.hash === "#orr-native") return;
+      const url = new URL(location.href);
+      if (!isRebuiltRoute(url)) return;
+      wireNav();
+      try { history.scrollRestoration = "manual"; } catch (e) { /* ignore */ }
+      showSkeleton();
+      loadPage(url, true);
+    };
+    try {
+      if (typeof navigation !== "undefined" && navigation.addEventListener) navigation.addEventListener("navigatesuccess", () => setTimeout(check, 0));
+    } catch (e) { /* no Navigation API */ }
+    setInterval(check, 1000); // (and for history changes the Navigation API doesn't report)
+  }
+
   function replaceBody(body, title) {
+    fallbackStreak = 0;
     teardownInfinite();
     teardownMores();
     const fresh = document.createElement("body");
@@ -5916,7 +5956,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (watchdog) clearTimeout(watchdog);
     if (gaveUp) return;
     if (!json) {
-      if (firstLoad) { active = false; unhideGuard(); } // give up → new Reddit
+      if (firstLoad) fallBack("couldn't load the listing", { status: lastStatus }); // give up → new Reddit
       else failNav(url, lastStatus);
       return;
     }
@@ -5936,7 +5976,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       active = true;
       renderInto(route, json, params);
     } catch (e) {
-      active = false; // fall back to new Reddit rather than a blank page
+      fallBack("couldn't build the listing — " + String((e && e.message) || e).slice(0, 80)); // rather than a blank page
     }
     unhideGuard();
   }
@@ -5982,8 +6022,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
-        active = false;
-        unhideGuard();
+        fallBack("couldn't load the thread", err);
       } else {
         failNav(url, err.status || 0);
       }
@@ -6054,8 +6093,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
-        active = false;
-        unhideGuard();
+        fallBack("couldn't load the profile", err);
       } else {
         failNav(url, err.status || 0);
       }
@@ -6152,8 +6190,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
       if (firstLoad) {
-        active = false;
-        unhideGuard();
+        fallBack("couldn't load the search results", err);
       } else {
         failNav(url, err.status || 0);
       }
@@ -6223,7 +6260,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       json = await res.json();
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
-      if (firstLoad) { active = false; unhideGuard(); } else failNav(url, err.status || 0);
+      if (firstLoad) fallBack("couldn't load the wiki page", err); else failNav(url, err.status || 0);
       return;
     }
     if (watchdog) clearTimeout(watchdog);
@@ -7246,7 +7283,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       json = await fetchBox(params.after, params.count);
     } catch (err) {
       if (watchdog) clearTimeout(watchdog);
-      if (firstLoad) { active = false; unhideGuard(); } else failNav(url, err.status || 0);
+      if (firstLoad) fallBack("couldn't load the inbox", err); else failNav(url, err.status || 0);
       return;
     }
     if (watchdog) clearTimeout(watchdog);
@@ -7721,6 +7758,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       }
     } catch (e) {}
     const url = new URL(location.href);
+    watchNativeNavigation();
     if (ORR.isAnswersRoute && ORR.isAnswersRoute(url)) {
       unhideGuard();
       loadAnswers(); // frame Reddit Answers in old-reddit chrome; leave the app itself
