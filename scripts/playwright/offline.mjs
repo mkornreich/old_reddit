@@ -343,6 +343,28 @@ check("logged-out search paths", JSON.stringify(spath) === JSON.stringify([
   "/svc/shreddit/search/?q=gemma&type=posts&sort=new",
   "/svc/shreddit/search/?q=a%26b&type=posts",
 ]), JSON.stringify(spath));
+// Exact time on hover (issue #32): in the reader's own time zone, old reddit's format
+{
+  const tzCtx = await browser.newContext({ timezoneId: "America/New_York", locale: "en-US" });
+  const tp = await tzCtx.newPage();
+  await tp.route("https://www.reddit.com/orr-offline", (r) => r.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><html><head></head><body></body></html>" }));
+  await tp.goto("https://www.reddit.com/orr-offline");
+  await tp.addScriptTag({ content: "globalThis.chrome = { runtime: { getURL: (p) => p, sendMessage: () => Promise.resolve() }, storage: { local: { get: (k, cb) => cb && cb({}), set: () => {} }, sync: { get: (k, cb) => cb && cb({}), set: () => {} }, onChanged: { addListener: () => {} } } };" });
+  for (const f of ["common.js", "rebuild.js"]) await tp.addScriptTag({ content: fs.readFileSync(path.join(repo, f), "utf8") });
+  const tt = await tp.evaluate(() => {
+    const R = globalThis.ORR_REBUILD;
+    const d = { name: "t3_x", id: "x", title: "t", author: "a", subreddit: "s", created_utc: 1792523779, permalink: "/r/s/comments/x/t/" };
+    const c = { name: "t1_y", id: "y", author: "a", body_html: "<p>c</p>", created_utc: 1796227200, score: 1, replies: "" };
+    return {
+      summer: R.exactTime(1792523779), winter: R.exactTime(1796227200), none: R.exactTime(0),
+      post: (R.buildItem(d, {}).match(/<time [^>]*>/) || [""])[0],
+      comment: (R.buildComment(c, { linkId: "t3_x" }).match(/<time [^>]*>/) || [""])[0],
+    };
+  });
+  check("exact time on hover, in the reader's time zone", tt.summer === "Tue Oct 20 15:16:19 2026 EDT" && tt.winter === "Wed Dec 2 11:00:00 2026 EST" && tt.none === "", JSON.stringify(tt));
+  check("posts and comments carry it as their <time>'s tooltip", /title="Tue Oct 20 15:16:19 2026 EDT"/.test(tt.post) && /title="Wed Dec 2 11:00:00 2026 EST"/.test(tt.comment), JSON.stringify([tt.post, tt.comment]));
+  await tzCtx.close();
+}
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");

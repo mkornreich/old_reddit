@@ -47,6 +47,27 @@
     return "just now";
   }
 
+  // The exact time, in the reader's own time zone, for a "N hours ago" tooltip — old
+  // reddit's format: "Tue Oct 20 15:16:19 2026 EDT" (issue #32).
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function exactTime(createdUtc) {
+    const d = new Date((createdUtc || 0) * 1000);
+    if (!createdUtc || isNaN(d.getTime())) return "";
+    let tz = "";
+    try {
+      const part = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(d).find((x) => x.type === "timeZoneName");
+      tz = part ? part.value : "";
+    } catch (e) { /* no Intl: no zone name */ }
+    const p2 = (n) => String(n).padStart(2, "0");
+    return `${DAY_NAMES[d.getDay()]} ${MONTH_NAMES[d.getMonth()]} ${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())} ${d.getFullYear()}` + (tz ? " " + tz : "");
+  }
+  // A "N hours ago" <time> with the exact time on hover.
+  function timeHtml(createdUtc, nowMs) {
+    const iso = new Date((createdUtc || 0) * 1000).toISOString();
+    return `<time datetime="${esc(iso)}" title="${esc(exactTime(createdUtc))}">${esc(formatAge(createdUtc, nowMs))}</time>`;
+  }
+
   function thumbnailHtml(d, permalink) {
     if (d.orr_no_thumb) return ""; // (post type unknown: no self/link icon to pick)
     const t = d.thumbnail;
@@ -390,7 +411,6 @@
     const scoreHidden = d.score_hidden || d.hide_score;
     const score = scoreHidden ? "&bull;" : esc(d.score);
     const comments = d.num_comments === 1 ? "1 comment" : `${esc(d.num_comments || 0)} comments`;
-    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
     const toSub = opts.showSub
       ? ` to <a href="/r/${esc(d.subreddit)}/" class="subreddit hover">r/${esc(d.subreddit)}</a>`
       : "";
@@ -437,7 +457,7 @@
       `</p>` +
       // (time/author can be unknown: a logged-out sticky comes from a highlight card that carries neither)
       `<p class="tagline">${d.created_utc || d.author ? "submitted" : ""}` +
-      (d.created_utc ? ` <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time>` : "") +
+      (d.created_utc ? " " + timeHtml(d.created_utc, opts.nowMs) : "") +
       (d.author ? ` by ${authorHtml(d.author)}` : "") +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
       toSub +
@@ -917,7 +937,6 @@
   function buildMessage(d, opts) {
     opts = opts || {};
     const isComment = !!d.was_comment;
-    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
     const bodyHtml = d.body_html ? d.body_html : d.body ? `<div class="md"><p>${esc(d.body)}</p></div>` : "";
     const ctx = /^\/(?!\/)/.test(d.context || "") ? d.context : ""; // (always a path on reddit)
     const postPath = isComment ? messagePostPath(ctx) : "";
@@ -949,7 +968,7 @@
       `<p class="subject">${subject}</p>` +
       (isComment ? midcolHtml(d, "") : "") +
       `<div class="entry ${vs}">` +
-      `<p class="tagline"><span class="head">${who}${via} sent <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></span></p>` +
+      `<p class="tagline"><span class="head">${who}${via} sent ${timeHtml(d.created_utc, opts.nowMs)}</span></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
       `<ul class="flat-list buttons">${buttons}</ul>` +
       `</div>` +
@@ -1025,7 +1044,6 @@
     opts = opts || {};
     const pts = d.score_hidden ? "score hidden" : `${esc(d.score)} point${d.score === 1 ? "" : "s"}`;
     const bodyHtml = d.body_html ? d.body_html : d.body ? `<div class="md"><p>${esc(d.body)}</p></div>` : "";
-    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
     const kids = childrenOf(d.replies);
     const childHtml = kids.length ? buildCommentTree(kids, opts.linkId, opts.nowMs) : "";
     const vs = voteState(d);
@@ -1039,7 +1057,7 @@
       authorHtml(d.author) +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
       ` <span class="score ${vs}">${pts}</span> ` +
-      `<time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time></p>` +
+      `${timeHtml(d.created_utc, opts.nowMs)}</p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
       `<ul class="flat-list buttons"><li class="first"><a href="${esc(d.permalink || "")}" class="bylink">permalink</a></li>${actionButtonsHtml(d, "comment")}</ul>` +
       `</div>` +
@@ -1148,7 +1166,6 @@
     opts = opts || {};
     const pts = d.score_hidden ? "score hidden" : `${esc(d.score)} point${d.score === 1 ? "" : "s"}`;
     const bodyHtml = d.body_html ? d.body_html : d.body ? `<div class="md"><p>${esc(d.body)}</p></div>` : "";
-    const iso = new Date((d.created_utc || 0) * 1000).toISOString();
     const linkPermalink = d.permalink || d.link_permalink || "";
     const sub = d.subreddit || "";
     const vs = voteState(d);
@@ -1158,7 +1175,7 @@
       midcolHtml(d, `<div class="score ${vs}">${esc(d.score)}</div>`) +
       `<div class="entry ${vs}">` +
       `<p class="tagline"><a href="/user/${esc(d.author)}" class="author">${esc(d.author)}</a> ` +
-      `<span class="score ${vs}">${pts}</span> <time datetime="${esc(iso)}">${esc(formatAge(d.created_utc, opts.nowMs))}</time> ` +
+      `<span class="score ${vs}">${pts}</span> ${timeHtml(d.created_utc, opts.nowMs)} ` +
       `on <a href="${esc(linkPermalink)}" class="bylink">${esc(d.link_title || "a post")}</a> ` +
       `in <a href="/r/${esc(sub)}/" class="subreddit">r/${esc(sub)}</a></p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
@@ -1449,7 +1466,7 @@
   }
 
   globalThis.ORR_REBUILD = {
-    esc, formatAge, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
+    esc, formatAge, exactTime, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType, foldReadSubtrees,
     formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
