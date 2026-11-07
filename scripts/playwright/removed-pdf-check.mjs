@@ -1,5 +1,6 @@
 // Firefox (temporary add-on), logged out: a post its moderators removed shows "[removed]"
-// as its text, like old reddit, not a blank post; and PDF links in a comment stay plain
+// as its text (one its author deleted, "[deleted]"), like old reddit, not a blank post; and
+// PDF links in a comment stay plain
 // links (no window-tall frames — a reading list of PDFs used to be screens of empty boxes).
 //   node removed-pdf-check.mjs <ext-dir> <out-dir>   (exits non-zero on failure)
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
@@ -65,12 +66,15 @@ await page.waitForTimeout(4000);
 const b = await page.evaluate(() => {
   const c = document.querySelector(".commentarea .thing.comment .usertext-body");
   if (!c) return null;
+  // (this thread's post was deleted by its author: same banner slot, "deleted" wording)
+  const postMd = document.querySelector("#siteTable .thing.link .expando .usertext-body .md");
   const pdfLinks = Array.from(c.querySelectorAll("a[href]")).filter((x) => /\.pdf(\?|#|$)/i.test(x.getAttribute("href")));
-  return { pdfLinks: pdfLinks.length, pdfFrames: c.querySelectorAll("iframe.orr-pdf").length, youtube: c.querySelectorAll("iframe[src*='youtube']").length, height: Math.round(c.getBoundingClientRect().height) };
+  return { postText: postMd ? postMd.textContent.trim() : null, pdfLinks: pdfLinks.length, pdfFrames: c.querySelectorAll("iframe.orr-pdf").length, youtube: c.querySelectorAll("iframe[src*='youtube']").length, height: Math.round(c.getBoundingClientRect().height) };
 });
 console.log("PDF comment:", JSON.stringify(b));
 if (!b) fails.push("PDF comment: not found");
 else {
+  if (b.postText !== "[deleted]") fails.push(`author-deleted post: text ${JSON.stringify(b.postText)}, want "[deleted]"`);
   if (b.pdfLinks < 3) fails.push(`PDF comment: only ${b.pdfLinks} PDF links (page changed?)`);
   if (b.pdfFrames) fails.push(`PDF comment: ${b.pdfFrames} PDF frames, want none`);
   if (b.youtube !== 1) fails.push(`PDF comment: ${b.youtube} YouTube players, want 1 (other media still expands)`);
