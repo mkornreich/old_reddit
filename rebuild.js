@@ -163,8 +163,12 @@
     if (/^https?:\/\/(?:www\.)?giphy\.com\/gifs\/[\w-]+/i.test(url)) {
       return { type: "image", html: oembedGatedEmbed("giphy", url, "Giphy") };
     }
-    if (/^https?:\/\//i.test(url) && /\.pdf(\?|#|$)/i.test(url)) {
-      return { type: "selftext", html: `<div class="expando-container"><iframe class="orr-embed orr-pdf" src="${esc(url)}" loading="lazy" referrerpolicy="no-referrer"></iframe></div>` };
+    // (https only: an http:// frame on Reddit's https page is blocked as mixed content —
+    // it would only ever be an empty box. Some sites refuse to be framed at all, so the
+    // PDF's own link sits under the frame.)
+    if (/^https:\/\//i.test(url) && /\.pdf(\?|#|$)/i.test(url)) {
+      return { type: "selftext", pdf: true, html: `<div class="expando-container"><iframe class="orr-embed orr-pdf" src="${esc(url)}" loading="lazy" referrerpolicy="no-referrer"></iframe>` +
+        `<a class="orr-pdf-open" href="${esc(url)}" target="_blank" rel="noopener noreferrer">open the PDF &#8599;</a></div>` };
     }
     if (/\.(mp3|ogg|oga|wav|m4a|flac|opus)(\?|#|$)/i.test(url)) {
       return { type: "video", html: `<div class="expando-container"><audio class="orr-directaudio" controls preload="metadata" src="${esc(url)}"></audio></div>` };
@@ -1950,6 +1954,7 @@ html.orr-lb-open { overflow:hidden; }
 #orr-hoverpost.orr-peek-clipped:after { content:"\\2026 open the post to read the rest"; position:absolute; left:0; right:0; bottom:0;
   padding:22px 10px 6px; background:linear-gradient(rgba(255,255,255,0), #fff 55%); color:#888; font-style:italic; }
 .orr-pdf { width:100%; height:80vh; background:#fff; }
+.orr-pdf-open { display:inline-block; margin-top:4px; font-size:11px; color:#369; }
 .orr-directaudio { width:100%; max-width:640px; display:block; }
 /* post expando images/videos scale to fit the window (never cut off); click opens the lightbox */
 .orr-resizable { display:inline-block; overflow:hidden; max-width:100%; line-height:0; cursor:zoom-in; }
@@ -4275,6 +4280,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (a.querySelector("img, video")) continue; // already shows its media inline
       const href = a.getAttribute("href") || "";
       const ext = externalMediaExpando(href);
+      // A PDF stays a plain link in a comment: opened inline it's a window-tall frame per
+      // link (a reading list of PDFs became screens of empty boxes when the sites refused
+      // framing). Posts still preview a PDF behind their expando button.
+      if (ext && ext.pdf) continue;
       if (ext) {
         a.dataset.orrMedia = "1";
         const wrap = document.createElement("div");
@@ -5052,6 +5061,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const bodyHtml = hasBody ? '<div class="md">' + cleaned + "</div>" : "";
     if (hasBody && (d.is_self || ownBody)) d.selftext_html = bodyHtml; // (a link post can carry body text too)
     else if (hasBody && type === "crosspost") d.crosspost_parent_list = [{ is_self: true, selftext_html: bodyHtml }]; // the original's text
+    // A post its subreddit's moderators removed: new Reddit sends a banner ("Sorry, this
+    // post has been removed by the moderators of r/x.") and no text. Old reddit shows
+    // "[removed]" as the text ("[deleted]" when the author deleted it), not a blank post.
+    const removed = !hasBody && d.is_self && el.querySelector("[slot='post-removed-banner']");
+    if (removed) d.selftext_html = `<div class="md"><p>${/\bdeleted\b/i.test(removed.textContent) ? "[deleted]" : "[removed]"}</p></div>`;
     // Feeds send an image / gallery / video post without its text, even when it has some
     // (only the post's own page carries it): the listing fetches it when the preview opens.
     if (!body && !d.is_self && type !== "crosspost" && (d.post_hint === "image" || d.is_gallery || d.is_video) &&
