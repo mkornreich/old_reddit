@@ -1016,12 +1016,23 @@
       const sel = s === cur;
       return `<a href="${esc(permalink)}?sort=${s}"${sel ? ' style="font-weight:bold;text-decoration:underline"' : ""}>${s}</a>`;
     }).join(' <span class="separator">&middot;</span> ');
-    return `<div class="menuarea" style="padding:5px 10px;font-size:small">sorted by: ${links}</div>`;
+    // "collapse all" folds every top-level comment to one line (issue #33; also the [ key);
+    // it turns into "expand all" when they're all folded. Hidden while there are no comments.
+    const all = `<span class="orr-collapse-all-wrap" hidden> <span class="separator">|</span> ` +
+      `<a href="javascript:void(0)" class="orr-collapse-all" role="button" title="fold every comment to one line; click a comment's [+] to open it">collapse all</a></span>`;
+    return `<div class="menuarea" style="padding:5px 10px;font-size:small">sorted by: ${links}${all}</div>`;
   }
 
   function childrenOf(replies) {
     if (replies && replies.data && Array.isArray(replies.data.children)) return replies.data.children;
     return [];
+  }
+
+  // Every reply under a comment, loaded or still behind a "load more comments" stub —
+  // old reddit's "(N children)" on a collapsed comment.
+  function countReplies(replies) {
+    return childrenOf(replies).reduce((n, k) =>
+      n + (k.kind === "t1" ? 1 + countReplies(k.data && k.data.replies) : k.kind === "more" ? (k.data && k.data.count) || 0 : 0), 0);
   }
 
   function buildMore(d, linkId) {
@@ -1051,6 +1062,8 @@
     const kids = childrenOf(d.replies);
     const childHtml = kids.length ? buildCommentTree(kids, opts.linkId, opts.nowMs) : "";
     const vs = voteState(d);
+    const nKids = countReplies(d.replies); // shown only while collapsed (CSS)
+    const numChildren = nKids ? ` <span class="numchildren">(${nKids} ${nKids === 1 ? "child" : "children"})</span>` : "";
     return (
       `<div class="thing comment id-${esc(d.name)}" id="thing_${esc(d.name)}" data-fullname="${esc(d.name)}" data-author="${esc(d.author)}" data-created="${esc(d.created_utc || 0)}"` +
       ` data-subreddit="${esc(d.subreddit || "")}"${d.score_hidden ? "" : ` data-score="${esc(d.score)}"`}${accountDataAttrs(d)}>` +
@@ -1061,7 +1074,7 @@
       authorHtml(d.author) +
       flairSpan("flair", d.author_flair_text, d.author_flair_richtext, d.author_flair_background_color, d.author_flair_text_color) +
       ` <span class="score ${vs}">${pts}</span> ` +
-      `${timeHtml(d.created_utc, opts.nowMs)}</p>` +
+      `${timeHtml(d.created_utc, opts.nowMs)}${numChildren}</p>` +
       `<div class="usertext-body">${bodyHtml}</div>` +
       `<ul class="flat-list buttons"><li class="first"><a href="${esc(d.permalink || "")}" class="bylink">permalink</a></li>${actionButtonsHtml(d, "comment")}</ul>` +
       `</div>` +
@@ -1826,6 +1839,11 @@ html.orr-rebuilt .grecaptcha-badge { visibility:hidden !important; }
 .thing.comment.collapsed > .entry .flat-list.buttons { display:none !important; }
 .thing.comment.collapsed > .entry .tagline { opacity:.75; }
 a.expand { color:#888; text-decoration:none; font-family:monospace; cursor:pointer; margin-right:2px; }
+/* "(N children)" only on a collapsed comment, like old reddit (its CSS keys off a .noncollapsed class we don't use) */
+.thing.comment:not(.collapsed) > .entry .numchildren { display:none; }
+/* the thread line under the pointer: click it to collapse that comment (issue #33) */
+#orr-tline { position:fixed; z-index:40; width:3px; margin-left:-1px; border-radius:2px; background:#5f99cf; opacity:.6; pointer-events:none; display:none; }
+html.orr-tline-hot .commentarea { cursor:pointer; }
 .thing.orr-kb-sel > .entry { outline:2px solid #ff4500; outline-offset:1px; }
 .thing.orr-filtered { display:none !important; }
 #siteTable.orr-reveal-filtered .thing.orr-filtered { display:block !important; opacity:.5; outline:1px dashed #c33; }
@@ -2495,8 +2513,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     expandLink.setAttribute("aria-expanded", collapsed ? "false" : "true");
     expandLink.setAttribute("aria-label", collapsed ? "expand comment" : "collapse comment");
     persistCollapse(thing, collapsed);
-    if (collapsed) stopHiddenMedia(thing);
+    if (collapsed) { stopHiddenMedia(thing); keepOnScreen(thing); }
     else { resumeHiddenMedia(thing); clampReadBodies(); } // expanding a thread reveals read bodies → add their expand hint
+    syncCollapseAllLink();
   }
 
   // ---- gallery nav ----
@@ -4258,7 +4277,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const tops = topComments();
     if (!tops.length) return;
     const anyOpen = tops.some((t) => !t.classList.contains("collapsed"));
+    // the thread you're reading keeps its place on screen (or, folded from inside it, comes into view)
+    const here = tops.find((t) => t.getBoundingClientRect().bottom > 0);
+    const before = here ? here.getBoundingClientRect().top : 0;
     tops.forEach((t) => collapseThing(t, anyOpen)); // any open → collapse all; else expand all
+    // remembered for comments loaded later (scrolling to the end loads more): they come folded too
+    const area = document.querySelector(".commentarea");
+    if (area) area.toggleAttribute("data-orr-all-collapsed", anyOpen);
+    if (here) window.scrollBy(0, here.getBoundingClientRect().top - (anyOpen && before < 0 ? 10 : before));
+    syncCollapseAllLink();
   }
   function focusThread() {
     const cur = kbCurrent();
@@ -4266,6 +4293,88 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const top = cur.closest(".nestedlisting > .thing.comment") || cur;
     topComments().forEach((t) => collapseThing(t, t !== top));
     top.scrollIntoView({ block: "start", behavior: SB });
+    syncCollapseAllLink();
+  }
+  // A comment you just collapsed stays on screen: folding a long thread whose top is above
+  // the window would otherwise leave you far down the page (issue #33; what the Reddit
+  // Comment Collapser add-on does on old reddit).
+  function keepOnScreen(thing) {
+    const top = thing.getBoundingClientRect().top;
+    if (top < 0) window.scrollTo({ top: window.scrollY + top - 10, behavior: SB });
+  }
+  // The "collapse all" link next to the comment sort: says what a click will do.
+  function syncCollapseAllLink() {
+    const a = document.querySelector(".commentarea a.orr-collapse-all");
+    if (!a) return;
+    const tops = topComments();
+    const anyOpen = tops.some((t) => !t.classList.contains("collapsed"));
+    const label = anyOpen ? "collapse all" : "expand all";
+    if (a.textContent !== label) a.textContent = label;
+    if (a.parentElement) a.parentElement.hidden = !tops.length;
+  }
+  // Top-level comments added after "collapse all" (more loaded at the end of the page)
+  // arrive folded like the rest; ones the reader opened since stay open.
+  function foldNewTopComments() {
+    const area = document.querySelector(".commentarea");
+    const all = !!area && area.hasAttribute("data-orr-all-collapsed");
+    topComments().forEach((t) => {
+      if (t.hasAttribute("data-orr-top")) return;
+      t.setAttribute("data-orr-top", "1");
+      if (all) collapseThing(t, true);
+    });
+    syncCollapseAllLink();
+  }
+
+  // ---- thread lines (issue #33) ----
+  // Click the line along a comment's left side — below its vote arrows, down the dotted
+  // line its replies hang from — to collapse it with all its replies; an outer line folds a
+  // parent without scrolling back up to its [–]. (Issue #33's reporter did this on old reddit
+  // with the Reddit Comment Collapser add-on, which doesn't work on the rebuilt page.) The
+  // line lights up under the pointer.
+  function threadLineAt(e) {
+    const t = e.target;
+    if (!t || !t.closest || t.closest("a, button, input, textarea, select, label, .midcol, .entry")) return null;
+    const c = t.closest(".nestedlisting .thing.comment");
+    if (!c || c.classList.contains("collapsed")) return null;
+    const child = c.querySelector(":scope > .child");
+    const entry = c.querySelector(":scope > .entry");
+    const mid = c.querySelector(":scope > .midcol");
+    if (!child || !entry) return null;
+    const cr = c.getBoundingClientRect();
+    const x = child.getBoundingClientRect().left; // where the dotted line runs
+    const top = (mid ? mid.getBoundingClientRect().bottom : cr.top + 30) + 4;
+    const left = Math.max(cr.left, x - 8), right = Math.min(entry.getBoundingClientRect().left - 2, x + 8);
+    if (e.clientX < left || e.clientX > right || e.clientY < top || e.clientY > cr.bottom) return null;
+    return { thing: c, x, top, bottom: cr.bottom };
+  }
+  let tlineEl = null;
+  function showThreadLine(hit) {
+    const root = document.documentElement;
+    if (!hit) {
+      if (tlineEl) tlineEl.style.display = "none";
+      root.classList.remove("orr-tline-hot");
+      return;
+    }
+    if (!tlineEl || !tlineEl.isConnected) {
+      tlineEl = document.getElementById("orr-tline") || document.createElement("div");
+      tlineEl.id = "orr-tline";
+      document.body.appendChild(tlineEl);
+    }
+    const top = Math.max(0, hit.top), bottom = Math.min(window.innerHeight, hit.bottom);
+    tlineEl.style.cssText = `display:block;left:${hit.x}px;top:${top}px;height:${Math.max(0, bottom - top)}px`;
+    root.classList.add("orr-tline-hot");
+  }
+  let tlineMove = null;
+  function onThreadLineMove(e) {
+    if (!active) return;
+    const pending = tlineMove;
+    tlineMove = e;
+    if (pending) return; // one hit test per frame
+    requestAnimationFrame(() => {
+      const ev = tlineMove;
+      tlineMove = null;
+      showThreadLine(ev && document.querySelector(".commentarea") ? threadLineAt(ev) : null);
+    });
   }
 
   // Expand media links inside comment bodies (RES "show images" for comments):
@@ -4361,6 +4470,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     ensureCommentNav();
     applyCollapsedState();
     autoCollapseBots();
+    foldNewTopComments();
     expandCommentMedia(scope || document);
     addDownloadButtons(scope || document);
     wireEmbedGates(scope || document);
@@ -7412,6 +7522,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (wired) return;
     wired = true;
     wireActions();
+    // thread lines light up under the pointer (issue #33); hidden on scroll / leaving the window
+    document.addEventListener("mousemove", onThreadLineMove, { passive: true });
+    window.addEventListener("scroll", () => showThreadLine(null), { passive: true });
+    document.addEventListener("mouseout", (e) => { if (!e.relatedTarget) showThreadLine(null); });
 
     document.addEventListener(
       "click",
@@ -7461,6 +7575,21 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
             c.classList.add("orr-read-open");
             return;
           }
+        }
+        // A thread line → collapse that comment (issue #33).
+        const tl = e.button === 0 ? threadLineAt(e) : null;
+        if (tl) {
+          e.preventDefault();
+          const ex = tl.thing.querySelector(":scope > .entry .expand");
+          if (ex) toggleCollapse(ex);
+          showThreadLine(null);
+          return;
+        }
+        // "collapse all" / "expand all" next to the comment sort.
+        if (e.target.closest && e.target.closest("a.orr-collapse-all")) {
+          e.preventDefault();
+          collapseAllTop();
+          return;
         }
         // Comment collapse toggle.
         const expandLink = e.target.closest && e.target.closest("a.expand");

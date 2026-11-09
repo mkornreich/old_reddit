@@ -18,8 +18,10 @@ What it does:
   self-text; galleries have prev/next.
 - **Infinite scroll** *(on by default)* — RES "never-ending reddit".
 - **Keyboard navigation** — `j`/`k` move, `o`/Enter open, `x` expand.
-- **Collapse comments** — `[–]` on any comment; comments new since your last visit
-  are flagged.
+- **Collapse comments** — `[–]` on any comment, or click the line along a comment's
+  left side (it lights up under the pointer) to fold it with its replies — the comment
+  stays on screen. **collapse all** next to *sorted by* (or `[`) folds every comment to
+  one line with its "(N children)". Comments new since your last visit are flagged.
 - **Night mode** — dark theme (off by default, toggle in the popup).
 - **Filters** — hide posts by subreddit / user / domain / title keyword (Options).
 - **User tags & hover cards** — colored labels on users; hover a name or subreddit
