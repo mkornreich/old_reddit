@@ -16,7 +16,7 @@
     autoCollapseBots: "autoCollapseBots", compact: "compactView", nightAuto: "nightAuto",
     highContrast: "highContrast", dyslexia: "dyslexiaFont", hoverPreview: "hoverPreview",
     expandImages: "expandImages", fixedThumbnails: "fixedThumbnails", foldReadComments: "foldReadComments",
-    trackRecentSubs: "trackRecentSubs",
+    trackRecentSubs: "trackRecentSubs", subredditStyle: "subredditStyle",
   };
 
   // Filter lists / advanced (options page only).
@@ -220,6 +220,8 @@
 
   async function collectAll() {
     const local = await api.storage.local.get(null);
+    // (not the cached subreddit looks — a cache, re-fetched as you browse)
+    Object.keys(local).forEach((k) => { if (/^orrSubTheme/.test(k)) delete local[k]; });
     let sync = {};
     try { sync = await api.storage.sync.get(null); } catch (e) { /* sync unavailable */ }
     return Object.assign({}, local, sync); // sync wins for shared keys

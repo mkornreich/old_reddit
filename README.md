@@ -12,8 +12,11 @@ What it does:
 - **Old Reddit, rebuilt** — subreddit & front-page **listings**, **comment
   threads**, **user profiles**, and **search**, in old Reddit's genuine 2019 HTML +
   CSS (from the Wayback archive) fed by the live JSON API. Full header (your
-  karma/mail, subreddit bar), the subreddit **sidebar** with rules, the **search
+  karma/mail, subreddit bar), the subreddit's own old **sidebar**, the **search
   box**, sort tabs, and the **time filter**.
+- **Subreddit styles** *(on by default)* — each subreddit's own old-Reddit theme: its
+  stylesheet, header image, and its settings (thumbnails off, flair before the title),
+  as old Reddit showed them. Off in night mode and high contrast; a switch in Options.
 - **Inline expandos** — click `[+]` to reveal a post's image / video / gallery /
   self-text; galleries have prev/next.
 - **Infinite scroll** *(on by default)* — RES "never-ending reddit".

@@ -72,9 +72,16 @@
     if (d.orr_no_thumb) return ""; // (post type unknown: no self/link icon to pick)
     const t = d.thumbnail;
     if (t && /^https?:\/\//.test(t) && !d.over_18) {
-      const w = d.thumbnail_width || 70;
-      const h = d.thumbnail_height || 70;
-      return `<a class="thumbnail may-blank" href="${esc(permalink)}"><img src="${esc(t)}" width="${esc(w)}" height="${esc(h)}" alt=""></a>`;
+      // 70px wide with the height in proportion, like old reddit (a 140×93 preview → 70×46).
+      // Size known from the JSON, or from the preview URL's own width/height; else the
+      // image keeps its shape once loaded (no height attribute).
+      let tw = d.thumbnail_width, th = d.thumbnail_height;
+      if (!(tw > 0 && th > 0)) {
+        tw = +((/[?&]width=(\d+)/.exec(t) || [])[1] || 0);
+        th = +((/[?&]height=(\d+)/.exec(t) || [])[1] || 0);
+      }
+      const hAttr = tw > 0 && th > 0 ? ` height="${Math.max(1, Math.floor((70 * th) / tw))}"` : "";
+      return `<a class="thumbnail may-blank" href="${esc(permalink)}"><img src="${esc(t)}" width="70"${hAttr} alt=""></a>`;
     }
     const cls = d.is_self ? "self" : d.over_18 ? "nsfw" : "default";
     return `<a class="thumbnail ${cls} may-blank" href="${esc(permalink)}"></a>`;
@@ -396,14 +403,16 @@
   // edit / delete (your own), report (others'), reply (comments). They're rendered for
   // everyone but CSS shows them only when you're logged in (html.orr-logged-in) and
   // edit / delete only on your own things (.orr-mine) — the first render can come
-  // before /api/me.json answers. kind: "link" | "comment".
+  // before /api/me.json answers. kind: "link" | "comment". A post's save / hide / report
+  // show logged out too (orr-lo-link), as on old reddit: clicking one asks you to log in.
   function actionButtonsHtml(d, kind) {
     const a = (cls, label) => `<a href="javascript:void(0)" class="${cls}" role="button">${label}</a>`;
-    let h = `<li class="orr-li-only orr-save-li">${a("orr-save", d.saved ? "unsave" : "save")}</li>`;
-    if (kind === "link") h += `<li class="orr-li-only orr-hide-li">${a("orr-hide", d.hidden ? "unhide" : "hide")}</li>`;
+    const lo = kind === "link" ? " orr-lo-link" : "";
+    let h = `<li class="orr-li-only${lo} orr-save-li">${a("orr-save", d.saved ? "unsave" : "save")}</li>`;
+    if (kind === "link") h += `<li class="orr-li-only${lo} orr-hide-li">${a("orr-hide", d.hidden ? "unhide" : "hide")}</li>`;
     if (kind !== "link" || d.is_self) h += `<li class="orr-own-only">${a("orr-edit", "edit")}</li>`;
     h += `<li class="orr-own-only">${a("orr-delete", "delete")}</li>`;
-    h += `<li class="orr-li-only orr-not-own">${a("orr-report", "report")}</li>`;
+    h += `<li class="orr-li-only${lo} orr-not-own">${a("orr-report", "report")}</li>`;
     if (kind === "comment" && !d.locked && !d.archived) h += `<li class="orr-li-only orr-reply-li">${a("orr-reply", "reply")}</li>`;
     return h;
   }
@@ -413,7 +422,7 @@
     const permalink = d.permalink || "/comments/" + (d.id || "");
     const linkHref = d.is_self ? permalink : d.url || permalink;
     const scoreHidden = d.score_hidden || d.hide_score;
-    const score = scoreHidden ? "&bull;" : esc(d.score);
+    const score = scoreHidden ? "&bull;" : esc(scoreText(d.score));
     const comments = d.num_comments === 1 ? "1 comment" : `${esc(d.num_comments || 0)} comments`;
     const toSub = opts.showSub
       ? ` to <a href="/r/${esc(d.subreddit)}/" class="subreddit hover">r/${esc(d.subreddit)}</a>`
@@ -432,7 +441,7 @@
     const blur = d.over_18 ? " orr-nsfw" : d.spoiler && !opts.expandText ? " orr-spoiler" : "";
     const expando = exp ? `<div class="expando${blur}"${opts.expandoButton ? ' style="display:none"' : ""}>${exp.html}</div>` : "";
     const flairText = d.link_flair_text || (Array.isArray(d.link_flair_richtext) ? d.link_flair_richtext.map((x) => x.t || "").join("") : "");
-    const flairHtml = flairSpan("linkflairlabel", d.link_flair_text, d.link_flair_richtext, d.link_flair_background_color, d.link_flair_text_color);
+    const flairHtml = flairSpan("linkflairlabel orr-linkflair", d.link_flair_text, d.link_flair_richtext, d.link_flair_background_color, d.link_flair_text_color);
     const spoilerTag = d.spoiler ? ` <span class="linkflairlabel" style="background:#000;color:#fff">spoiler</span>` : "";
     const nsfwTag = d.over_18 ? ` <span class="linkflairlabel" style="background:#c00;color:#fff">NSFW</span>` : "";
     const vs = voteState(d);
@@ -452,13 +461,13 @@
       midcolHtml(d, `<div class="score ${vs}" title="${esc(d.score)}">${score}</div>`) +
       thumbnailHtml(d, permalink) +
       `<div class="entry ${vs}">` +
-      expBtn +
       `<div class="top-matter">` +
       `<p class="title">` +
       `<a class="title may-blank" href="${esc(linkHref)}" tabindex="1">${esc(d.title)}</a>` +
       flairHtml + spoilerTag + nsfwTag +
       (d.domain ? ` <span class="domain">(<a href="/domain/${esc(d.domain)}/">${esc(d.domain)}</a>)</span>` : "") +
       `</p>` +
+      expBtn + // (old reddit's place: under the title, the tagline beside it)
       // (time/author can be unknown: a logged-out sticky comes from a highlight card that carries neither)
       `<p class="tagline">${d.created_utc || d.author ? "submitted" : ""}` +
       (d.created_utc ? " " + timeHtml(d.created_utc, opts.nowMs) : "") +
@@ -630,6 +639,15 @@
     return { className: `listing-page ${route.sort}-page`, inner };
   }
 
+  // A post's score as old reddit shows it in the vote column: 9999, 23.8k, 439k.
+  function scoreText(n) {
+    const v = Number(n);
+    if (!isFinite(v)) return String(n == null ? "" : n);
+    if (v >= 100000) return Math.floor(v / 1000) + "k";
+    if (v >= 10000) return (v / 1000).toFixed(1) + "k";
+    return String(v);
+  }
+
   function formatNumber(n) {
     if (n == null || isNaN(n)) return "0";
     try {
@@ -737,6 +755,95 @@
       if (s.title) html += `<div class="title"><h1>${esc(s.title)}</h1></div>`;
       html += `<div class="content"><div class="md">${s.html}</div></div></div></div>`;
     });
+    return html;
+  }
+
+  // ---------- a subreddit's own old-reddit look (testable) --------------
+  // Reddit still serves old reddit's own page for /r/x+x/ (r/x combined with itself),
+  // logged out too: the subreddit's custom stylesheet, its header image and its OLD
+  // sidebar — what old reddit showed, not new Reddit's widgets. Parsed from that page:
+  // { name, sr, css, header: { src, alt, title } | null, md, bottom, submits: [{ cls, href, text }] },
+  // or null when it isn't old reddit's subreddit page (e.g. an 18+ gate, a banned sub).
+  const SUB_CSS_RE = /^https:\/\/([a-z0-9-]+\.)*redditmedia\.com\/[\w\-./%]+\.css$/i;
+  const SUB_IMG_RE = /^https:\/\/([a-z0-9-]+\.)*(redditmedia|redditstatic)\.com\/[\w\-./%]+\.(png|jpe?g|gif|webp)$/i;
+  function oldSubFromHtml(html) {
+    const doc = parseHtmlDoc(html);
+    const tb = doc.querySelector(".side .titlebox");
+    if (!tb || !doc.getElementById("header-bottom-left")) return null;
+    const abs = (u) => String(u || "").trim().replace(/^\/\//, "https://");
+    const nameA = tb.querySelector("h1.redditname a") || doc.querySelector("#header .pagename a");
+    const name = nameA ? nameA.textContent.trim() : "";
+    if (!/^[A-Za-z0-9_]{2,21}$/.test(name)) return null;
+    const link = doc.querySelector('link[title="applied_subreddit_stylesheet"]');
+    const css = link ? abs(link.getAttribute("href")) : "";
+    const img = doc.querySelector("img#header-img");
+    const isrc = img ? abs(img.getAttribute("src")) : "";
+    const tid = tb.querySelector("input[name='thing_id']");
+    const sr = tid && /^t5_[a-z0-9]+$/i.test(tid.getAttribute("value") || "") ? tid.getAttribute("value") : "";
+    const md = tb.querySelector(".usertext-body .md");
+    const bottom = tb.querySelector(".bottom");
+    const submits = [];
+    doc.querySelectorAll(".side .sidebox.submit").forEach((b) => {
+      const a = b.querySelector("a[href]");
+      if (!a) return;
+      let u;
+      try { u = new URL(a.getAttribute("href"), "https://www.reddit.com"); } catch (e) { return; }
+      if (!/(^|\.)reddit\.com$/i.test(u.hostname) || !/^\/r\/[\w]+\/submit\/?$/i.test(u.pathname)) return;
+      submits.push({ cls: b.classList.contains("submit-text") ? "submit-text" : "submit-link", href: u.pathname + u.search, text: a.textContent.replace(/\s+/g, " ").trim() });
+    });
+    // Its listing rows show two subreddit settings — thumbnails on/off, flair before/after the
+    // title — and the CSS class each flair text gets (a stylesheet colors .linkflair-<class>).
+    const rows = Array.from(doc.querySelectorAll("#siteTable > .thing.link")).filter((t) => !/\bpromoted(link)?\b/.test(t.className));
+    const thumbs = rows.length ? rows.some((t) => !!t.querySelector(":scope > .thumbnail")) : null;
+    let flairLeft = null;
+    const flairClasses = {};
+    rows.forEach((t) => {
+      const lab = t.querySelector("p.title .linkflairlabel");
+      const ta = t.querySelector("p.title a.title");
+      if (!lab || !ta) return;
+      if (flairLeft === null) flairLeft = !!(lab.compareDocumentPosition(ta) & 4); // label first
+      const m = /(?:^|\s)linkflair-([\w-]{1,40})(?:\s|$)/.exec(t.className);
+      const txt = lab.textContent.replace(/\s+/g, " ").trim().toLowerCase();
+      if (m && txt && Object.keys(flairClasses).length < 200) flairClasses[txt] = m[1];
+    });
+    return {
+      name, sr, thumbs, flairLeft, flairClasses,
+      css: SUB_CSS_RE.test(css) ? css : "",
+      header: SUB_IMG_RE.test(isrc) ? { src: isrc, alt: img.getAttribute("alt") || name, title: img.getAttribute("title") || "" } : null,
+      md: md ? cleanMd(md) : "",
+      bottom: bottom ? bottom.textContent.replace(/\s+/g, " ").trim() : "",
+      submits,
+    };
+  }
+  // Old reddit's sidebar from that page (after the search box): the submit buttons, the
+  // title box (name, join, the sidebar text, "a community for N years"), and the
+  // moderators box. Logged in, `about` (about.json) adds readers / users here now and
+  // your join state.
+  function buildOldSidebar(old, about) {
+    const d = (about && about.data) || null;
+    const n = old.name;
+    let html = "";
+    (old.submits || []).forEach((sb) => {
+      html += `<div class="spacer"><div class="sidebox submit ${esc(sb.cls)}"><div class="morelink"><a href="${esc(sb.href)}" class="login-required">${esc(sb.text)}</a><div class="nub"></div></div></div></div>`;
+    });
+    html += '<div class="spacer"><div class="titlebox">';
+    html += `<h1 class="hover redditname"><a href="/r/${esc(n)}/" class="hover">${esc(n)}</a></h1>`;
+    const sr = (d && d.name) || old.sr || "";
+    const subbed = !!(d && d.user_is_subscriber);
+    // (logged out it shows too, as on old reddit: clicking asks you to log in)
+    html += `<span class="fancy-toggle-button subscribe-button toggle" data-sr="${esc(sr)}" data-subscribers="${esc((d && d.subscribers) || 0)}">` +
+      `<a class="option add${subbed ? "" : " active"}" href="javascript:void(0)" role="button">join</a>` +
+      `<a class="option remove${subbed ? " active" : ""}" href="javascript:void(0)" role="button">leave</a></span>`;
+    if (d) {
+      html += `<div class="subscribers"><span class="number">${formatNumber(d.subscribers)}</span> <span class="word">readers</span></div>`;
+      const online = d.active_user_count != null ? d.active_user_count : d.accounts_active;
+      if (online != null) html += `<div class="users-online"><span class="number">${formatNumber(online)}</span> <span class="word">users here now</span></div>`;
+    }
+    if (old.md) html += `<div class="usertext"><div class="usertext-body may-blank-within md-container"><div class="md">${old.md}</div></div></div>`;
+    if (old.bottom) html += `<div class="bottom">${esc(old.bottom)}</div>`;
+    html += "</div></div>";
+    html += `<div class="spacer"><div class="sidecontentbox "><div class="title"><h1>MODERATORS</h1></div><ul class="content">` +
+      `<li class="message-button centered"><a class="c-btn c-btn-primary login-required" href="/message/compose/?to=/r/${esc(n)}">message the mods</a></li></ul></div></div>`;
     return html;
   }
 
@@ -1291,26 +1398,29 @@
 
   function userbarLoggedOut() {
     return (
-      `<div id="header-bottom-right">` +
-      `<a href="/login" class="login-required login-link">login</a>` +
-      ` <span class="separator">or</span> ` +
-      `<a href="/register" class="register-link">sign up</a>` +
+      `<div id="header-bottom-right"><span class="user">Want to join? ` +
+      `<a href="/login" class="login-required login-link">Log in</a> or ` +
+      `<a href="/register" class="register-link">sign up</a> in seconds.</span>` +
       `</div>`
     );
   }
 
   const DEFAULT_SRBAR = ["AskReddit", "funny", "pics", "science", "worldnews", "videos", "gaming", "aww", "todayilearned", "news"];
 
+  // The links of one of the top bar's lists, old reddit's way: <li>s with a "-" before
+  // every one but the first.
+  function srBarItems(links, cur) {
+    return links.map(([href, label], i) =>
+      `<li>${i ? '<span class="separator">-</span>' : ""}<a href="${esc(href)}" class="choice${label.toLowerCase() === cur ? " selected" : ""}">${esc(label)}</a></li>`
+    ).join("");
+  }
   function srBarHtml(route) {
     const cur = route && route.scope === "sub" ? String(route.sub || "").toLowerCase() : "";
-    const links = DEFAULT_SRBAR.map(
-      (s) => `<a href="/r/${esc(s)}/" class="choice${s.toLowerCase() === cur ? " selected" : ""}">${esc(s)}</a>`
-    ).join("\n");
     return (
       `<div id="sr-header-area"><div class="width-clip"><div class="sr-list">` +
-      `<a href="/" class="choice">front</a><span class="separator">-</span>` +
-      `<a href="/r/all/" class="choice${cur === "all" ? " selected" : ""}">all</a><span class="separator">-</span>` +
-      `<span class="flat-list sr-bar">${links}</span>` +
+      `<ul class="flat-list sr-bar hover">${srBarItems([["/r/popular/", "popular"], ["/r/all/", "all"], ["/users/", "users"]], cur)}</ul>` +
+      `<span class="separator">&nbsp;|&nbsp;</span>` +
+      `<ul class="flat-list sr-bar hover" id="sr-bar">${srBarItems(DEFAULT_SRBAR.map((s) => ["/r/" + s + "/", s]), cur)}</ul>` +
       `</div></div></div>`
     );
   }
@@ -1346,12 +1456,18 @@
     // typing the URL directly) — give it the same .subreddit class the
     // hover-card favorite/filter controls already key off elsewhere.
     const subClass = opts.route && opts.route.scope === "sub" ? ' class="subreddit"' : "";
+    // Old reddit's page names: "technology" (no "r/"), "multi" for a combined r/a+b, none
+    // on the front page.
+    let pageName = opts.pageName == null ? "reddit.com" : String(opts.pageName);
+    const rm = /^r\/(.+)$/i.exec(pageName);
+    if (rm) pageName = /\+/.test(rm[1]) ? "multi" : rm[1];
+    if (pageName === "reddit.com") pageName = "";
     return (
       `<div id="header" role="banner">` +
       srBarHtml(opts.route) +
-      `<a href="/" id="header-img" class="default-header title">reddit</a>` +
       `<div id="header-bottom-left">` +
-      `<span class="pagename redditname"><a${subClass} href="${esc(opts.pageHref || "/")}">${esc(opts.pageName || "reddit.com")}</a></span>` +
+      `<a href="/" id="header-img" class="default-header title">reddit</a>&nbsp;` +
+      (pageName ? `<span class="hover pagename redditname"><a${subClass} href="${esc(opts.pageHref || "/")}">${esc(pageName)}</a></span>` : "") +
       (opts.tabmenu || "") +
       `</div>` +
       (id ? userbarLoggedIn(id) : userbarLoggedOut()) +
@@ -1485,7 +1601,7 @@
   globalThis.ORR_REBUILD = {
     esc, formatAge, exactTime, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType, foldReadSubtrees,
-    formatNumber, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
+    formatNumber, scoreText, oldSubFromHtml, buildOldSidebar, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
@@ -1788,6 +1904,9 @@
   // ==================== RES-style enhancements ==========================
 
   let nightModeOn = true;
+  // A subreddit's own old-reddit look shown now: { key, name, css, header } (see syncSubTheme)
+  let subTheme = null;
+  let subStyleOn = true; // Options → "Subreddit styles" (old reddit's "allow subreddits to show me custom themes")
   // issue #6 toggles (set from prefs in start())
   let autoplayOn = false, hideReadOn = false, autoCollapseBotsOn = false, nightAutoOn = false;
   let foldReadCommentsOn = false, trackRecentSubsOn = true;
@@ -1803,6 +1922,8 @@
     el.classList.toggle("orr-contrast", p.highContrast === true);
     el.classList.toggle("orr-dyslexic", p.dyslexiaFont === true);
     el.classList.toggle("orr-fixedthumbs", p.fixedThumbnails === true);
+    subStyleOn = p.subredditStyle !== false;
+    syncSubTheme(); // (high contrast or the "Subreddit styles" switch may have changed)
   }
   // Content-width / font-size sliders: drive CSS custom properties on <html>.
   function applyLayoutVars(ui) {
@@ -1851,11 +1972,29 @@ html.orr-tline-hot .commentarea { cursor:pointer; }
 #orr-filtered-bar a.orr-filtered-toggle { color:#369; font-weight:bold; cursor:pointer; }
 /* Old-reddit's archived sprite dropped the image expando icon, so image/gallery
    posts rendered an invisible (icon-less) expando box. Restore a visible icon. */
-.expando-button.image { background-repeat:no-repeat; background-position:center center; }
-.expando-button.image.collapsed { background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'23'%20height%3D'23'%3E%3Crect%20x%3D'3'%20y%3D'5'%20width%3D'17'%20height%3D'13'%20rx%3D'2'%20fill%3D'rgb(240%2C245%2C250)'%20stroke%3D'rgb(95%2C153%2C207)'%20stroke-width%3D'1.5'%2F%3E%3Ccircle%20cx%3D'8'%20cy%3D'9'%20r%3D'1.7'%20fill%3D'rgb(95%2C153%2C207)'%2F%3E%3Cpath%20d%3D'M4.5%2017%20L10%2010.5%20L13.5%2014%20L16%2011%20L18.5%2017%20Z'%20fill%3D'rgb(95%2C153%2C207)'%2F%3E%3C%2Fsvg%3E"); }
-.expando-button.image.expanded { background-image:url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'23'%20height%3D'23'%3E%3Crect%20x%3D'3'%20y%3D'5'%20width%3D'17'%20height%3D'13'%20rx%3D'2'%20fill%3D'rgb(95%2C153%2C207)'%20stroke%3D'rgb(60%2C110%2C160)'%20stroke-width%3D'1.5'%2F%3E%3Ccircle%20cx%3D'8'%20cy%3D'9'%20r%3D'1.7'%20fill%3D'white'%2F%3E%3Cpath%20d%3D'M4.5%2017%20L10%2010.5%20L13.5%2014%20L16%2011%20L18.5%2017%20Z'%20fill%3D'white'%2F%3E%3C%2Fsvg%3E"); }
+/* expando buttons: today's old reddit (its expando.css + sprite), image posts use its video button as it does */
+html .expando-button {float:left;height:23px;width:23px;margin:2px 5px 2px 0;background:transparent none no-repeat scroll center center;cursor:pointer}
+html .expando-button.expanded.video, html .expando-button.expanded.image, html .expando-button.expanded.selftext, html .expando-button.expanded.crosspost {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -433px;background-repeat:no-repeat}
+html .expando-button.expanded.video:hover, html .expando-button.expanded.image:hover, html .expando-button.expanded.selftext:hover, html .expando-button.expanded.crosspost:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -404px;background-repeat:no-repeat}
+html .expando-button.collapsed.selftext {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -549px;background-repeat:no-repeat}
+html .expando-button.collapsed.selftext:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -520px;background-repeat:no-repeat}
+html .expando-button.collapsed.video, html .expando-button.collapsed.image {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -491px;background-repeat:no-repeat}
+html .expando-button.collapsed.video:hover, html .expando-button.collapsed.image:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -462px;background-repeat:no-repeat}
+html .expando-button.collapsed.crosspost {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:-26px -578px;background-repeat:no-repeat}
+html .expando-button.collapsed.crosspost:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -578px;background-repeat:no-repeat}
+@media only screen and (min-resolution:2dppx),only screen and (-webkit-min-device-pixel-ratio:2) {
+  html .expando-button {background-size:100%}
+  html .expando-button.expanded.video, html .expando-button.expanded.image, html .expando-button.expanded.selftext, html .expando-button.expanded.crosspost {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -26px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.expanded.video:hover, html .expando-button.expanded.image:hover, html .expando-button.expanded.selftext:hover, html .expando-button.expanded.crosspost:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px 0px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.collapsed.selftext {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -130px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.collapsed.selftext:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -104px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.collapsed.video, html .expando-button.collapsed.image {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -78px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.collapsed.video:hover, html .expando-button.collapsed.image:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -52px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.collapsed.crosspost {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -179px;background-repeat:no-repeat;background-size:23px 302px}
+  html .expando-button.collapsed.crosspost:hover {background-image:url(https://www.redditstatic.com/sprite-expando.69EqpDZz3HM.png);background-position:0px -156px;background-repeat:no-repeat;background-size:23px 302px}
+}
 #orr-top { position:fixed; right:16px; bottom:16px; z-index:2147483000; background:#5f99cf; color:#fff;
-  border:1px solid #336699; border-radius:3px; padding:6px 10px; font:12px verdana; cursor:pointer; display:none; }
+  border:1px solid #336699; border-radius:3px; padding:6px 10px; font:12px verdana, arial, helvetica, sans-serif; cursor:pointer; display:none; }
 #orr-top.show { display:block; }
 #orr-mute-all { position:fixed; top:16px; right:16px; z-index:2147483000; background:rgba(0,0,0,.55); color:#fff;
   border:none; border-radius:4px; padding:4px 9px; font-size:18px; line-height:1.5; cursor:pointer; display:none; }
@@ -1863,11 +2002,11 @@ html.orr-tline-hot .commentarea { cursor:pointer; }
 #orr-mute-all.show { display:block; }
 .orr-usertag { display:inline-block; padding:0 4px; margin:0 2px; border-radius:3px; font-size:10px; line-height:normal; color:#fff; vertical-align:baseline; }
 /* quick filter/tag actions next to a tagline's author / "to r/sub" link (styled like "locked") */
-a.orr-qa { margin-left:5px; color:#999; text-decoration:none; white-space:nowrap; cursor:pointer; opacity:0; transition:opacity .1s; }
-/* only while hovering/focusing that post or comment, so taglines stay as plain as old reddit's
-   (opacity, not visibility: the space is kept so nothing shifts, and the icons stay keyboard-focusable) */
-.thing.link:hover a.orr-qa, .thing.comment > .entry:hover a.orr-qa, .tagline:focus-within a.orr-qa { opacity:1; }
-@media (hover: none) { a.orr-qa { opacity:1; } }
+a.orr-qa { margin-left:5px; color:#999; text-decoration:none; white-space:nowrap; cursor:pointer; display:none; }
+/* only while the pointer is on that tagline (or a link in it has keyboard focus): hidden, they
+   take no room, so the tagline reads exactly like old reddit's — no blank gaps after names */
+.tagline:hover a.orr-qa, .tagline:focus-within a.orr-qa { display:inline; }
+@media (hover: none) { a.orr-qa { display:inline; } }
 a.orr-qa:hover { color:#555; }
 a.orr-qa[data-qa="filter"]:hover { color:#d93025; }
 a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
@@ -1875,7 +2014,7 @@ a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
   padding:8px 14px; border-radius:4px; background:#333; color:#fff; font:13px verdana,arial,sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.3); }
 #orr-toast a { color:#8cf; font-weight:bold; margin-left:10px; cursor:pointer; }
 #orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
-  border-radius:3px; padding:8px; font:11px verdana; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
+  border-radius:3px; padding:8px; font:11px verdana, arial, helvetica, sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
 #orr-hovercard .orr-tagbtn, #orr-hovercard .orr-favbtn, #orr-hovercard .orr-filterbtn { color:#369; cursor:pointer; text-decoration:underline; }
 .thing.comment.orr-new > .entry > .tagline:after { content:" \\2022 new"; color:#ff4500; font-weight:bold; }
 /* issue #16: "N new" badge on visited posts, + grey read comments when folding */
@@ -1996,7 +2135,7 @@ html.orr-fixedthumbs .thing.link .thumbnail img { width:70px; height:70px; max-w
 .expando.orr-spoiler:not(.orr-revealed)::after { content:"spoiler \\2014 click to reveal"; }
 .expando.orr-nsfw:not(.orr-revealed)::after, .expando.orr-spoiler:not(.orr-revealed)::after {
   position:absolute; top:8px; left:8px; z-index:3; background:rgba(0,0,0,.75); color:#fff;
-  padding:3px 9px; border-radius:3px; font:bold 12px verdana; cursor:pointer; }
+  padding:3px 9px; border-radius:3px; font:bold 12px verdana, arial, helvetica, sans-serif; cursor:pointer; }
 .orr-inf-sentinel { text-align:center; padding:10px; }
 .orr-loading { color:#888; font-style:italic; font-size:13px; }
 .orr-loading.orr-error { color:#c00; font-style:normal; font-weight:bold; }
@@ -2010,16 +2149,14 @@ a.orr-parent { color:#369; }
 .orr-flash { animation: orr-flash 1.3s ease-out; }
 @keyframes orr-flash { from { background:#ffe9a8; } to { background:transparent; } }
 #orr-cnav { position:fixed; right:12px; top:130px; z-index:2147483000; display:flex; flex-direction:column; gap:3px; }
-#orr-cnav button { width:36px; height:26px; font:11px verdana; cursor:pointer; color:#369;
+#orr-cnav button { width:36px; height:26px; font:11px verdana, arial, helvetica, sans-serif; cursor:pointer; color:#369;
   background:#f6f7f8; border:1px solid #c7c7c7; border-radius:3px; padding:0; }
 #orr-cnav button:hover { background:#e9f0f7; }
 /* visited posts (persisted) */
 .thing.orr-visited .title a:not(:hover) { color:#9b9b9b; }
 /* keyboard-shortcuts help */
-#orr-help-btn { position:fixed; left:12px; bottom:12px; z-index:2147483000; width:26px; height:26px;
-  border-radius:50%; border:1px solid #336699; background:#5f99cf; color:#fff; cursor:pointer; font:bold 14px verdana; padding:0; }
 #orr-help { position:fixed; inset:0; z-index:2147483600; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; }
-#orr-help .orr-help-box { background:#fff; color:#111; border-radius:6px; padding:18px 22px; min-width:330px; box-shadow:0 6px 30px rgba(0,0,0,.4); font:13px verdana; }
+#orr-help .orr-help-box { background:#fff; color:#111; border-radius:6px; padding:18px 22px; min-width:330px; box-shadow:0 6px 30px rgba(0,0,0,.4); font:13px verdana, arial, helvetica, sans-serif; }
 #orr-help h2 { margin:0 0 12px; font-size:16px; }
 #orr-help table { border-collapse:collapse; }
 #orr-help td { padding:3px 12px 3px 0; }
@@ -2028,7 +2165,7 @@ a.orr-parent { color:#369; }
 /* loading skeleton */
 #orr-skeleton { position:fixed; inset:0; background:#fff; z-index:2147483500; overflow:hidden; padding:0; }
 #orr-skeleton .orr-sk-head { height:38px; background:#cee3f8; border-bottom:1px solid #5f99cf; }
-#orr-skeleton .orr-sk-msg { padding:8px 18px 0; color:#888; font:italic 13px verdana; min-height:16px; }
+#orr-skeleton .orr-sk-msg { padding:8px 18px 0; color:#888; font:italic 13px verdana, arial, helvetica, sans-serif; min-height:16px; }
 #orr-skeleton .orr-sk-body { padding:10px 18px; max-width:800px; }
 #orr-skeleton .orr-sk-row { display:flex; gap:10px; margin:0 0 16px; }
 #orr-skeleton .orr-sk-thumb { width:70px; height:50px; border-radius:3px; background:#e6e6e6; flex:0 0 auto; }
@@ -2038,18 +2175,18 @@ a.orr-parent { color:#369; }
 @keyframes orr-sk-shim { from { background-position:100% 0; } to { background-position:0 0; } }
 /* accessibility: skip link, visible focus, reduced motion */
 #orr-skip { position:fixed; left:8px; top:-48px; z-index:2147483600; background:#5f99cf; color:#fff;
-  padding:8px 14px; border-radius:0 0 4px 4px; font:bold 13px verdana; text-decoration:none; transition:top .15s ease; }
+  padding:8px 14px; border-radius:0 0 4px 4px; font:bold 13px verdana, arial, helvetica, sans-serif; text-decoration:none; transition:top .15s ease; }
 #orr-skip:focus { top:0; outline:2px solid #ff4500; }
 .expando-button:focus-visible, a.expand:focus-visible, a.orr-parent:focus-visible, a.orr-gnav:focus-visible,
-#orr-cnav button:focus-visible, #orr-help-btn:focus-visible,
+#orr-cnav button:focus-visible,
 #orr-top:focus-visible, #orr-mute-all:focus-visible, .thing:focus-visible, a.orr-more:focus-visible {
   outline:2px solid #ff4500; outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) {
   .orr-flash, #orr-skeleton .orr-sk-line, #orr-skip { animation:none !important; transition:none !important; }
 }
 /* flair */
-.linkflairlabel { display:inline-block; background:#ddd; border:1px solid #ccc; border-radius:3px; padding:0 4px; margin:0 2px; font-size:x-small; color:#555; vertical-align:middle; }
-.tagline .flair { display:inline-block; background:#eef; border:1px solid #ccd; border-radius:3px; padding:0 4px; font-size:x-small; color:#556; }
+/* (link flair: old reddit's own .linkflairlabel style from the bundled CSS) */
+.tagline .flair { display:inline-block; background:#f5f5f5; border:1px solid #ddd; border-radius:2px; padding:0 2px; margin:0 .5em; font-size:x-small; color:#545454; }
 .orr-flair-emoji { height:1em; width:auto; vertical-align:text-bottom; }
 /* keyword highlight */
 .thing.orr-highlight > .entry { box-shadow:-4px 0 0 #ffb000; background:rgba(255,224,130,.16); }
@@ -2082,8 +2219,8 @@ html.orr-dyslexic .md p { margin-bottom:.7em; }
 /* quick subreddit switcher */
 #orr-qs { position:fixed; inset:0; z-index:2147483600; background:rgba(0,0,0,.45); display:flex; align-items:flex-start; justify-content:center; }
 #orr-qs .orr-qs-box { margin-top:16vh; background:#fff; border-radius:8px; padding:14px; box-shadow:0 8px 30px rgba(0,0,0,.4); width:340px; max-width:90vw; }
-#orr-qs input { width:100%; box-sizing:border-box; font:15px verdana; padding:8px 10px; border:1px solid #5f99cf; border-radius:5px; }
-#orr-qs .orr-qs-hint { color:#888; font:11px verdana; margin-top:8px; }
+#orr-qs input { width:100%; box-sizing:border-box; font:15px verdana, arial, helvetica, sans-serif; padding:8px 10px; border:1px solid #5f99cf; border-radius:5px; }
+#orr-qs .orr-qs-hint { color:#888; font:11px verdana, arial, helvetica, sans-serif; margin-top:8px; }
 html.orr-night #orr-qs .orr-qs-box { background:#242526; }
 html.orr-night #orr-qs input { background:#111; color:#d7dadc; border-color:#474748; }
 /* other discussions */
@@ -2093,6 +2230,10 @@ html.orr-night #orr-qs input { background:#111; color:#d7dadc; border-color:#474
 html.orr-night .orr-other-box { background:#242526; border-color:#343536; }
 /* logged-in actions: shown only when logged in; edit/delete only on your own things */
 html:not(.orr-logged-in) .orr-li-only { display:none !important; }
+/* a subreddit with thumbnails turned off (its own setting, as on old reddit) */
+html.orr-nothumbs #siteTable .thing.link > .thumbnail { display:none !important; }
+/* logged out, old reddit still shows a post's save / hide / report (they ask you to log in) */
+html:not(.orr-logged-in) .thing.link .flat-list.buttons > li.orr-li-only.orr-lo-link { display:inline !important; }
 .flat-list > .orr-own-only { display:none !important; }
 html.orr-logged-in .thing.orr-mine > .entry .flat-list > .orr-own-only { display:inline !important; }
 html.orr-logged-in .thing.orr-mine > .entry .flat-list > .orr-not-own { display:none !important; }
@@ -2196,6 +2337,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function applyNight() {
     document.documentElement.classList.toggle("orr-night", !!nightModeOn);
+    syncSubTheme(); // a subreddit's own look steps aside in night mode
   }
 
   function ensureUiChrome() {
@@ -2234,16 +2376,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       c.style.display = "none";
       document.body.appendChild(c);
     }
-    if (!document.getElementById("orr-help-btn")) {
-      const h = document.createElement("button");
-      h.id = "orr-help-btn";
-      h.type = "button";
-      h.textContent = "?";
-      h.title = "keyboard shortcuts (press ?)";
-      h.setAttribute("aria-label", "keyboard shortcuts");
-      h.addEventListener("click", toggleHelp);
-      document.body.appendChild(h);
-    }
+    // (no always-on "?" button: old reddit had none — the ? key still opens the shortcuts help)
   }
 
   // Keep OUR #orr-top the only back-to-top: hide any rival floating "back to top"
@@ -4101,7 +4234,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (!expando.isConnected) return;
       const ex = d && postExpando(d);
       expando.innerHTML = ex ? ex.html : '<div class="orr-lazy-msg">nothing more to show</div>';
-      const btn = thing.querySelector(":scope > .entry > .expando-button");
+      const btn = thing.querySelector(":scope > .entry .expando-button");
       if (btn && ex) btn.className = "expando-button " + (btn.classList.contains("collapsed") ? "collapsed " : "expanded ") + ex.type;
       linkifyEmails(expando);
       inlineImages(expando);
@@ -4334,8 +4467,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   function threadLineAt(e) {
     const t = e.target;
     if (!t || !t.closest || t.closest("a, button, input, textarea, select, label, .midcol, .entry")) return null;
-    const c = t.closest(".nestedlisting .thing.comment");
-    if (!c || c.classList.contains("collapsed")) return null;
+    // The pointer can be on a reply's own left edge while it's on its parent's line (a
+    // subreddit style that drops the replies' indent puts them flush against it): try the
+    // comment under the pointer, then each comment it's a reply to.
+    for (let c = t.closest(".nestedlisting .thing.comment"); c; c = c.parentElement && c.parentElement.closest(".nestedlisting .thing.comment")) {
+      const hit = c.classList.contains("collapsed") ? null : threadLineOf(c, e);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  function threadLineOf(c, e) {
     const child = c.querySelector(":scope > .child");
     const entry = c.querySelector(":scope > .entry");
     const mid = c.querySelector(":scope > .midcol");
@@ -4585,14 +4726,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   // Fill the header subreddit shortcut bar from favorites (if set) + recent subs.
   function patchSrBar() {
-    const bar = document.querySelector("#sr-header-area .sr-bar");
+    const bar = document.querySelector("#sr-header-area #sr-bar");
     if (!bar) return;
     const fav = (dataCache.favoriteSubs || []).filter(Boolean);
     const recent = trackRecentSubsOn ? (dataCache.recentSubs || []).filter(Boolean) : [];
     const subs = fav.length ? fav.slice() : DEFAULT_SRBAR.slice();
     const seen = subs.map((x) => x.toLowerCase());
     recent.forEach((s) => { if (seen.indexOf(s.toLowerCase()) < 0) { subs.push(s); seen.push(s.toLowerCase()); } });
-    bar.innerHTML = subs.slice(0, 16).map((s) => `<a href="/r/${esc(s)}/" class="choice">${esc(s)}</a>`).join("\n");
+    const cur = ((bar.querySelector("a.choice.selected") || {}).textContent || "").toLowerCase();
+    bar.innerHTML = srBarItems(subs.slice(0, 16).map((s) => ["/r/" + s + "/", s]), cur);
   }
 
   // "other discussions" — crossposts / duplicate submissions of the same link.
@@ -4733,6 +4875,33 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     });
   }
 
+  // Old reddit sizes the rank and vote columns for the whole page from its highest rank and
+  // score (a <style> in each page's <head>: 1.1ex per rank digit; score digits, at least 3,
+  // + 1.1ex), so every row's thumbnail and title start at the same x. Without it each row
+  // was as wide as its own numbers and the thumbnail column wobbled. Pages added by
+  // infinite scroll widen it when the numbers grow a digit.
+  function sizeListingColumns() {
+    const rows = document.querySelectorAll("#siteTable .thing.link");
+    if (!rows.length) return;
+    let rankDigits = 0, scoreDigits = 0;
+    rows.forEach((t) => {
+      const r = t.querySelector(":scope > .rank");
+      const rt = r ? r.textContent.trim() : "";
+      if (rt) rankDigits = Math.max(rankDigits, rt.length);
+      const sc = parseInt(t.getAttribute("data-score") || "", 10); // (+1: an upvote can add a digit)
+      if (!isNaN(sc)) scoreDigits = Math.max(scoreDigits, String(Math.abs(sc) + 1).length + (sc < 0 ? 1 : 0));
+    });
+    const css = (rankDigits ? `#siteTable .thing.link > .rank { width:${(rankDigits * 1.1).toFixed(1)}ex; }\n` : "") +
+      `#siteTable .thing.link > .midcol { width:${(Math.max(3, scoreDigits) + 1.1).toFixed(1)}ex; }`;
+    let st = document.getElementById("orr-colwidths");
+    if (!st) {
+      st = document.createElement("style");
+      st.id = "orr-colwidths";
+      (document.head || document.documentElement).appendChild(st);
+    }
+    if (st.textContent !== css) st.textContent = css;
+  }
+
   function afterRender() {
     injectStaticCss();
     applyNightSchedule(); // re-evaluate the time-of-day schedule as you browse
@@ -4742,6 +4911,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     hideRivalBackToTop();
     setTimeout(hideRivalBackToTop, 1500); // catch rivals added late (RES etc.)
     patchSrBar();
+    refreshSubTheme(); // the subreddit's own look (or none, outside one)
     if (pendingScrollRestore != null) {
       const y = pendingScrollRestore;
       pendingScrollRestore = null;
@@ -4751,6 +4921,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     markVisited(document); // before applyFilters so "hide read" can act
     markThreadNew(document); // "N new" badges + orr-has-new (so read posts with new comments aren't hidden)
     applyFilters(document);
+    sizeListingColumns();
     patchTags(document);
     markNewComments();
     inlineImages(document);
@@ -4775,6 +4946,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     markVisited(scope || document);
     markThreadNew(scope || document);
     applyFilters(scope || document);
+    sizeListingColumns();
+    placeFlairs(scope || document); // (a subreddit's flair settings)
     patchTags(scope || document);
     inlineImages(scope || document);
     wireRedditVideos(scope || document);
@@ -5327,7 +5500,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       is_self: isSelf,
       url: absUrl(isSelf ? permalink : g("url") || permalink),
     };
-    if (num("score") == null) d.hide_score = true;
+    // (a new post whose score the subreddit still hides: data-score is there, the column says •)
+    const shown = el.querySelector(":scope > .midcol .score.unvoted");
+    if (num("score") == null || (shown && shown.textContent.trim() === "\u2022")) d.hide_score = true;
     const flair = el.querySelector(".entry .top-matter .linkflairlabel");
     if (flair) d.link_flair_text = flair.textContent.trim() || flair.getAttribute("title") || "";
     const th = el.querySelector(":scope > a.thumbnail img[src]");
@@ -5848,7 +6023,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   let nativeCssObserver = null;
   function isNativeCss(n) {
     if (!n || n.nodeType !== 1) return false;
-    if (n.tagName === "STYLE") return !n.hasAttribute("class") && !/^orr-/.test(n.id || "");
+    if (/^orr-/.test(n.id || "")) return false; // ours (e.g. the subreddit's own stylesheet, #orr-sub-css)
+    if (n.tagName === "STYLE") return !n.hasAttribute("class");
     if (n.tagName === "LINK")
       return /(^|\s)stylesheet(\s|$)/i.test(n.getAttribute("rel") || "") &&
         /^https:\/\/([\w-]+\.)*(redditstatic\.com|reddit\.com|redditmedia\.com|gstatic\.com|google\.com)\//i.test(n.href || "");
@@ -5997,18 +6173,166 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // No single sidebar for aggregate/multireddit listings.
     if (!sub || sub === "all" || sub === "popular" || /[+\-]/.test(sub)) return;
     const side = document.querySelector(".side"); // this page's — a later nav swaps the body
+    const oldP = fetchOldSub(sub); // old reddit's own page for the sub: its sidebar + look
     let v;
     try {
       v = await fetchAboutRules(sub);
     } catch (e) {
+      v = null;
+    }
+    const old = await oldP;
+    if (old && side && side.isConnected) {
+      side.insertAdjacentHTML("beforeend", buildOldSidebar(old, v && v.about));
+      linkifyEmails(side);
+      const pn = document.querySelector("#header .pagename a");
+      if (pn && pn.textContent.toLowerCase() === old.name.toLowerCase()) pn.textContent = old.name; // its own capitals
+      applyOldSubLook(old);
       return;
     }
+    if (!v) return;
     let html = v && v.about && v.about.data ? buildSidebar(v.about, v.rules) : "";
     if (!html && jsonBlocked) {
       const rail = await fetchRail(sub); // logged out: about.json is blocked
       if (rail) html = buildRailSidebar(rail);
     }
     if (html && side && side.isConnected) { side.insertAdjacentHTML("beforeend", html); linkifyEmails(side); }
+  }
+
+  // ---- a subreddit's own look: old reddit's page for it, its stylesheet, its header ----
+  const oldSubCache = new Map(); // sub (lowercase) -> Promise<old | null>, for this page's life
+  function fetchOldSub(sub) {
+    const key = sub.toLowerCase();
+    if (oldSubCache.has(key)) return oldSubCache.get(key);
+    const p = (async () => {
+      const path = "/r/" + encodeURIComponent(sub) + "+" + encodeURIComponent(sub) + "/";
+      const res = await redditFetch(location.origin + path, { credentials: "include", headers: { Accept: "text/html" } });
+      if (!res.ok) return null;
+      // The sidebar, then the listing (its rows show the sub's thumbnail / flair settings):
+      // stop at the listing's end — the footer isn't needed.
+      let text = "";
+      const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+      if (!reader) text = await res.text();
+      else {
+        const dec = new TextDecoder();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const from = Math.max(0, text.length - 30);
+          text += dec.decode(value, { stream: true });
+          if (text.indexOf('class="nav-buttons"', from) >= 0 || text.length > 1.5e6) { reader.cancel().catch(() => {}); break; }
+        }
+      }
+      return oldSubFromHtml(text);
+    })().catch(() => null);
+    oldSubCache.set(key, p);
+    if (oldSubCache.size > 60) oldSubCache.delete(oldSubCache.keys().next().value);
+    return p;
+  }
+  // The stylesheet's text (Reddit's page policy refuses a <link> to its media host, but
+  // that host lets www.reddit.com read it), inlined like old reddit applied it: last.
+  const subCssCache = new Map(); // href -> Promise<string>
+  function fetchSubCss(href) {
+    if (!href) return Promise.resolve("");
+    if (!subCssCache.has(href)) {
+      subCssCache.set(href, fetch(href, { credentials: "omit" })
+        .then((r) => (r.ok && /text\/css/i.test(r.headers.get("content-type") || "") ? r.text() : ""))
+        .then((t) => (t.length < 2e6 ? t : ""))
+        .catch(() => ""));
+    }
+    return subCssCache.get(href);
+  }
+  const SUB_THEME_KEEP = 30; // looks remembered across page loads (no flash of the plain look)
+  function subOfPath(pathname) {
+    const m = /^\/r\/([A-Za-z0-9_]+)(\/|$)/.exec(pathname || "");
+    return m && m[1].toLowerCase() !== "all" && m[1].toLowerCase() !== "popular" ? m[1].toLowerCase() : "";
+  }
+  // Put the current look on the page, or take it off: a subreddit's stylesheet and header
+  // image show unless they're turned off, or night mode / high contrast is on (they'd fight).
+  function syncSubTheme() {
+    const root = document.documentElement;
+    if (!root) return;
+    const on = !!subTheme && subStyleOn && !nightModeOn && !root.classList.contains("orr-contrast");
+    let st = document.getElementById("orr-sub-css");
+    if (on && subTheme.css) {
+      if (!st) { st = document.createElement("style"); st.id = "orr-sub-css"; }
+      if (st.textContent !== subTheme.css) st.textContent = subTheme.css;
+      const head = document.head || root;
+      if (head.lastElementChild !== st) head.appendChild(st);
+    } else if (st) st.remove();
+    root.classList.toggle("orr-substyle", on);
+    root.classList.toggle("orr-nothumbs", !!subTheme && subTheme.thumbs === false);
+    placeFlairs(document);
+    const hbl = document.getElementById("header-bottom-left");
+    if (!hbl) return;
+    const def = hbl.querySelector("a.default-header");
+    let a = document.getElementById("header-img-a");
+    if (on && subTheme.header) {
+      if (!a) {
+        a = document.createElement("a");
+        a.id = "header-img-a";
+        a.appendChild(document.createElement("img")).id = "header-img";
+        hbl.insertBefore(a, hbl.firstChild);
+      }
+      a.href = "/r/" + subTheme.name + "/";
+      const img = a.firstElementChild;
+      if (img.getAttribute("src") !== subTheme.header.src) img.src = subTheme.header.src;
+      img.alt = subTheme.header.alt || subTheme.name;
+      if (subTheme.header.title) img.title = subTheme.header.title; else img.removeAttribute("title");
+      if (def) { def.hidden = true; def.removeAttribute("id"); def.dataset.orrDefaultHeader = "1"; }
+    } else {
+      if (a) a.remove();
+      const d0 = hbl.querySelector("a[data-orr-default-header]");
+      if (d0) { d0.hidden = false; d0.id = "header-img"; }
+    }
+  }
+  // A subreddit's flair settings on its posts: before the title where it puts them there,
+  // and the .linkflair-<class> its stylesheet colors (from the class that text had on
+  // its own page). Rows added later get it too (enhanceNewItems).
+  function placeFlairs(scope) {
+    if (!subTheme) return;
+    const root = scope && scope.querySelectorAll ? scope : document;
+    root.querySelectorAll("#siteTable .thing.link p.title > .orr-linkflair:not([data-orr-placed])").forEach((lab) => {
+      lab.setAttribute("data-orr-placed", "1");
+      const ta = lab.parentElement.querySelector(":scope > a.title");
+      if (subTheme.flairLeft && ta) { ta.before(lab); lab.after(document.createTextNode(" ")); }
+      const cls = (subTheme.flairClasses || {})[lab.textContent.replace(/\s+/g, " ").trim().toLowerCase()];
+      const thing = lab.closest(".thing");
+      if (cls && /^[\w-]{1,40}$/.test(cls) && thing) thing.classList.add("linkflair", "linkflair-" + cls);
+    });
+  }
+  // On every page: keep the look of the subreddit we're in (from memory or the copy kept
+  // in storage — no plain-look flash), drop it anywhere else.
+  function refreshSubTheme() {
+    const key = subOfPath(location.pathname);
+    if (!key) { if (subTheme) { subTheme = null; } syncSubTheme(); return; }
+    if (subTheme && subTheme.key === key) { syncSubTheme(); return; }
+    subTheme = null;
+    syncSubTheme();
+    try {
+      Promise.resolve(api.storage.local.get("orrSubTheme:" + key)).then((r) => {
+        const t = r && r["orrSubTheme:" + key];
+        if (t && !subTheme && subOfPath(location.pathname) === key) { subTheme = t; syncSubTheme(); }
+      }).catch(() => {});
+    } catch (e) { /* no storage: the look arrives with the sidebar */ }
+  }
+  // The subreddit's own page came back: apply its look and remember it for next time.
+  async function applyOldSubLook(old) {
+    const key = old.name.toLowerCase();
+    const css = await fetchSubCss(old.css);
+    if (subOfPath(location.pathname) !== key) return; // moved on meanwhile
+    const t = { key, name: old.name, css, header: old.header, thumbs: old.thumbs, flairLeft: old.flairLeft, flairClasses: old.flairClasses || {} };
+    const same = subTheme && JSON.stringify(subTheme) === JSON.stringify(t);
+    subTheme = t;
+    syncSubTheme();
+    if (same) return;
+    try {
+      const r = await api.storage.local.get({ orrSubThemeIdx: [] });
+      let idx = (r.orrSubThemeIdx || []).filter((k) => k !== key).concat(key);
+      const drop = idx.length > SUB_THEME_KEEP ? idx.slice(0, idx.length - SUB_THEME_KEEP) : [];
+      idx = idx.slice(-SUB_THEME_KEEP);
+      await api.storage.local.set({ ["orrSubTheme:" + key]: t, orrSubThemeIdx: idx });
+      if (drop.length) await api.storage.local.remove(drop.map((k) => "orrSubTheme:" + k));
+    } catch (e) { /* remembered for this page only */ }
   }
 
   async function fetchRail(sub) {
@@ -6844,7 +7168,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (isNaN(base)) return; // score hidden
       const n = base + dir;
       if (sc.parentElement.classList.contains("midcol")) {
-        if (/^-?\d+$/.test(sc.textContent.trim())) { sc.textContent = String(n); sc.title = String(n); }
+        if (sc.textContent.trim() !== "\u2022") { sc.textContent = scoreText(n); sc.title = String(n); } // (• = score hidden)
       } else if (/point/.test(sc.textContent)) {
         sc.textContent = n + (n === 1 ? " point" : " points");
       }
@@ -7095,7 +7419,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       let ex = entry.querySelector(":scope > .expando");
       if (!ex) { ex = document.createElement("div"); ex.className = "expando"; entry.appendChild(ex); }
       ex.style.display = "";
-      const btn = entry.querySelector(":scope > .expando-button");
+      const btn = entry.querySelector(":scope > .top-matter > .expando-button, :scope > .expando-button");
       if (btn) { btn.classList.remove("collapsed"); btn.classList.add("expanded"); btn.setAttribute("aria-expanded", "true"); }
       const body = ex.querySelector(".usertext-body");
       const box = body ? body.closest(".expando-container") || body : null;
@@ -7967,7 +8291,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       // New issue-#6 toggles: apply live where cheap (a reload also works).
       if (active && (changes.autoplayMedia || changes.hideRead || changes.autoCollapseBots ||
                      changes.compactView || changes.nightAuto || changes.highContrast || changes.dyslexiaFont ||
-                     changes.fixedThumbnails || changes.expandImages || changes.foldReadComments || changes.trackRecentSubs)) {
+                     changes.fixedThumbnails || changes.expandImages || changes.foldReadComments || changes.trackRecentSubs ||
+                     changes.subredditStyle)) {
         ORR.getPrefs().then((p) => {
           autoplayOn = p.autoplayMedia === true;
           hideReadOn = p.hideRead === true;
