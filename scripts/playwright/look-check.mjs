@@ -8,7 +8,8 @@
 //    room), old reddit's flair colors, no "?" button, save / hide / report shown logged out;
 //  - a subreddit with its own old-reddit theme (r/technology): its stylesheet and header
 //    image, its OLD sidebar (submit button, sidebar text, "a community for…"), flair before
-//    the title where the sub puts it; r/AskHistorians: its "thumbnails off" setting;
+//    the title where the sub puts it; r/AskHistorians: its "thumbnails off" setting; r/ucla
+//    (buttons drawn as boxes): a post's buttons on one line, no stray reddit logo;
 //  - leaving the subreddit (in-page) drops its look; reloading it shows the look at once.
 //   node look-check.mjs <ext-dir> <out-dir>   (CHROMIUM=1: Chromium build)   Exits non-zero on failure.
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
@@ -154,6 +155,21 @@ await page.waitForTimeout(2500);
 const A = await page.evaluate(() => ({ off: document.documentElement.classList.contains("orr-nothumbs"), shown: Array.from(document.querySelectorAll("#siteTable .thing.link > .thumbnail")).filter((t) => t.offsetParent).length }));
 ok(A.off && A.shown === 0, `r/AskHistorians: no thumbnails, its setting (${JSON.stringify(A)})`);
 await page.screenshot({ path: path.join(outDir, "askhistorians.png") });
+
+// 6) a theme that draws the post buttons as boxes (r/ucla): all on one line — save / hide /
+// report shown logged out used to be forced inline and stacked one per line — and the plain
+// reddit logo stays hidden behind the subreddit's header image (its style shows header links)
+await open("https://www.reddit.com/r/ucla/");
+await page.waitForTimeout(2500);
+const U = await page.evaluate(() => {
+  const t = document.querySelector("#siteTable .thing.link");
+  const tops = t ? Array.from(t.querySelectorAll(".flat-list.buttons > li")).filter((li) => li.offsetParent).map((li) => Math.round(li.getBoundingClientRect().top)) : [];
+  const def = document.querySelector("#header-bottom-left a.default-header");
+  return { themed: !!document.getElementById("orr-sub-css"), tops, logo: def ? getComputedStyle(def).display : "gone", custom: !!document.getElementById("header-img-a") };
+});
+ok(U.themed && U.tops.length >= 4 && new Set(U.tops).size === 1, `r/ucla: the post's buttons on one line (${JSON.stringify(U.tops)})`);
+ok(!U.custom || U.logo === "none" || U.logo === "gone", `r/ucla: no stray reddit logo beside its header image (${U.logo})`);
+await page.screenshot({ path: path.join(outDir, "ucla.png") });
 
 await ctx.close();
 fs.rmSync(profile, { recursive: true, force: true });
