@@ -148,18 +148,20 @@ check("your comment: edit / delete, no report", st0.mineEdit && st0.mineDelete &
 check("comment box + reply links", st0.topForm && st0.replyLinks > 10);
 
 // ---- voting ----
-const postScore = () => page.evaluate((n) => { const t = document.getElementById("thing_" + n); return { cls: t.querySelector(":scope > .midcol").className, up: t.querySelector(":scope > .midcol > .arrow").className, score: t.querySelector(":scope > .midcol > .score").textContent }; }, post.name);
+// (the vote column reads like old reddit's — 11.1k — so the exact score is its tooltip)
+const postScore = () => page.evaluate((n) => { const t = document.getElementById("thing_" + n); const sc = t.querySelector(":scope > .midcol > .score"); return { cls: t.querySelector(":scope > .midcol").className, up: t.querySelector(":scope > .midcol > .arrow").className, score: sc.textContent, n: +sc.title }; }, post.name);
+const readsLikeOld = (s) => (s.n >= 100000 ? /^\d+k$/ : s.n >= 10000 ? /^\d+\.\dk$/ : /^-?\d+$/).test(s.score);
 const before = await postScore();
 await page.click(`${sel(post.name)} > .midcol > .arrow.up`);
 await settle();
 const up1 = await postScore();
 const v1 = lastWrite("/api/vote");
-check("upvote post: arrow + score + request", /likes/.test(up1.cls) && /upmod/.test(up1.up) && +up1.score === +before.score + 1 &&
+check("upvote post: arrow + score + request", /likes/.test(up1.cls) && /upmod/.test(up1.up) && up1.n === before.n + 1 && readsLikeOld(up1) &&
   v1 && v1.form.id === post.name && v1.form.dir === "1" && v1.form.uh === "mh_test" && v1.modhashHeader === "mh_test", JSON.stringify([before, up1, v1]));
 await page.click(`${sel(post.name)} > .midcol > .arrow.upmod`);
 await settle();
 const up0 = await postScore();
-check("click again: vote taken back (dir 0)", /unvoted/.test(up0.cls) && +up0.score === +before.score && lastWrite("/api/vote").form.dir === "0", JSON.stringify(up0));
+check("click again: vote taken back (dir 0)", /unvoted/.test(up0.cls) && up0.n === before.n && readsLikeOld(up0) && lastWrite("/api/vote").form.dir === "0", JSON.stringify(up0));
 const c0 = tops[0].data;
 await page.click(`${sel(c0.name)} > .midcol > .arrow.down`);
 await settle();
@@ -358,11 +360,12 @@ const page2 = await ctx.newPage();
 await page2.goto("https://www.reddit.com" + post.permalink, { waitUntil: "domcontentloaded", timeout: 45000 });
 await page2.waitForSelector(".commentarea", { timeout: 30000 });
 await page2.waitForTimeout(1500);
-const lo = await page2.evaluate((n) => ({ li: document.documentElement.classList.contains("orr-logged-in"), save: getComputedStyle(document.querySelector(`#thing_${n} .orr-save`).closest("li")).display, form: !!document.querySelector(".orr-topform form") }), post.name);
+// logged out, old reddit still shows a POST's save / hide / report (they ask you to log in); a comment's stay hidden
+const lo = await page2.evaluate((n) => ({ li: document.documentElement.classList.contains("orr-logged-in"), save: getComputedStyle(document.querySelector(`#thing_${n} .orr-save`).closest("li")).display, csave: (() => { const c = document.querySelector(".commentarea .thing.comment .orr-save"); return c ? getComputedStyle(c.closest("li")).display : "none"; })(), form: !!document.querySelector(".orr-topform form") }), post.name);
 await page2.click(`${sel(post.name)} > .midcol > .arrow.up`);
 await page2.waitForTimeout(600);
 const nudge = await page2.evaluate(() => (document.getElementById("orr-toast") || {}).textContent || "");
-check("logged out: buttons hidden, no comment box", !lo.li && lo.save === "none" && !lo.form, JSON.stringify(lo));
+check("logged out: a post's save shown (as on old reddit), comments' hidden, no comment box", !lo.li && lo.save !== "none" && lo.csave === "none" && !lo.form, JSON.stringify(lo));
 check("logged out: an arrow asks you to log in, sends nothing", /log in to vote/.test(nudge) && writes.length === nWrites, nudge);
 
 check("no page errors", errors.length === 0, JSON.stringify(errors));

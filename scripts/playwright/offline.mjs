@@ -365,6 +365,51 @@ check("logged-out search paths", JSON.stringify(spath) === JSON.stringify([
   check("posts and comments carry it as their <time>'s tooltip", /title="Tue Oct 20 15:16:19 2026 EDT"/.test(tt.post) && /title="Wed Dec 2 11:00:00 2026 EST"/.test(tt.comment), JSON.stringify([tt.post, tt.comment]));
   await tzCtx.close();
 }
+// Looks like old reddit (the 2026-11-12 store review): scores, thumbnail sizes, the expand
+// button's place, the header line, the top bar, and a subreddit's own look from /r/x+x/.
+const look = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const base = { name: "t3_x", id: "x", title: "t", author: "a", subreddit: "s", created_utc: 1792523779, permalink: "/r/s/comments/x/t/", score: 1 };
+  const th = (extra) => (R.buildItem(Object.assign({}, base, { is_self: false, url: "https://e.com/a", domain: "e.com" }, extra), {}).match(/<a class="thumbnail[^>]*><img [^>]*>/) || [""])[0];
+  const self = R.buildItem(Object.assign({}, base, { is_self: true, selftext_html: '<div class="md"><p>hi</p></div>' }), { expandoButton: true });
+  const hdr = (n) => R.buildHeader({ pageName: n, pageHref: "/", route: { scope: "sub", sub: "technology" } });
+  const oldPage = '<html><head><link rel="stylesheet" href="//a.thumbs.redditmedia.com/AbC-1.css" title="applied_subreddit_stylesheet" type="text/css"></head><body>' +
+    '<div id="header"><div id="header-bottom-left"><a href="/r/technology/" id="header-img-a"><img id="header-img" src="//a.thumbs.redditmedia.com/Hd-2.png" alt="technology" title="tech"></a>&nbsp;<span class="hover pagename redditname"><a href="/r/technology/">technology</a></span></div></div>' +
+    '<div class="side"><div class="spacer"><div class="sidebox submit submit-link"><div class="morelink"><a href="https://www.reddit.com/r/technology/submit" class="login-required">Submit a new link</a></div></div></div>' +
+    '<div class="spacer"><div class="sidebox submit submit-text"><div class="morelink"><a href="javascript:alert(1)">Evil</a></div></div></div>' +
+    '<div class="spacer"><div class="titlebox"><h1 class="hover redditname"><a href="/r/technology/" class="hover">technology</a></h1>' +
+    '<span class="fancy-toggle-button subscribe-button toggle" data-sr_name="technology"><a class="option active add login-required" href="#">join</a></span>' +
+    '<form action="#" class="usertext"><input type="hidden" name="thing_id" value="t5_2qh16"><div class="usertext-body"><div class="md"><p onclick="x()">Hi <a href="javascript:alert(1)">bad</a> <a href="/r/x">ok</a></p><script>bad()</script><h3>Rules</h3></div></div></form>' +
+    '<div class="bottom">a community for 18 years</div></div></div></div><a name="content"></a><div class="content"><div id="siteTable" class="sitetable linklisting">' +
+    '<div class=" thing id-t3_a odd link linkflair linkflair-business"><span class="rank">1</span><div class="midcol"></div><a class="thumbnail" href="/x"><img src="https://b.thumbs.redditmedia.com/t.jpg" width="70" height="46"></a><div class="entry"><div class="top-matter"><p class="title"><span class="linkflairlabel">Business</span><a class="title" href="/x">A</a></p></div></div></div>' +
+    '</div><div class="nav-buttons"></div></div></body></html>';
+  const old = R.oldSubFromHtml(oldPage);
+  const evil = R.oldSubFromHtml(oldPage.replace("//a.thumbs.redditmedia.com/AbC-1.css", "https://evil.example/x.css").replace("//a.thumbs.redditmedia.com/Hd-2.png", "https://evil.example/h.png"));
+  const side = old ? R.buildOldSidebar(old, null) : "";
+  return {
+    scores: [9999, 10000, 23859, 99949, 100000, 439512, -5].map(R.scoreText),
+    thJson: th({ thumbnail: "https://b.thumbs.redditmedia.com/t.jpg", thumbnail_width: 140, thumbnail_height: 93 }),
+    thUrl: th({ thumbnail: "https://preview.redd.it/x.jpeg?width=140&height=140&crop=1:1" }),
+    thNone: th({ thumbnail: "https://external-preview.redd.it/x.jpeg?width=140&crop=smart" }),
+    btnAfterTitle: /<div class="top-matter"><p class="title">[\s\S]*?<\/p><div class="expando-button collapsed selftext"/.test(self),
+    hSub: hdr("r/technology"), hMulti: hdr("r/pics+technology"), hFront: hdr("reddit.com"),
+    old: old && Object.assign({}, old, { md: old.md }), evilCss: evil && evil.css, evilHeader: evil && evil.header,
+    notOld: R.oldSubFromHtml("<html><body><shreddit-app></shreddit-app></body></html>"),
+    side,
+  };
+});
+check("scores read like old reddit's (23.9k, 439k)", JSON.stringify(look.scores) === JSON.stringify(["9999", "10.0k", "23.9k", "99.9k", "100k", "439k", "-5"]), JSON.stringify(look.scores));
+check("thumbnails 70px wide, height in proportion (never 70×70 for a wide image)", /width="70" height="46"/.test(look.thJson) && /width="70" height="70"/.test(look.thUrl) && /width="70"(?! height)/.test(look.thNone) && !/height=/.test(look.thNone), JSON.stringify([look.thJson, look.thUrl, look.thNone]));
+check("expand button under the title, beside the tagline", look.btnAfterTitle);
+check("header: logo + page name + tabs in one line, old reddit's names", /<div id="header-bottom-left"><a href="\/" id="header-img"/.test(look.hSub) && />technology<\/a><\/span>/.test(look.hSub) && !/>r\/technology</.test(look.hSub) && />multi<\/a>/.test(look.hMulti) && !/pagename/.test(look.hFront), look.hSub.slice(0, 400));
+check("top bar: \"-\" between items, \"|\" between the lists", /popular<\/a><\/li><li><span class="separator">-<\/span><a href="\/r\/all\/"/.test(look.hSub) && /&nbsp;\|&nbsp;/.test(look.hSub), "");
+const o = look.old || {};
+check("a subreddit's old page: stylesheet, header image, name, id", o.css === "https://a.thumbs.redditmedia.com/AbC-1.css" && o.header && o.header.src === "https://a.thumbs.redditmedia.com/Hd-2.png" && o.header.title === "tech" && o.name === "technology" && o.sr === "t5_2qh16", JSON.stringify(Object.assign({}, o, { md: undefined })));
+check("…its settings: thumbnails on, flair before the title, flair classes", o.thumbs === true && o.flairLeft === true && o.flairClasses && o.flairClasses.business === "business", JSON.stringify([o.thumbs, o.flairLeft, o.flairClasses]));
+check("…its sidebar text cleaned (no script, no handlers, no javascript: links)", /Hi/.test(o.md || "") && /<h3>Rules<\/h3>/.test(o.md || "") && /href="\/r\/x"/.test(o.md || "") && !/script|onclick|javascript:/i.test(o.md || ""), o.md);
+check("…only reddit's own submit links, only reddit-hosted stylesheet / image", (o.submits || []).length === 1 && o.submits[0].href === "/r/technology/submit" && look.evilCss === "" && look.evilHeader === null, JSON.stringify([o.submits, look.evilCss, look.evilHeader]));
+check("…new Reddit's page instead → no old look", look.notOld === null);
+check("old sidebar: submit, title box with join + text + age, moderators", /sidebox submit submit-link/.test(look.side) && /class="titlebox"/.test(look.side) && /data-sr="t5_2qh16"/.test(look.side) && /a community for 18 years/.test(look.side) && /message the mods/.test(look.side) && !/<script|onclick|javascript:alert/i.test(look.side), look.side.slice(0, 300));
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");

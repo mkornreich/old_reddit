@@ -74,8 +74,8 @@ const state = () => page.evaluate(() => {
 const open = async (sel) => {
   const id = await page.evaluate((sel) => { const t = document.querySelector(sel); return t && t.id; }, sel);
   if (!id) return null;
-  await page.locator(`#${id} > .entry > .expando-button`).scrollIntoViewIfNeeded();
-  await page.click(`#${id} > .entry > .expando-button`);
+  await page.locator(`#${id} > .entry .expando-button`).scrollIntoViewIfNeeded();
+  await page.click(`#${id} > .entry .expando-button`);
   await page.waitForFunction((id) => { const t = document.getElementById(id); const v = t && t.getAttribute("data-orr-lazyexp"); return !v || v === "done"; }, id, { timeout: 25000 }).catch(() => {});
   await page.waitForTimeout(800);
   return page.evaluate((id) => {
@@ -94,15 +94,15 @@ await page.screenshot({ path: path.join(outDir, "multi-top.png") });
 check("combined listing rebuilt in the old layout", s0.rebuilt && s0.items >= 20 && s0.subs >= 2, JSON.stringify({ items: s0.items, subs: s0.subs }));
 check("numbered 1, 2, 3…; every row has a time and an author", s0.ranks.every((r, i) => r === i + 1) && !s0.noTime && !s0.noAuthor, JSON.stringify([s0.noTime, s0.noAuthor]));
 // previews
-const textPost = await open("#siteTable > .thing.link[data-orr-lazyexp='1'] > .entry > .expando-button.selftext");
-const t1 = textPost ? null : await open("#siteTable > .thing.link[data-orr-lazyexp='1']:has(> .entry > .expando-button.selftext)");
+const textPost = await open("#siteTable > .thing.link[data-orr-lazyexp='1'] > .entry .expando-button.selftext");
+const t1 = textPost ? null : await open("#siteTable > .thing.link[data-orr-lazyexp='1']:has(> .entry .expando-button.selftext)");
 const tp = textPost || t1;
 console.log("text:", JSON.stringify(tp));
 check("a text post's preview fills in its text", !tp || (tp.open && tp.state === "done" && tp.text.length > 10), JSON.stringify(tp));
-const vp = await open("#siteTable > .thing.link[data-orr-lazyexp='1']:has(> .entry > .expando-button.video)");
+const vp = await open("#siteTable > .thing.link[data-orr-lazyexp='1']:has(> .entry .expando-button.video)");
 console.log("video:", JSON.stringify(vp));
 check("a video post's preview fills in a player", !vp || (vp.open && vp.state === "done" && vp.video), JSON.stringify(vp));
-const gp = await open("#siteTable > .thing.link[data-orr-lazyexp='1']:has(> .entry > .expando-button.gallery)");
+const gp = await open("#siteTable > .thing.link[data-orr-lazyexp='1']:has(> .entry .expando-button.gallery)");
 console.log("gallery:", JSON.stringify(gp));
 check("a gallery's preview fills in its images", !gp || (gp.open && gp.state === "done" && +gp.gallery >= 1), JSON.stringify(gp));
 const ip = await open("#siteTable > .thing.link:not([data-orr-lazyexp]):has(> .entry > .expando > .expando-container img.preview)");

@@ -1,5 +1,5 @@
 // Tagline quick actions + logged-out hover cards (PR #29 + follow-up), live, logged out:
-// icons hidden until the post is hovered; filter → hide + toast + undo; tag → badge, with
+// icons hidden (taking no room) until the pointer is on their tagline; filter → hide + toast + undo; tag → badge, with
 // the same icon/badge order before and after a reload; hover cards with real data;
 // comments page: tag icons only.   node quick-actions.mjs <ext-dir> <out-dir>
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
@@ -24,7 +24,10 @@ page.on("pageerror", (e) => { if (!/\.announce is not a function/.test(e.message
 page.on("dialog", (d) => d.accept("qa-test"));
 let fail = 0;
 const check = (name, ok, info) => { console.log((ok ? "PASS " : "FAIL ") + name + (info ? "  " + info : "")); if (!ok) fail++; };
-const opacityOf = (sel) => page.evaluate((sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el).opacity : null; }, sel);
+// the icons take no room until the pointer is on their tagline (no blank gaps in it)
+const shownOf = (sel) => page.evaluate((sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el).display !== "none" && el.getBoundingClientRect().width > 0 : null; }, sel);
+// point at an icon's tagline, then click the icon (it only exists on screen while pointed at)
+const clickIcon = async (loc) => { await loc.locator("xpath=ancestor::p[contains(@class,'tagline')]").hover(); await page.waitForTimeout(150); await loc.click(); };
 const order = (u) => page.evaluate((u) => { const a = Array.from(document.querySelectorAll("#siteTable a.author")).find((x) => x.textContent === u); const tl = a && a.closest(".tagline"); return tl ? Array.from(tl.children).map((c) => c.classList.contains("orr-qa") ? "qa:" + c.dataset.qa : (c.className || c.tagName).split(" ")[0]).filter((x) => x !== "time").join(">") : null; }, u);
 const card = () => page.evaluate(() => { const c = document.getElementById("orr-hovercard"); return c && c.style.display !== "none" ? c.innerText.replace(/\s+/g, " ") : null; });
 
@@ -35,10 +38,13 @@ await page.mouse.move(1300, 850);
 const first = "#siteTable .thing.link:first-child a.orr-qa";
 const counts = await page.evaluate(() => ({ posts: document.querySelectorAll("#siteTable .thing.link").length, icons: document.querySelectorAll("#siteTable a.orr-qa").length }));
 check("3 icons per listing post", counts.icons === counts.posts * 3, JSON.stringify(counts));
-check("icons hidden until hover", (await opacityOf(first)) === "0");
+check("icons hidden (and take no room) until hover", (await shownOf(first)) === false);
 await page.hover("#siteTable .thing.link:first-child a.title");
 await page.waitForTimeout(300);
-check("icons shown while hovering the post", (await opacityOf(first)) === "1");
+check("still hidden while pointing at the title", (await shownOf(first)) === false);
+await page.hover("#siteTable .thing.link:first-child .tagline");
+await page.waitForTimeout(300);
+check("icons shown while pointing at the tagline", (await shownOf(first)) === true);
 await page.screenshot({ path: path.join(outDir, "hover-icons.png"), clip: { x: 0, y: 80, width: 900, height: 200 } });
 
 // filter + undo
@@ -46,7 +52,7 @@ const subIcon = page.locator('#siteTable .thing.link:not(.orr-filtered) a.orr-qa
 const sub = await subIcon.getAttribute("data-qa-name");
 const visible = () => page.evaluate((s) => Array.from(document.querySelectorAll("#siteTable .thing.link")).filter((t) => (t.dataset.subreddit || "").toLowerCase() === s.toLowerCase() && !t.classList.contains("orr-filtered")).length, sub);
 const v0 = await visible();
-await subIcon.click({ force: true });
+await clickIcon(subIcon);
 await page.waitForTimeout(600);
 const toast = await page.evaluate(() => (document.getElementById("orr-toast") || {}).innerText || "");
 check("filter hides the sub's posts + toast", (await visible()) === 0 && /filtered/.test(toast), `${sub}: ${v0} → 0, "${toast}"`);
@@ -57,7 +63,7 @@ check("undo restores them", (await visible()) === v0);
 // tag → badge; icons sit after the badge, same order after a reload
 const tagIcon = page.locator('#siteTable a.orr-qa[data-qa="tag"]').nth(1);
 const user = await tagIcon.getAttribute("data-qa-name");
-await tagIcon.click({ force: true });
+await clickIcon(tagIcon);
 await page.waitForTimeout(600);
 const o1 = await order(user);
 await page.reload({ waitUntil: "domcontentloaded" });
