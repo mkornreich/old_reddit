@@ -391,6 +391,8 @@ const look = await page.evaluate(() => {
     thJson: th({ thumbnail: "https://b.thumbs.redditmedia.com/t.jpg", thumbnail_width: 140, thumbnail_height: 93 }),
     thUrl: th({ thumbnail: "https://preview.redd.it/x.jpeg?width=140&height=140&crop=1:1" }),
     thNone: th({ thumbnail: "https://external-preview.redd.it/x.jpeg?width=140&crop=smart" }),
+    thTall: th({ thumbnail: "https://preview.redd.it/x.jpeg?width=108&height=216", preview: { images: [{ source: { url: "https://preview.redd.it/big.jpeg?a=1&amp;b=2", width: 1080, height: 2160 }, resolutions: [{ url: "https://preview.redd.it/s.jpeg?w=320", width: 320 }, { url: "https://preview.redd.it/m.jpeg?w=640&amp;s=x", width: 640 }, { url: "https://preview.redd.it/l.jpeg?w=960", width: 960 }] }] } }),
+    zooms: [R.thumbZoomSrc({ orr_zoom: "https://a.b/c.jpg" }), R.thumbZoomSrc({ preview: { images: [{ source: { url: "https://p/s.jpg" }, resolutions: [{ url: "https://p/r1.jpg", width: 108 }] }] } }), R.thumbZoomSrc({ preview: { images: [{ source: { url: "javascript:x" } }] } }), R.thumbZoomSrc({})],
     btnAfterTitle: /<div class="top-matter"><p class="title">[\s\S]*?<\/p><div class="expando-button collapsed selftext"/.test(self),
     hSub: hdr("r/technology"), hMulti: hdr("r/pics+technology"), hFront: hdr("reddit.com"),
     old: old && Object.assign({}, old, { md: old.md }), evilCss: evil && evil.css, evilHeader: evil && evil.header,
@@ -400,6 +402,8 @@ const look = await page.evaluate(() => {
 });
 check("scores read like old reddit's (23.9k, 439k)", JSON.stringify(look.scores) === JSON.stringify(["9999", "10.0k", "23.9k", "99.9k", "100k", "439k", "-5"]), JSON.stringify(look.scores));
 check("thumbnails 70px wide, height in proportion (never 70×70 for a wide image)", /width="70" height="46"/.test(look.thJson) && /width="70" height="70"/.test(look.thUrl) && /width="70"(?! height)/.test(look.thNone) && !/height=/.test(look.thNone), JSON.stringify([look.thJson, look.thUrl, look.thNone]));
+check("a tall thumbnail is at most 70 tall, and carries a ~640px picture to zoom to", /width="70" height="70"/.test(look.thTall) && /data-orr-zoom="https:\/\/preview\.redd\.it\/m\.jpeg\?w=640&amp;s=x"/.test(look.thTall), look.thTall);
+check("zoom picture: its own, else the preview nearest 640px, https only", JSON.stringify(look.zooms) === JSON.stringify(["https://a.b/c.jpg", "https://p/r1.jpg", "", ""]), JSON.stringify(look.zooms));
 check("expand button under the title, beside the tagline", look.btnAfterTitle);
 check("header: logo + page name + tabs in one line, old reddit's names", /<div id="header-bottom-left"><a href="\/" id="header-img"/.test(look.hSub) && />technology<\/a><\/span>/.test(look.hSub) && !/>r\/technology</.test(look.hSub) && />multi<\/a>/.test(look.hMulti) && !/pagename/.test(look.hFront), look.hSub.slice(0, 400));
 check("top bar: \"-\" between items, \"|\" between the lists", /popular<\/a><\/li><li><span class="separator">-<\/span><a href="\/r\/all\/"/.test(look.hSub) && /&nbsp;\|&nbsp;/.test(look.hSub), "");

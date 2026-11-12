@@ -10,7 +10,8 @@
 //    image, its OLD sidebar (submit button, sidebar text, "a community for…"), flair before
 //    the title where the sub puts it; r/AskHistorians: its "thumbnails off" setting; r/ucla
 //    (buttons drawn as boxes): a post's buttons on one line, no stray reddit logo;
-//  - leaving the subreddit (in-page) drops its look; reloading it shows the look at once.
+//  - leaving the subreddit (in-page) drops its look; reloading it shows the look at once;
+//  - the front page: hovering any post's thumbnail (link, video, image) zooms it.
 //   node look-check.mjs <ext-dir> <out-dir>   (CHROMIUM=1: Chromium build)   Exits non-zero on failure.
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { firefox, chromium } from "playwright";
@@ -77,7 +78,9 @@ const L = await page.evaluate(() => {
     entryX: [...new Set(rows.map((t) => x(t.querySelector(":scope > .entry"))))],
     scores: rows.map((t) => (t.querySelector(":scope > .midcol .score") || {}).textContent),
     rawScores: rows.map((t) => +t.getAttribute("data-score")),
-    squashed: imgs.filter((i) => Math.abs(i.height - Math.floor(70 * i.naturalHeight / i.naturalWidth)) > 1 || i.width !== 70).map((i) => `${i.width}x${i.height} of ${i.naturalWidth}x${i.naturalHeight}`),
+    // 70 wide, height in proportion but at most 70 (a taller picture is cropped: object-fit cover)
+    squashed: imgs.filter((i) => Math.abs(i.height - Math.min(70, Math.floor(70 * i.naturalHeight / i.naturalWidth))) > 1 || i.width !== 70 ||
+      (i.height === 70 && i.naturalHeight / i.naturalWidth > 1.05 && getComputedStyle(i).objectFit !== "cover")).map((i) => `${i.width}x${i.height} of ${i.naturalWidth}x${i.naturalHeight}`),
     btnInTopMatter: rows.filter((t) => t.querySelector(".expando-button")).every((t) => !!t.querySelector(".top-matter > p.title + .expando-button")),
     btnCount: rows.filter((t) => t.querySelector(".expando-button")).length,
     logoInHeaderLine: !!(hbl && hbl.querySelector("#header-img")) && Math.abs(hbl.querySelector("#header-img").getBoundingClientRect().bottom - hbl.querySelector(".tabmenu").getBoundingClientRect().bottom) < 8,
@@ -96,7 +99,7 @@ ok(L.n >= 20, `listing rebuilt (${L.n} rows)`);
 ok(L.thumbX.length === 1, `every thumbnail at one x: ${JSON.stringify(L.thumbX)}`);
 ok(L.entryX.length <= 2, `titles start at one x (two with thumbnail-less rows): ${JSON.stringify(L.entryX)}`);
 ok(L.scores.every((sc, i) => sc === "•" || (L.rawScores[i] >= 100000 ? /^\d+k$/.test(sc) : L.rawScores[i] >= 10000 ? /^\d+\.\dk$/.test(sc) : /^-?\d{1,4}$/.test(sc))), `scores read like old reddit's: ${L.scores.slice(0, 6).join(" ")}`);
-ok(L.squashed.length === 0, `thumbnails in their own proportions: ${JSON.stringify(L.squashed.slice(0, 3))}`);
+ok(L.squashed.length === 0, `thumbnails in their own proportions, at most 70 tall: ${JSON.stringify(L.squashed.slice(0, 3))}`);
 ok(L.btnCount > 0 && L.btnInTopMatter, `expand buttons under the title (${L.btnCount})`);
 ok(L.logoInHeaderLine && L.pagename === "multi", `logo, page name, tabs on one line, page name "${L.pagename}"`);
 ok(/popular\s*-\s*all\s*-\s*users\s*\|\s*AskReddit\s*-\s*funny/i.test(L.srbar || ""), `top bar separators: ${(L.srbar || "").slice(0, 60)}`);
@@ -155,6 +158,35 @@ await page.waitForTimeout(2500);
 const A = await page.evaluate(() => ({ off: document.documentElement.classList.contains("orr-nothumbs"), shown: Array.from(document.querySelectorAll("#siteTable .thing.link > .thumbnail")).filter((t) => t.offsetParent).length }));
 ok(A.off && A.shown === 0, `r/AskHistorians: no thumbnails, its setting (${JSON.stringify(A)})`);
 await page.screenshot({ path: path.join(outDir, "askhistorians.png") });
+
+// 7) the front page: hovering ANY post's thumbnail zooms it (a link's preview, a video's
+// poster — not only image posts), at a real size; hovering a link post's title doesn't
+await open("https://www.reddit.com/");
+const hoverThumb = async (sel) => {
+  const id = await page.evaluate((sel) => { const t = Array.from(document.querySelectorAll(sel)).find((x) => x.querySelector(":scope > a.thumbnail img")); if (!t) return null; window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" }); return t.id; }, sel);
+  if (!id) return null;
+  await page.mouse.move(5, 5); await page.waitForTimeout(300);
+  const b = await page.evaluate((id) => { const r = document.getElementById(id).querySelector(":scope > a.thumbnail").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(20, r.height / 2) }; }, id);
+  await page.mouse.move(b.x, b.y, { steps: 4 });
+  await page.waitForTimeout(1500);
+  // w: the picture's own width; shownW: how wide the zoom draws it (a ~140px link preview → 280)
+  return page.evaluate(() => { const el = document.getElementById("orr-hoverimg"); const im = el && el.querySelector("img"); return { shown: !!el && el.style.display === "block", w: im ? im.naturalWidth : 0, shownW: im ? Math.round(im.getBoundingClientRect().width) : 0 }; });
+};
+const zv = await hoverThumb("#siteTable > .thing.link[data-ptype='video']");
+const linkSel = "#siteTable > .thing.link[data-ptype='link']:has(> a.thumbnail[data-orr-zoom])";
+let zl = await hoverThumb(linkSel);
+if (!zl) { await open("https://www.reddit.com/r/technology/"); zl = await hoverThumb(linkSel); } // (no link post with a picture on the front page this time)
+console.log(JSON.stringify({ link: zl, video: zv }));
+// (logged out a link post's biggest picture in the feed is ~140px; the zoom draws it at least 280 wide)
+ok(!!zl && zl.shown && zl.w >= 100 && zl.shownW >= 280, `front page: a link post's thumbnail zooms on hover (${JSON.stringify(zl)})`);
+ok(!zv || (zv.shown && zv.w >= 300 && zv.shownW >= 280), `front page: a video post's thumbnail zooms on hover (${JSON.stringify(zv)})`);
+const titleZoom = await page.evaluate(() => { const t = Array.from(document.querySelectorAll("#siteTable > .thing.link[data-ptype='link']")).find((x) => x.querySelector(":scope > a.thumbnail[data-orr-zoom]")); if (!t) return null; window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" }); const r = t.querySelector("a.title").getBoundingClientRect(); return { x: r.left + 20, y: r.top + r.height / 2 }; });
+if (titleZoom) {
+  await page.mouse.move(5, 5); await page.waitForTimeout(300);
+  await page.mouse.move(titleZoom.x, titleZoom.y, { steps: 4 }); await page.waitForTimeout(900);
+  const shown = await page.evaluate(() => { const el = document.getElementById("orr-hoverimg"); return !!el && el.style.display === "block"; });
+  ok(!shown, "front page: hovering a link post's title pops nothing up");
+}
 
 // 6) a theme that draws the post buttons as boxes (r/ucla): all on one line — save / hide /
 // report shown logged out used to be forced inline and stacked one per line — and the plain
