@@ -80,11 +80,25 @@
         tw = +((/[?&]width=(\d+)/.exec(t) || [])[1] || 0);
         th = +((/[?&]height=(\d+)/.exec(t) || [])[1] || 0);
       }
-      const hAttr = tw > 0 && th > 0 ? ` height="${Math.max(1, Math.floor((70 * th) / tw))}"` : "";
-      return `<a class="thumbnail may-blank" href="${esc(permalink)}"><img src="${esc(t)}" width="70"${hAttr} alt=""></a>`;
+      // (at most 70 tall, like old reddit's thumbnails — a tall picture is cropped, see CSS)
+      const hAttr = tw > 0 && th > 0 ? ` height="${Math.max(1, Math.min(70, Math.floor((70 * th) / tw)))}"` : "";
+      const zoom = thumbZoomSrc(d);
+      return `<a class="thumbnail may-blank" href="${esc(permalink)}"${zoom ? ` data-orr-zoom="${esc(zoom)}"` : ""}><img src="${esc(t)}" width="70"${hAttr} alt=""></a>`;
     }
     const cls = d.is_self ? "self" : d.over_18 ? "nsfw" : "default";
     return `<a class="thumbnail ${cls} may-blank" href="${esc(permalink)}"></a>`;
+  }
+
+  // A bigger picture for hovering a post's thumbnail (the hover zoom): a link post's preview,
+  // a video's poster — posts whose own preview box has no picture to show. ~640px wide.
+  function thumbZoomSrc(d) {
+    if (d.orr_zoom && /^https:\/\//.test(d.orr_zoom)) return d.orr_zoom;
+    const im = d.preview && d.preview.images && d.preview.images[0];
+    if (!im) return "";
+    const res = (im.resolutions || []).filter((r) => r && r.url && r.width);
+    const pick = res.find((r) => r.width >= 640) || res[res.length - 1] || im.source;
+    const u = pick && pick.url ? String(pick.url).replace(/&amp;/g, "&") : "";
+    return /^https:\/\//.test(u) ? u : "";
   }
 
   // True for links that point at an image (reddit/imgur CDNs or a direct image URL),
@@ -1602,7 +1616,7 @@
   globalThis.ORR_REBUILD = {
     esc, formatAge, exactTime, thumbnailHtml, isImageUrl, postExpando, buildItem, tabmenuHtml, navButtonsHtml, timeMenuHtml, buildBody,
     bucketForDays, bucketForHours, daysSince, hoursSince, shareLinkFor, buildSharePanel, postType, foldReadSubtrees,
-    formatNumber, scoreText, oldSubFromHtml, buildOldSidebar, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
+    formatNumber, scoreText, thumbZoomSrc, oldSubFromHtml, buildOldSidebar, buildSidebar, commentSortMenuHtml, childrenOf, buildMore, buildComment, buildCommentTree, buildCommentsBody,
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
@@ -2231,6 +2245,8 @@ html.orr-night #orr-qs input { background:#111; color:#d7dadc; border-color:#474
 html.orr-night .orr-other-box { background:#242526; border-color:#343536; }
 /* logged-in actions: shown only when logged in; edit/delete only on your own things */
 html:not(.orr-logged-in) .orr-li-only { display:none !important; }
+/* thumbnails: 70px wide, at most 70 tall like old reddit's — a tall picture is cropped, not squashed */
+#siteTable .thing.link > .thumbnail img { max-height:70px; object-fit:cover; }
 /* a subreddit with thumbnails turned off (its own setting, as on old reddit) */
 html.orr-nothumbs #siteTable .thing.link > .thumbnail { display:none !important; }
 /* the default reddit logo while a subreddit's own header image shows: hidden even when the
@@ -3664,7 +3680,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const a = e.target.closest && e.target.closest(".thing.link a.title, .thing.link a.thumbnail");
       if (!a) return;
       if (onSearchPage()) return; // (search results peek on pointer movement: see mousemove)
-      const src = hoverPreviewSrc(a.closest(".thing.link"));
+      const src = hoverPreviewSrc(a.closest(".thing.link"), a.classList.contains("thumbnail"));
       if (!src) return;
       clearTimeout(hoverImgTimer);
       hoverImgTimer = setTimeout(() => showHoverImg(src), 200);
@@ -4151,10 +4167,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let top = y - h / 2; if (top < 8) top = 8; if (top + h > vh - 8) top = Math.max(8, vh - h - 8);
     el.style.left = left + "px"; el.style.top = top + "px";
   }
-  function hoverPreviewSrc(thing) {
+  function hoverPreviewSrc(thing, onThumb) {
     if (!thing) return null;
     const gi = thing.querySelector(".expando .orr-gimg, .expando img.preview, .expando-container img");
-    return gi && gi.getAttribute("src") ? gi.getAttribute("src") : null; // only image/gallery posts
+    if (gi && gi.getAttribute("src")) return gi.getAttribute("src"); // image / gallery posts
+    // Every other post with a thumbnail (a link's preview, a video's poster): hovering the
+    // thumbnail itself zooms it — not the title, which would pop up pictures all down a list.
+    const z = onThumb ? thing.querySelector(":scope > a.thumbnail[data-orr-zoom]") : null;
+    const u = z ? z.getAttribute("data-orr-zoom") : "";
+    return /^https:\/\//.test(u) ? u : null;
   }
   // Search results: hovering a result's picture or title peeks at the post — its text,
   // its picture, where a link post points. Logged in, the row's hidden expando has it;
@@ -4305,7 +4326,17 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     let el = document.getElementById("orr-hoverimg");
     if (!el) { el = document.createElement("div"); el.id = "orr-hoverimg"; el.innerHTML = '<img alt="">'; document.body.appendChild(el); }
     const img = el.querySelector("img");
-    if (img.getAttribute("src") !== src) { img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); }; img.src = src; }
+    if (img.getAttribute("src") !== src) {
+      img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); };
+      // A small picture (a link post's preview is ~140px: the biggest the feed has) is shown
+      // at least 280px wide, so hovering its 70px thumbnail still zooms in.
+      img.onload = () => {
+        img.style.width = img.naturalWidth && img.naturalWidth < 280 ? "280px" : "";
+        if (el.style.display === "block") positionHoverImg(el, lastMouseX, lastMouseY);
+      };
+      img.style.width = "";
+      img.src = src;
+    }
     el.style.display = "block";
     positionHoverImg(el, lastMouseX, lastMouseY);
   }
@@ -5329,9 +5360,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       d.thumbnail = smallestSrc(primary);
     } else if (primary) {
       d.thumbnail = smallestSrc(primary); // a link post's preview card: thumbnail only, like old reddit
+      d.orr_zoom = srcNear(primary, 640); // (…and a bigger one for hovering the thumbnail)
     } else {
       const th = el.querySelector("[slot='thumbnail'] img");
-      if (th) d.thumbnail = smallestSrc(th);
+      if (th) { d.thumbnail = smallestSrc(th); d.orr_zoom = srcNear(th, 640); }
     }
 
     // An interactive Devvit app post (games, polls, live threads…): nothing to rebuild
