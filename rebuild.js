@@ -404,15 +404,16 @@
   // everyone but CSS shows them only when you're logged in (html.orr-logged-in) and
   // edit / delete only on your own things (.orr-mine) — the first render can come
   // before /api/me.json answers. kind: "link" | "comment". A post's save / hide / report
-  // show logged out too (orr-lo-link), as on old reddit: clicking one asks you to log in.
+  // show logged out too, as on old reddit (clicking one asks you to log in): they're plain
+  // buttons (orr-lo-link, not orr-li-only), so a subreddit's style lays them out like the rest.
   function actionButtonsHtml(d, kind) {
     const a = (cls, label) => `<a href="javascript:void(0)" class="${cls}" role="button">${label}</a>`;
-    const lo = kind === "link" ? " orr-lo-link" : "";
-    let h = `<li class="orr-li-only${lo} orr-save-li">${a("orr-save", d.saved ? "unsave" : "save")}</li>`;
-    if (kind === "link") h += `<li class="orr-li-only${lo} orr-hide-li">${a("orr-hide", d.hidden ? "unhide" : "hide")}</li>`;
+    const lo = kind === "link" ? "orr-lo-link" : "orr-li-only";
+    let h = `<li class="${lo} orr-save-li">${a("orr-save", d.saved ? "unsave" : "save")}</li>`;
+    if (kind === "link") h += `<li class="${lo} orr-hide-li">${a("orr-hide", d.hidden ? "unhide" : "hide")}</li>`;
     if (kind !== "link" || d.is_self) h += `<li class="orr-own-only">${a("orr-edit", "edit")}</li>`;
     h += `<li class="orr-own-only">${a("orr-delete", "delete")}</li>`;
-    h += `<li class="orr-li-only${lo} orr-not-own">${a("orr-report", "report")}</li>`;
+    h += `<li class="${lo} orr-not-own">${a("orr-report", "report")}</li>`;
     if (kind === "comment" && !d.locked && !d.archived) h += `<li class="orr-li-only orr-reply-li">${a("orr-reply", "reply")}</li>`;
     return h;
   }
@@ -2232,8 +2233,9 @@ html.orr-night .orr-other-box { background:#242526; border-color:#343536; }
 html:not(.orr-logged-in) .orr-li-only { display:none !important; }
 /* a subreddit with thumbnails turned off (its own setting, as on old reddit) */
 html.orr-nothumbs #siteTable .thing.link > .thumbnail { display:none !important; }
-/* logged out, old reddit still shows a post's save / hide / report (they ask you to log in) */
-html:not(.orr-logged-in) .thing.link .flat-list.buttons > li.orr-li-only.orr-lo-link { display:inline !important; }
+/* the default reddit logo while a subreddit's own header image shows: hidden even when the
+   subreddit's style makes header links display:block (which beats the hidden attribute) */
+#header-bottom-left > a[data-orr-default-header][hidden] { display:none !important; }
 .flat-list > .orr-own-only { display:none !important; }
 html.orr-logged-in .thing.orr-mine > .entry .flat-list > .orr-own-only { display:inline !important; }
 html.orr-logged-in .thing.orr-mine > .entry .flat-list > .orr-not-own { display:none !important; }
@@ -7655,7 +7657,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (body) body.innerHTML = '<div class="md"><p>[deleted]</p></div>';
     const author = entry.querySelector(":scope > .tagline a.author, :scope > .top-matter .tagline a.author");
     if (author) { const s = document.createElement("span"); s.textContent = "[deleted]"; author.replaceWith(s); }
-    entry.querySelectorAll(".flat-list.buttons > li.orr-li-only, .flat-list.buttons > li.orr-own-only").forEach((li) => li.remove());
+    entry.querySelectorAll(".flat-list.buttons > li.orr-li-only, .flat-list.buttons > li.orr-lo-link, .flat-list.buttons > li.orr-own-only").forEach((li) => li.remove());
     thing.classList.remove("orr-mine");
     thing.setAttribute("data-author", "[deleted]");
   }
