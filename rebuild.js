@@ -2028,12 +2028,14 @@ a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
 #orr-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:2147483000; max-width:90vw;
   padding:8px 14px; border-radius:4px; background:#333; color:#fff; font:13px verdana,arial,sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.3); }
 #orr-toast a { color:#8cf; font-weight:bold; margin-left:10px; cursor:pointer; }
+/* "n" searching a folded read branch for new replies */
+.thing.comment.orr-searching > .entry > .tagline:after { content:" \\2014  searching for new replies\\2026"; color:#888; font-style:italic; }
 #orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
   border-radius:3px; padding:8px; font:11px verdana, arial, helvetica, sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.35); line-height:1.5; }
 #orr-hovercard .orr-tagbtn, #orr-hovercard .orr-favbtn, #orr-hovercard .orr-filterbtn { color:#369; cursor:pointer; text-decoration:underline; }
 .thing.comment.orr-new > .entry > .tagline:after { content:" \\2022 new"; color:#ff4500; font-weight:bold; }
 /* issue #16: "N new" badge on visited posts, + grey read comments when folding */
-li.orr-newcount-li a.orr-newcount { color:#ff4500; font-weight:bold; }
+.entry .buttons li.orr-newcount-li a.orr-newcount { color:#ff4500; font-weight:bold; } /* outranks old reddit's grey .entry .buttons li a */
 .commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .tagline,
 .commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .usertext-body { opacity:.55; }
 /* clamp read comments to a few lines; click a long one to expand it (RES-style, saves space) */
@@ -3031,11 +3033,26 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // that contain something new so their all-read sub-branches still fold.
     (function fold(list) {
       list.forEach((c) => {
-        if (c.classList.contains("collapsed")) return; // already collapsed (user/prior) → leave it
-        if (!hasNew.has(c)) { collapseThing(c, true); c.setAttribute("data-orr-readfold", "1"); }
+        const collapsed = c.classList.contains("collapsed"); // already collapsed (user/prior/bot) → leave it
+        if (!hasNew.has(c)) { if (!collapsed) { collapseThing(c, true); c.setAttribute("data-orr-readfold", "1"); } }
+        // descend even into a collapsed one: expanding it later shouldn't reveal unfolded read branches
         else { const child = c.querySelector(":scope > .child"); if (child) fold(childComments(child)); }
       });
     })(topLevel);
+  }
+  // Comments added after the first render ("load more comments", "continue this
+  // thread") get the same folding: each newly added all-read branch folds at its
+  // top. Only the highest added nodes are passed in, so a read reply doesn't get
+  // folded again inside its (folded) newly added parent. Run after flagNewComments.
+  function foldLoadedComments(nodes) {
+    const area = document.querySelector(".commentarea");
+    if (!area || !area.classList.contains("orr-foldread")) return;
+    const added = new Set(nodes.filter((n) => n && n.classList && n.classList.contains("comment")));
+    const roots = Array.from(added).filter((n) => {
+      const p = n.parentElement && n.parentElement.closest(".thing.comment");
+      return !p || !added.has(p);
+    });
+    if (roots.length) foldReadSubtrees(roots);
   }
   function applyReadFolding() {
     const area = document.querySelector(".commentarea");
@@ -3211,7 +3228,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     expand:      { def: "x", label: "expand media / collapse comment" },
     comments:    { def: "c", label: "open comments (on a listing)" },
     goto:        { def: "g", label: "go to subreddit (quick switcher)" },
-    nextNew:     { def: "n", label: "next new comment (since last visit)" },
+    nextNew:     { def: "n", label: "next new comment (since last visit); loads more of the thread to find one" },
     prevNew:     { def: "p", label: "previous new comment" },
     collapseTop: { def: "[", label: "collapse / expand all top-level threads" },
     focusThread: { def: "]", label: "collapse other threads (focus this one)" },
@@ -3245,7 +3262,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       case "expand": { const c = kbCurrent(); const btn = c && c.querySelector(".expando-button"); if (btn) btn.click(); else if (c && c.classList.contains("comment")) { const ex = c.querySelector(":scope > .entry .expand"); if (ex) ex.click(); } break; }
       case "comments": { const c = kbCurrent(); const a = c && c.querySelector("a.comments, a.bylink.comments"); if (a) a.click(); break; }
       case "goto": openQuickSwitch(); break;
-      case "nextNew": jumpComment(1, newComments()); break;
+      case "nextNew": nextNewComment(); break;
       case "prevNew": jumpComment(-1, newComments()); break;
       case "collapseTop": collapseAllTop(); break;
       case "focusThread": focusThread(); break;
@@ -4626,9 +4643,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (!wrap || !wrap.parentNode || !kids.length) { el.textContent = "(nothing more to load)"; return; }
       const tmp = document.createElement("div");
       tmp.innerHTML = buildCommentTree(kids, linkId, nowMsNow());
-      while (tmp.firstElementChild) wrap.parentNode.insertBefore(tmp.firstElementChild, wrap);
+      const added = [];
+      while (tmp.firstElementChild) { added.push(tmp.firstElementChild); wrap.parentNode.insertBefore(tmp.firstElementChild, wrap); }
       wrap.remove();
       enhanceComments(document);
+      flagNewComments(document);
+      foldLoadedComments(added);
+      clampReadBodies();
+      observeMores();
     } catch (e) {
       el.dataset.orrLoading = "";
       el.textContent = "continue this thread — failed, click to retry";
@@ -6775,19 +6797,20 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // returned comments under their parent by parent_id. Best-effort (experimental).
   const moreTimers = new Set(); // pending comment-retry timers, cleared on navigation
 
-  async function handleMore(el, auto) {
+  async function handleMore(el, auto, search) {
     // Never load into a collapsed thread. The stub is hidden inside a collapsed
     // subtree, so a load here can only come from a stale retry timer or another
     // programmatic/keyboard path — and would graft comments into a subtree the
     // user has deliberately hidden. Top-level "load more comments" has no
     // collapsed comment ancestor, so the scroll auto-loader is unaffected.
-    if (el.closest(".thing.comment.collapsed")) return;
-    if (el.hasAttribute("data-partial")) return loadMorePartial(el, auto);
+    // Exception: the new-comment search may load inside branches the extension
+    // folded only because they were read (searchable()); never a user's collapse.
+    if (el.closest(".thing.comment.collapsed") && !(search && searchable(el))) return;
+    if (el.hasAttribute("data-partial")) return loadMorePartial(el, auto, search);
     const linkId = el.getAttribute("data-link");
     const childrenCsv = el.getAttribute("data-children");
     if (!childrenCsv) {
-      continueThread(el); // "continue this thread" → load the subtree inline
-      return;
+      return continueThread(el); // "continue this thread" → load the subtree inline
     }
     if (el.dataset.orrLoading) return;
     el.dataset.orrLoading = "1";
@@ -6819,8 +6842,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       insertMoreThings(el, things, linkId, rest);
       return;
     }
-    if (isTransient(status)) {
+    if (isTransient(status) && !search) {
       scheduleMoreRetry(el, auto, retryAfter);
+    } else if (status === 429) { // a search load backs off instead of retrying on its own
+      el.textContent = "load more comments — rate-limited, click to retry";
+      el.dataset.orrLoading = "";
+      el.dataset.orrAttempt = "";
     } else {
       el.textContent = "load more comments — failed (" + status + "), click to retry";
       el.dataset.orrLoading = "";
@@ -6832,7 +6859,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // partial new Reddit itself uses (with its cursor) and splice the returned
   // comments in where the stub sits — they're the stub's siblings, i.e. further
   // replies to its parent (or further top-level comments).
-  async function loadMorePartial(el, auto) {
+  async function loadMorePartial(el, auto, search) {
     const src = el.getAttribute("data-partial");
     if (el.dataset.orrLoading || !isPartialPath(src)) return;
     el.dataset.orrLoading = "1";
@@ -6864,20 +6891,26 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const fresh = roots.filter((c) => c.kind !== "t1" || !document.getElementById("thing_" + c.data.name));
       const tmp = document.createElement("div");
       tmp.innerHTML = buildCommentTree(fresh, linkId, nowMsNow());
+      const added = [];
       if (wrap && wrap.parentNode) {
-        while (tmp.firstElementChild) wrap.parentNode.insertBefore(tmp.firstElementChild, wrap);
+        while (tmp.firstElementChild) { added.push(tmp.firstElementChild); wrap.parentNode.insertBefore(tmp.firstElementChild, wrap); }
         wrap.remove();
       }
       patchTags(document);
       inlineImages(document);
       enhanceComments(document);
       flagNewComments(document);
+      foldLoadedComments(added);
       clampReadBodies();
       observeMores();
       return;
     }
-    if (isTransient(status)) {
+    if (isTransient(status) && !search) {
       scheduleMoreRetry(el, auto, retryAfter);
+    } else if (status === 429) { // a search load backs off instead of retrying on its own
+      el.textContent = "load more comments — rate-limited, click to retry";
+      el.dataset.orrLoading = "";
+      el.dataset.orrAttempt = "";
     } else {
       el.textContent = "load more comments — failed (" + status + "), click to retry";
       el.dataset.orrLoading = "";
@@ -6914,6 +6947,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function insertMoreThings(moreEl, things, linkId, rest) {
     const wrap = moreEl.parentElement; // .morecomments
+    const added = [];
     for (const t of things) {
       let html = "";
       if (t.kind === "t1") html = buildComment(t.data, { linkId });
@@ -6923,6 +6957,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       tmp.innerHTML = html;
       const node = tmp.firstElementChild;
       if (!node) continue;
+      added.push(node);
       const parentId = t.data.parent_id;
       const parentThing = parentId ? document.getElementById("thing_" + parentId) : null;
       const child = parentThing ? parentThing.querySelector(":scope > .child") : null;
@@ -6943,8 +6978,118 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     inlineImages(document);
     enhanceComments(document);
     flagNewComments(document); // flag any newly-loaded comments created since your last visit
+    foldLoadedComments(added); // fold newly-loaded all-read branches, like the first render did
     clampReadBodies(); // give newly-loaded read bodies the "click to expand" affordance
     observeMores(); // pick up new/continued "more" stubs
+  }
+
+  // ---- "n": find new comments in unloaded parts of a thread ----
+  // A "load more" stub only says how many comments it holds, not when they were
+  // written, so the only way to find new replies is to load it. When there's no
+  // next new comment below, "n" loads the stubs below you top-down — including
+  // those hidden inside a branch the extension folded as read, where replies to
+  // a read thread land — a few per press, until a new comment turns up.
+  //
+  // May the search load here? Only if nothing above it is collapsed except by
+  // read-folding — a thread you (or bot auto-collapse) collapsed stays as it is.
+  function searchable(el) {
+    for (let c = el.closest(".thing.comment.collapsed"); c; c = c.parentElement && c.parentElement.closest(".thing.comment.collapsed")) {
+      if (!c.hasAttribute("data-orr-readfold")) return false;
+    }
+    return true;
+  }
+  // Every search load goes through this gate: one at a time, at least
+  // SEARCH_GAP_MS apart (bursts of loads got 429s from Reddit).
+  const SEARCH_GAP_MS = 1000;
+  let lastSearchLoad = 0, searchGateChain = Promise.resolve();
+  function searchGate() {
+    searchGateChain = searchGateChain.then(async () => {
+      const wait = lastSearchLoad + SEARCH_GAP_MS - nowMsNow();
+      if (wait > 0) await sleep(wait);
+      lastSearchLoad = nowMsNow();
+    });
+    return searchGateChain;
+  }
+  // Load the stubs inside a read-folded branch (and the ones those batches
+  // bring), capped; if that turns up new comments, open the path to them.
+  const BRANCH_SEARCH_LOADS = 3;
+  async function searchBranch(top) {
+    if (!top.isConnected || top.dataset.orrSearching) return false;
+    top.dataset.orrSearching = "1";
+    top.classList.add("orr-searching");
+    const tried = new Set();
+    const rl = rlLast429;
+    for (let i = 0; i < BRANCH_SEARCH_LOADS; i++) {
+      const stub = Array.from(top.querySelectorAll("a.orr-more")).find((a) => !tried.has(a) && !a.dataset.orrLoading && searchable(a));
+      if (!stub) break;
+      tried.add(stub);
+      await searchGate();
+      try { await handleMore(stub, true, true); } catch (e) { /* a failed batch just stops counting */ }
+      if (!top.isConnected) return false; // navigated away
+      if (rlLast429 !== rl) break; // Reddit pushed back: stop here
+    }
+    delete top.dataset.orrSearching;
+    top.classList.remove("orr-searching");
+    if (!top.querySelector(".thing.comment.orr-new")) return false; // nothing new: stays folded
+    revealNew(top);
+    return true;
+  }
+  // Unfold a read-folded branch along the path to its new comments, then fold
+  // its read sub-branches again — the same shape the first render gives.
+  function revealNew(top) {
+    [top].concat(Array.from(top.querySelectorAll(".thing.comment[data-orr-readfold]"))).forEach((c) => {
+      if (c.querySelector(".thing.comment.orr-new")) { c.removeAttribute("data-orr-readfold"); collapseThing(c, false); }
+    });
+    const child = top.querySelector(":scope > .child");
+    if (child) foldReadSubtrees(childComments(child));
+    clampReadBodies();
+  }
+
+  const N_SEARCH_LOADS = 5;
+  let newSearchBusy = false;
+  function newBelow() {
+    return newComments().some((t) => t.offsetParent !== null && t.getBoundingClientRect().top > 4);
+  }
+  // Stubs and read-folded branches (that still hide stubs) at or below the top of
+  // the window, in page order.
+  function searchCandidatesBelow() {
+    const out = [];
+    document.querySelectorAll(".commentarea a.orr-more, .commentarea .thing.comment[data-orr-readfold]").forEach((el) => {
+      const isFold = el.classList.contains("comment");
+      if (isFold && !el.querySelector("a.orr-more")) return;
+      if (el.offsetParent === null) return; // hidden inside a fold: that fold is the candidate
+      if (!searchable(el) || el.dataset.orrLoading || el.dataset.orrSearching) return;
+      if (el.getBoundingClientRect().top < -4) return; // above you
+      out.push(el);
+    });
+    return out;
+  }
+  async function nextNewComment() {
+    if (!document.querySelector(".commentarea")) return;
+    const els = newComments();
+    if (newBelow() || !document.querySelector(".commentarea.orr-visited-before")) { jumpComment(1, els); return; }
+    if (newSearchBusy) return;
+    newSearchBusy = true;
+    showToast("Loading more comments to find new ones…");
+    const tried = new Set();
+    let found = false;
+    try {
+      for (let i = 0; i < N_SEARCH_LOADS; i++) {
+        const cand = searchCandidatesBelow().find((c) => !tried.has(c));
+        if (!cand) break;
+        tried.add(cand);
+        if (cand.classList.contains("orr-more")) { await searchGate(); await handleMore(cand, true, true); }
+        else await searchBranch(cand);
+        if (newBelow()) { found = true; break; }
+      }
+    } finally {
+      newSearchBusy = false;
+    }
+    if (found) { hideToast(); jumpComment(1, newComments()); return; }
+    const more = searchCandidatesBelow().some((c) => !tried.has(c));
+    showToast(more ? "No new comments in the next " + N_SEARCH_LOADS + " batches — press n again to keep searching."
+      : els.length ? "No more new comments below — back to the first one." : "No new comments in this thread.");
+    if (!more && els.length) jumpComment(1, els); // wraps to the first, like before
   }
 
   // Auto-load "load more comments" stubs when they scroll into view.
