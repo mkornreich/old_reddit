@@ -2455,6 +2455,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (e.key === "Enter") { runKeyAction("open"); return; }
     if (e.key === "Escape") {
       if (document.getElementById("orr-help")) { closeHelp(); e.preventDefault(); }
+      else if (stopNewSearch()) e.preventDefault(); // "n" was loading more comments to find new ones
       else hideHoverCard();
       return;
     }
@@ -3044,13 +3045,18 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // thread") get the same folding: each newly added all-read branch folds at its
   // top. Only the highest added nodes are passed in, so a read reply doesn't get
   // folded again inside its (folded) newly added parent. Run after flagNewComments.
+  // Like the first render, fold only where a branch with something new forks off
+  // into read replies (or at the top level): under a read comment, its whole branch
+  // is folded higher up already — or the reader opened it, and then more replies
+  // loaded into it show open like the ones already there.
   function foldLoadedComments(nodes) {
     const area = document.querySelector(".commentarea");
     if (!area || !area.classList.contains("orr-foldread")) return;
     const added = new Set(nodes.filter((n) => n && n.classList && n.classList.contains("comment")));
     const roots = Array.from(added).filter((n) => {
       const p = n.parentElement && n.parentElement.closest(".thing.comment");
-      return !p || !added.has(p);
+      if (p && added.has(p)) return false;
+      return !p || p.classList.contains("orr-new") || !!p.querySelector(".thing.comment.orr-new");
     });
     if (roots.length) foldReadSubtrees(roots);
   }
@@ -3228,7 +3234,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     expand:      { def: "x", label: "expand media / collapse comment" },
     comments:    { def: "c", label: "open comments (on a listing)" },
     goto:        { def: "g", label: "go to subreddit (quick switcher)" },
-    nextNew:     { def: "n", label: "next new comment (since last visit); loads more of the thread to find one" },
+    nextNew:     { def: "n", label: "next new comment (since last visit); loads more of the thread to find one (Esc stops)" },
     prevNew:     { def: "p", label: "previous new comment" },
     collapseTop: { def: "[", label: "collapse / expand all top-level threads" },
     focusThread: { def: "]", label: "collapse other threads (focus this one)" },
@@ -6831,7 +6837,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         const j = await res.json();
         const errs = (j && j.json && j.json.errors) || [];
         // morechildren sometimes returns 200 with a RATELIMIT error body.
-        if (errs.some((x) => Array.isArray(x) && /RATELIMIT/i.test(String(x[0])))) status = 429;
+        if (errs.some((x) => Array.isArray(x) && /RATELIMIT/i.test(String(x[0])))) { status = 429; noteRateLimit(retryAfter); }
         else things = (j && j.json && j.json.data && j.json.data.things) || [];
       }
     } catch (e) {
@@ -7010,27 +7016,43 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     });
     return searchGateChain;
   }
+  // One "n" press is one search: up to N_SEARCH_LOADS loads (stubs and folded
+  // branches share the budget), each through the gate. It stops early on a new
+  // comment, Esc, leaving the thread, or Reddit rate-limiting it.
+  const N_SEARCH_LOADS = 10;
+  const BRANCH_SEARCH_LOADS = 3; // per visit to a folded branch, so one deep branch can't eat the press
+  let newSearch = null; // the running search: { area, used, rl, stopped, tried, spent }
+  function searchOver(s) {
+    return s.stopped || !s.area.isConnected || s.used >= N_SEARCH_LOADS || rlLast429 !== s.rl;
+  }
+  // One paced load; false once the search should stop.
+  async function searchLoad(s, stub) {
+    s.tried.add(stub);
+    if (searchOver(s)) return false;
+    await searchGate();
+    if (searchOver(s) || !stub.isConnected) return false;
+    s.used++;
+    showToast("Loading more comments to find new ones… (" + s.used + "/" + N_SEARCH_LOADS + ") — Esc stops");
+    try { await handleMore(stub, true, true); } catch (e) { /* a failed batch just counts */ }
+    return !searchOver(s);
+  }
   // Load the stubs inside a read-folded branch (and the ones those batches
   // bring), capped; if that turns up new comments, open the path to them.
-  const BRANCH_SEARCH_LOADS = 3;
-  async function searchBranch(top) {
+  async function searchBranch(s, top) {
     if (!top.isConnected || top.dataset.orrSearching) return false;
     top.dataset.orrSearching = "1";
     top.classList.add("orr-searching");
-    const tried = new Set();
-    const rl = rlLast429;
-    for (let i = 0; i < BRANCH_SEARCH_LOADS; i++) {
-      const stub = Array.from(top.querySelectorAll("a.orr-more")).find((a) => !tried.has(a) && !a.dataset.orrLoading && searchable(a));
-      if (!stub) break;
-      tried.add(stub);
-      await searchGate();
-      try { await handleMore(stub, true, true); } catch (e) { /* a failed batch just stops counting */ }
-      if (!top.isConnected) return false; // navigated away
-      if (rlLast429 !== rl) break; // Reddit pushed back: stop here
+    try {
+      for (let i = 0; i < BRANCH_SEARCH_LOADS; i++) {
+        const stub = Array.from(top.querySelectorAll("a.orr-more")).find((a) => !s.tried.has(a) && !a.dataset.orrLoading && searchable(a));
+        if (!stub || !(await searchLoad(s, stub))) break;
+        if (top.querySelector(".thing.comment.orr-new")) break;
+      }
+    } finally {
+      delete top.dataset.orrSearching;
+      top.classList.remove("orr-searching");
     }
-    delete top.dataset.orrSearching;
-    top.classList.remove("orr-searching");
-    if (!top.querySelector(".thing.comment.orr-new")) return false; // nothing new: stays folded
+    if (!top.isConnected || !top.querySelector(".thing.comment.orr-new")) return false; // nothing new: stays folded
     revealNew(top);
     return true;
   }
@@ -7045,50 +7067,60 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     clampReadBodies();
   }
 
-  const N_SEARCH_LOADS = 5;
-  let newSearchBusy = false;
   function newBelow() {
     return newComments().some((t) => t.offsetParent !== null && t.getBoundingClientRect().top > 4);
   }
   // Stubs and read-folded branches (that still hide stubs) at or below the top of
-  // the window, in page order.
-  function searchCandidatesBelow() {
+  // the window, in page order — or above it, with above = true.
+  function searchCandidates(above) {
     const out = [];
     document.querySelectorAll(".commentarea a.orr-more, .commentarea .thing.comment[data-orr-readfold]").forEach((el) => {
       const isFold = el.classList.contains("comment");
       if (isFold && !el.querySelector("a.orr-more")) return;
       if (el.offsetParent === null) return; // hidden inside a fold: that fold is the candidate
       if (!searchable(el) || el.dataset.orrLoading || el.dataset.orrSearching) return;
-      if (el.getBoundingClientRect().top < -4) return; // above you
+      if ((el.getBoundingClientRect().top < -4) !== !!above) return;
       out.push(el);
     });
     return out;
   }
+  function stopNewSearch() {
+    if (!newSearch) return false;
+    newSearch.stopped = true;
+    hideToast();
+    return true;
+  }
   async function nextNewComment() {
-    if (!document.querySelector(".commentarea")) return;
+    const area = document.querySelector(".commentarea");
+    if (!area) return;
     const els = newComments();
-    if (newBelow() || !document.querySelector(".commentarea.orr-visited-before")) { jumpComment(1, els); return; }
-    if (newSearchBusy) return;
-    newSearchBusy = true;
+    if (newBelow() || !area.classList.contains("orr-visited-before")) { jumpComment(1, els); return; }
+    if (newSearch) return; // already searching
+    const s = (newSearch = { area, used: 0, rl: rlLast429, stopped: false, tried: new Set(), spent: new Set() });
     showToast("Loading more comments to find new ones…");
-    const tried = new Set();
     let found = false;
     try {
-      for (let i = 0; i < N_SEARCH_LOADS; i++) {
-        const cand = searchCandidatesBelow().find((c) => !tried.has(c));
+      while (!searchOver(s)) {
+        // each stub and branch once, in page order; then back into branches that hid more
+        const cands = searchCandidates().filter((c) => !s.spent.has(c));
+        const cand = cands.find((c) => !s.tried.has(c)) || cands[0];
         if (!cand) break;
-        tried.add(cand);
-        if (cand.classList.contains("orr-more")) { await searchGate(); await handleMore(cand, true, true); }
-        else await searchBranch(cand);
+        const before = s.used;
+        if (cand.classList.contains("orr-more")) { await searchLoad(s, cand); s.spent.add(cand); }
+        else { s.tried.add(cand); await searchBranch(s, cand); if (s.used === before) s.spent.add(cand); }
         if (newBelow()) { found = true; break; }
       }
     } finally {
-      newSearchBusy = false;
+      if (newSearch === s) newSearch = null;
     }
+    if (!area.isConnected) { hideToast(); return; } // left the thread
+    if (s.stopped) return;
     if (found) { hideToast(); jumpComment(1, newComments()); return; }
-    const more = searchCandidatesBelow().some((c) => !tried.has(c));
-    showToast(more ? "No new comments in the next " + N_SEARCH_LOADS + " batches — press n again to keep searching."
-      : els.length ? "No more new comments below — back to the first one." : "No new comments in this thread.");
+    if (rlLast429 !== s.rl) { showToast("Reddit is limiting how fast comments load — wait a minute, then press n to keep searching."); return; }
+    const more = searchCandidates().some((c) => !s.spent.has(c));
+    showToast(more ? "No new comments in the next " + s.used + " loads — press n again to keep searching."
+      : els.length ? "No more new comments below — back to the first one."
+      : searchCandidates(true).length ? "No new comments below." : "No new comments in this thread.");
     if (!more && els.length) jumpComment(1, els); // wraps to the first, like before
   }
 
