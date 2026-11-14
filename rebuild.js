@@ -2036,6 +2036,13 @@ a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
 .thing.comment.orr-new > .entry > .tagline:after { content:" \\2022 new"; color:#ff4500; font-weight:bold; }
 /* issue #16: "N new" badge on visited posts, + grey read comments when folding */
 .entry .buttons li.orr-newcount-li a.orr-newcount { color:#ff4500; font-weight:bold; } /* outranks old reddit's grey .entry .buttons li a */
+/* The comment sort bar ("sorted by: best · top · … | collapse all") keeps to one row. Old
+   reddit's 310px right margin keeps it off a sidebar the comments run under, but it stays
+   clear of that by itself (overflow:hidden); under a subreddit style that already ends the
+   comments short of the sidebar (r/LosAngeles) the margin took that room twice, and zoomed
+   in, "collapse all" wrapped onto a second line. fitSortBar shrinks it where even the full
+   width is too narrow. */
+html .commentarea > .menuarea { margin-right:0; }
 .commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .tagline,
 .commentarea.orr-foldread .thing.comment:not(.orr-new) > .entry > .usertext-body { opacity:.55; }
 /* clamp read comments to a few lines; click a long one to expand it (RES-style, saves space) */
@@ -4498,8 +4505,51 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const tops = topComments();
     const anyOpen = tops.some((t) => !t.classList.contains("collapsed"));
     const label = anyOpen ? "collapse all" : "expand all";
-    if (a.textContent !== label) a.textContent = label;
-    if (a.parentElement) a.parentElement.hidden = !tops.length;
+    let changed = false;
+    if (a.textContent !== label) { a.textContent = label; changed = true; }
+    if (a.parentElement && a.parentElement.hidden !== !tops.length) { a.parentElement.hidden = !tops.length; changed = true; }
+    fitSortBar(changed);
+  }
+  // The comment sort bar stays on one row: ours lists every sort plus "collapse all", far
+  // longer than old reddit's "sorted by: best ▾", so where even the comment column can't
+  // hold it (zoomed far in, a big font size), its text shrinks to fit rather than wrapping
+  // "collapse all" or a sort onto a second line. Refits when the bar's width changes
+  // (zoom, window size, a subreddit's style arriving) or its link's label does.
+  let sortBarRO = null, sortBarSeen = null, sortBarW = -1;
+  function fitSortBar(force) {
+    const bar = document.querySelector(".commentarea > .menuarea");
+    if (!bar) return;
+    if (bar !== sortBarSeen) {
+      sortBarSeen = bar;
+      sortBarW = -1;
+      if (typeof ResizeObserver === "function") {
+        if (!sortBarRO) sortBarRO = new ResizeObserver(() => fitSortBar(false));
+        sortBarRO.disconnect();
+        sortBarRO.observe(bar);
+      }
+    }
+    // computed widths are CSS px inside any font-size zoom on the comment area, like the probe's
+    const cs = getComputedStyle(bar);
+    let room = parseFloat(cs.width);
+    if (cs.boxSizing === "border-box") {
+      room -= parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    }
+    if (!(room > 0)) return;
+    if (!force && Math.abs(room - sortBarW) < 0.5) return;
+    sortBarW = room;
+    bar.style.fontSize = "small"; // the size it's built with
+    const probe = document.createElement("span"); // the bar's text on one line, unseen
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:nowrap;left:0;top:0";
+    bar.childNodes.forEach((n) => probe.appendChild(n.cloneNode(true)));
+    bar.appendChild(probe);
+    const need = parseFloat(getComputedStyle(probe).width);
+    probe.remove();
+    if (!(need > room - 1)) return;
+    const px = parseFloat(getComputedStyle(bar).fontSize) * (room - 2) / need;
+    // never under 8px as shown: the font size setting zooms the comment area (6px there at 200% shows as 12px)
+    const de = document.documentElement;
+    const zoom = de.classList.contains("orr-custom-font") ? parseFloat(getComputedStyle(de).getPropertyValue("--orr-font-scale")) || 1 : 1;
+    bar.style.fontSize = Math.max(8 / zoom, Math.floor(px * 10) / 10) + "px";
   }
   // Top-level comments added after "collapse all" (more loaded at the end of the page)
   // arrive folded like the rest; ones the reader opened since stay open.
