@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Classic Layout for Reddit",
-  "version": "3.17.20",
+  "version": "3.17.21",
   "description": "Rebuilds Reddit into old Reddit's classic UI from its API: infinite scroll, keyboard nav, collapse, night mode, filters.",
   "browser_specific_settings": {
     "gecko": {
@@ -47,6 +47,20 @@
       ],
       "js": ["common.js", "rebuild.js"],
       "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "*://www.reddit.com/*",
+        "*://reddit.com/*",
+        "*://new.reddit.com/*",
+        "*://np.reddit.com/*",
+        "*://amp.reddit.com/*",
+        "*://sh.reddit.com/*"
+      ],
+      "js": ["no-google-prompt.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
       "all_frames": false
     },
     {

@@ -11,7 +11,8 @@
 //    the title where the sub puts it; r/AskHistorians: its "thumbnails off" setting; r/ucla
 //    (buttons drawn as boxes): a post's buttons on one line, no stray reddit logo;
 //  - leaving the subreddit (in-page) drops its look; reloading it shows the look at once;
-//  - the front page: hovering any post's thumbnail (link, video, image) zooms it.
+//  - the front page: hovering any post's thumbnail (link, video, image) zooms it; a link post
+//    whose picture 404s shows old reddit's link icon and zooms nothing (no empty box).
 //   node look-check.mjs <ext-dir> <out-dir>   (CHROMIUM=1: Chromium build)   Exits non-zero on failure.
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
 import { firefox, chromium } from "playwright";
@@ -163,7 +164,8 @@ await page.screenshot({ path: path.join(outDir, "askhistorians.png") });
 // poster — not only image posts), at a real size; hovering a link post's title doesn't
 await open("https://www.reddit.com/");
 const hoverThumb = async (sel) => {
-  const id = await page.evaluate((sel) => { const t = Array.from(document.querySelectorAll(sel)).find((x) => x.querySelector(":scope > a.thumbnail img")); if (!t) return null; window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" }); return t.id; }, sel);
+  // (a thumbnail whose picture loaded: Reddit's CDN answers 404 for the odd link preview — see 7b)
+  const id = await page.evaluate((sel) => { const t = Array.from(document.querySelectorAll(sel)).find((x) => { const im = x.querySelector(":scope > a.thumbnail img"); return im && im.complete && im.naturalWidth > 0; }); if (!t) return null; window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" }); return t.id; }, sel);
   if (!id) return null;
   await page.mouse.move(5, 5); await page.waitForTimeout(300);
   const b = await page.evaluate((id) => { const r = document.getElementById(id).querySelector(":scope > a.thumbnail").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(20, r.height / 2) }; }, id);
@@ -186,6 +188,32 @@ if (titleZoom) {
   await page.mouse.move(titleZoom.x, titleZoom.y, { steps: 4 }); await page.waitForTimeout(900);
   const shown = await page.evaluate(() => { const el = document.getElementById("orr-hoverimg"); return !!el && el.style.display === "block"; });
   ok(!shown, "front page: hovering a link post's title pops nothing up");
+}
+// 7b) a link post whose picture Reddit's CDN has lost (404 — 2026-11-17, the front page's top
+// link post): its thumbnail gives way to old reddit's link icon, and hovering it pops nothing
+// up (it used to leave an empty little box by the pointer). Point one at a picture that 404s.
+const lost = await page.evaluate(() => {
+  const t = Array.from(document.querySelectorAll("#siteTable > .thing.link[data-ptype='link']")).find((x) => x.querySelector(":scope > a.thumbnail[data-orr-zoom] img"));
+  if (!t) return null;
+  const a = t.querySelector(":scope > a.thumbnail");
+  const gone = "https://external-preview.redd.it/orr-look-check-no-such-picture.jpeg?width=140&height=78&auto=webp&s=0";
+  a.setAttribute("data-orr-zoom", gone);
+  a.querySelector("img").src = gone;
+  window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" });
+  return t.id;
+});
+if (lost) {
+  await page.waitForTimeout(2500); // (the 404, then a refetch that finds nothing logged out)
+  await page.mouse.move(5, 5); await page.waitForTimeout(300);
+  const b = await page.evaluate((id) => { const r = document.getElementById(id).querySelector(":scope > a.thumbnail").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(20, r.height / 2) }; }, lost);
+  await page.mouse.move(b.x, b.y, { steps: 4 });
+  await page.waitForTimeout(1500);
+  const L = await page.evaluate((id) => {
+    const a = document.getElementById(id).querySelector(":scope > a.thumbnail");
+    const el = document.getElementById("orr-hoverimg");
+    return { icon: a.classList.contains("default") && !a.querySelector("img") && getComputedStyle(a).backgroundImage.includes("sprite"), w: Math.round(a.getBoundingClientRect().width), zoomShown: !!el && el.style.display === "block" };
+  }, lost);
+  ok(L.icon && L.w > 0 && !L.zoomShown, `a link post whose picture 404s: old reddit's link icon, and no empty zoom on hover (${JSON.stringify(L)})`);
 }
 
 // 6) a theme that draws the post buttons as boxes (r/ucla): all on one line — save / hide /

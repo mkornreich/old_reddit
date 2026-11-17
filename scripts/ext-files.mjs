@@ -2,7 +2,7 @@
 // and the Chromium (Chrome/Edge/Opera/Brave) manifest. Shared by
 // build-chromium-zip.mjs and playwright/stage-ext.mjs.
 export const EXT_FILES = [
-  "manifest.json", "common.js", "rebuild.js", "redirect.js", "settings.js", "settings.css",
+  "manifest.json", "common.js", "rebuild.js", "no-google-prompt.js", "redirect.js", "settings.js", "settings.css",
   "popup.html", "options.html", "background.js", "permission-prompt.html", "permission-prompt.js",
   "vendor/oldreddit.bundled.css", "vendor/dash.mediaplayer.min.js",
   "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png", "icons/icon.svg",

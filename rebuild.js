@@ -1630,7 +1630,7 @@
   // ---------- runtime driver -------------------------------------------
 
   const CSS_URL = api.runtime.getURL("vendor/oldreddit.bundled.css");
-  const GUARD_ID = "orr-rebuild-guard";
+  const GUARD_ID = "orr-rebuild-guard"; // (no-google-prompt.js looks for it too)
   const CSS_ID = "orr-rebuild-css";
   const cache = new Map(); // jsonUrl -> { json, t }
   const CACHE_TTL = 60000;
@@ -1993,6 +1993,9 @@
 .orr-locked { color:#888; }
 /* Reddit's scripts add Google's reCAPTCHA badge for logged-out visitors; on the rebuilt page it just covers our corner buttons */
 html.orr-rebuilt .grecaptcha-badge { visibility:hidden !important; }
+/* …and Google's "Sign in to Reddit with Google" prompt (One Tap): never on old reddit, and
+   it covers the page's corner. The native-CSS observer removes it (isGoogleOneTap); this keeps it from flashing up. */
+html.orr-rebuilt #credential_picker_container, html.orr-rebuilt #credential_picker_iframe { display:none !important; }
 .thing.comment.collapsed > .child, .thing.comment.collapsed > .entry .usertext-body,
 .thing.comment.collapsed > .entry .flat-list.buttons { display:none !important; }
 .thing.comment.collapsed > .entry .tagline { opacity:.75; }
@@ -3234,11 +3237,13 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   // ---- reddit preview images whose signed URL expired → refetch a fresh one ----
   let previewJsonPromise = null; // shared across images so we fetch the page JSON once
+  // → Promise<bool>: was a fresh URL found (and put in)? (Logged out the page's .json is
+  // blocked, so a picture Reddit's CDN has lost — a 404 — stays lost.)
   function refreshPreviewUrl(img) {
-    if (img.dataset.orrRefetched) return;
+    if (img.dataset.orrRefetched) return Promise.resolve(false);
     img.dataset.orrRefetched = "1";
     let path;
-    try { path = new URL(img.getAttribute("src") || img.src, location.origin).pathname; } catch (e) { return; }
+    try { path = new URL(img.getAttribute("src") || img.src, location.origin).pathname; } catch (e) { return Promise.resolve(false); }
     if (!previewJsonPromise) {
       const jsonUrl = location.origin + location.pathname.replace(/\/$/, "") + "/.json?raw_json=1";
       previewJsonPromise = redditFetch(jsonUrl)
@@ -3246,13 +3251,24 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         .catch(() => "");
       setTimeout(() => { previewJsonPromise = null; }, 30000); // allow a fresh fetch later
     }
-    previewJsonPromise.then((text) => {
-      if (!text) return;
+    return previewJsonPromise.then((text) => {
+      if (!text) return false;
       const fresh = (text.match(/https?:\/\/(?:external-)?preview\.redd\.it\/[^"\s\\]+/g) || [])
         .map((u) => u.replace(/\\\//g, "/").replace(/\\u0026/gi, "&").replace(/&amp;/g, "&"))
         .find((u) => { try { return new URL(u).pathname === path; } catch (e) { return false; } });
-      if (fresh && img.isConnected) img.src = fresh;
+      if (!fresh || !img.isConnected || fresh === img.src) return false;
+      img.src = fresh;
+      return true;
     });
+  }
+  // A listing thumbnail whose picture won't load (Reddit's CDN answers 404 for some link
+  // previews): old reddit's plain link icon in its place, not an empty 70px gap.
+  function brokenThumb(img) {
+    const a = img.parentElement;
+    if (!a || !a.matches || !a.matches(".thing.link > a.thumbnail") || !img.isConnected) return;
+    const thing = a.closest(".thing.link");
+    a.classList.add(thing && thing.getAttribute("data-ptype") === "text" ? "self" : "default");
+    img.remove();
   }
 
   // ---- keyboard-shortcuts help overlay ----
@@ -3775,10 +3791,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       const r = e.target.closest && e.target.closest(".orr-inline-img");
       if (r) { r.style.width = ""; r.style.height = ""; }
     });
-    // Refetch reddit preview images whose signed URL has expired (403).
+    // Refetch reddit preview images whose signed URL has expired (403); a listing thumbnail
+    // that stays broken gives way to old reddit's link icon (brokenThumb).
     document.addEventListener("error", (e) => {
       const img = e.target;
-      if (img && img.tagName === "IMG" && /(?:external-)?preview\.redd\.it/i.test(img.src || "")) refreshPreviewUrl(img);
+      if (!img || img.tagName !== "IMG") return;
+      const thumb = !!(img.parentElement && img.parentElement.matches && img.parentElement.matches(".thing.link > a.thumbnail"));
+      if (/(?:external-)?preview\.redd\.it/i.test(img.src || "") && !img.dataset.orrRefetched) {
+        refreshPreviewUrl(img).then((fixed) => { if (!fixed && thumb) brokenThumb(img); });
+      } else if (thumb) brokenThumb(img);
     }, true);
     // Keyboard-activate our role="button" divs (e.g. the expando button) with Enter/Space.
     document.addEventListener("keydown", (e) => {
@@ -4205,8 +4226,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   // ---- RES-style hover preview (peek an image/gif without clicking) ----
   let hoverImgTimer = null;
+  let hoverImgWant = null; // the picture the pointer is waiting on (shown when it loads)
   function hideHoverImg() {
     clearTimeout(hoverImgTimer);
+    hoverImgWant = null;
     peekPending = null;
     const el = document.getElementById("orr-hoverimg");
     if (el) el.style.display = "none";
@@ -4376,23 +4399,31 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       fitPeek(el);
     }, 0);
   }
+  // The zoom opens once its picture has loaded: one that never does (Reddit's CDN lost it:
+  // 404) used to leave an empty little box by the pointer.
   function showHoverImg(src) {
     let el = document.getElementById("orr-hoverimg");
     if (!el) { el = document.createElement("div"); el.id = "orr-hoverimg"; el.innerHTML = '<img alt="">'; document.body.appendChild(el); }
     const img = el.querySelector("img");
+    const reveal = () => {
+      if (hoverImgWant !== src || !img.naturalWidth) return; // (the pointer moved on / nothing to show)
+      el.style.display = "block";
+      positionHoverImg(el, lastMouseX, lastMouseY);
+    };
+    hoverImgWant = src;
     if (img.getAttribute("src") !== src) {
-      img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); };
+      el.style.display = "none";
+      img.onerror = () => { img.onerror = null; refreshPreviewUrl(img); }; // (a fresh URL loads → onload)
       // A small picture (a link post's preview is ~140px: the biggest the feed has) is shown
       // at least 280px wide, so hovering its 70px thumbnail still zooms in.
       img.onload = () => {
         img.style.width = img.naturalWidth && img.naturalWidth < 280 ? "280px" : "";
-        if (el.style.display === "block") positionHoverImg(el, lastMouseX, lastMouseY);
+        reveal();
       };
       img.style.width = "";
+      delete img.dataset.orrRefetched; // (the zoom's one <img> serves every picture: each gets its own retry)
       img.src = src;
-    }
-    el.style.display = "block";
-    positionHoverImg(el, lastMouseX, lastMouseY);
+    } else if (img.complete) reveal();
   }
 
   // ---- comment tools: OP highlight, parent links, navigator, media ----
@@ -6166,15 +6197,24 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         /^https:\/\/([\w-]+\.)*(redditstatic\.com|reddit\.com|redditmedia\.com|gstatic\.com|google\.com)\//i.test(n.href || "");
     return false;
   }
+  // Reddit's scripts keep running under the rebuilt page, and for logged-out visitors (from
+  // the second page or so on) they open Google's "Sign in to Reddit with Google" prompt in
+  // the corner (2026-11-17). Old reddit never did; drop it as it arrives (gone, not just
+  // hidden: hidden, its automatic sign-in would carry on unseen). Chrome may show the same
+  // prompt as its own browser popup instead, which no page script can reach.
+  function isGoogleOneTap(n) {
+    return !!n && n.nodeType === 1 && (n.id === "credential_picker_container" || n.id === "credential_picker_iframe");
+  }
   function purgeNativeCss() {
     document.querySelectorAll("head > style, head > link, html > style, html > link, body > style, body > link").forEach((n) => {
       if (isNativeCss(n)) n.remove();
     });
+    document.querySelectorAll("#credential_picker_container, #credential_picker_iframe").forEach((n) => n.remove());
     if (typeof MutationObserver === "undefined") return;
     if (!nativeCssObserver) {
       nativeCssObserver = new MutationObserver((muts) => {
         if (!active) return; // fell back to native Reddit → leave its styles alone
-        muts.forEach((m) => m.addedNodes.forEach((n) => { if (isNativeCss(n)) n.remove(); }));
+        muts.forEach((m) => m.addedNodes.forEach((n) => { if (isNativeCss(n) || isGoogleOneTap(n)) n.remove(); }));
       });
       if (document.head) nativeCssObserver.observe(document.head, { childList: true });
       nativeCssObserver.observe(document.documentElement, { childList: true });
