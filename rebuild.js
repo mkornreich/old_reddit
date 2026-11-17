@@ -1792,7 +1792,7 @@
     enhanceNewItems(table);
     st.after = rec.after;
     st.count = rec.count;
-    if (!st.after) teardownInfinite(); // it had reached the end
+    if (!st.after) { teardownInfinite(); showListEnd(); } // it had reached the end
   }
 
   function setInfMsg(st, text, isError) {
@@ -1814,8 +1814,29 @@
     infState = null;
   }
 
+  // A listing that ran out says so below its last item: "no more posts" (2026-11-17,
+  // r/SubredditDrama/top/: the day's top posts fit on one page, which then just stopped,
+  // with no sign that nothing more was coming). With infinite scroll it takes the place of
+  // "loading more…"; without, it sits above the last page's "view more: ‹ prev". Not on an
+  // empty listing, which says old reddit's "there doesn't seem to be anything here".
+  let listEndText = "";
+  function showListEnd() {
+    const st = document.getElementById("siteTable");
+    if (!st || !st.parentNode || !listEndText || !st.querySelector(":scope > .thing[id^='thing_']")) return;
+    let el = document.querySelector(".orr-list-end");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "orr-list-end";
+      st.parentNode.insertBefore(el, st.nextSibling);
+    }
+    el.textContent = listEndText;
+  }
+
   // fetchPage(after, count) -> Promise<{ itemsHtml, after, addedCount }>
-  function setupInfinite(fetchPage, after, count) {
+  // endText: what the bottom says once there's nothing more ("no more posts")
+  function setupInfinite(fetchPage, after, count, endText) {
+    listEndText = endText || "no more posts";
+    if (!after) showListEnd();
     if (!infiniteOn || !after) { historyNavKey = null; return; }
     const st = document.getElementById("siteTable");
     if (!st || !st.parentNode) return;
@@ -1874,6 +1895,7 @@
       st.loading = false;
       if (!st.after) {
         teardownInfinite(); // no more pages → remove the sentinel
+        showListEnd();
         return;
       }
       setInfMsg(st, "loading more…", false);
@@ -2161,6 +2183,8 @@ html.orr-fixedthumbs .thing.link .thumbnail img { width:70px; height:70px; max-w
   position:absolute; top:8px; left:8px; z-index:3; background:rgba(0,0,0,.75); color:#fff;
   padding:3px 9px; border-radius:3px; font:bold 12px verdana, arial, helvetica, sans-serif; cursor:pointer; }
 .orr-inf-sentinel { text-align:center; padding:10px; }
+/* below a listing that ran out (showListEnd) */
+.orr-list-end { text-align:center; padding:10px; color:#888; font-size:13px; }
 .orr-loading { color:#888; font-style:italic; font-size:13px; }
 .orr-loading.orr-error { color:#c00; font-style:normal; font-weight:bold; }
 a.orr-more { color:#369; }
@@ -6253,7 +6277,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         return { itemsHtml: html, after: ((j && j.data) || {}).after, addedCount: kids.length };
       },
       l0.after,
-      count0
+      count0,
+      "no more posts"
     );
   }
 
@@ -6723,7 +6748,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         return { itemsHtml: html, after: ((j2 && j2.data) || {}).after, addedCount: kids.length };
       },
       l0.after,
-      c0
+      c0,
+      ur.section === "submitted" ? "no more posts" : ur.section === "comments" ? "no more comments"
+        : ur.section === "overview" ? "no more posts or comments" : "nothing more here"
     );
   }
 
@@ -6794,7 +6821,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         return { itemsHtml: html, after: ((j2 && j2.data) || {}).after, addedCount: kids.length };
       },
       l0.after,
-      c0
+      c0,
+      "no more results"
     );
   }
 
@@ -8029,7 +8057,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         return { itemsHtml: html, after: ((j2 && j2.data) || {}).after, addedCount: kids.length };
       },
       l0.after,
-      startCount + (l0.children || []).length
+      startCount + (l0.children || []).length,
+      "no more messages"
     );
   }
 
