@@ -234,13 +234,24 @@
   // The post's inline content: its media, or (when it has none) its text.
   function postExpandoContent(d) {
     if (d.orr_app) {
-      // An interactive Devvit app post (game, poll, live thread…) only runs on Reddit itself.
+      // An interactive Devvit app post (game, poll, map, live thread…). Its code is Reddit's,
+      // and Reddit's scripts keep running under the rebuilt page: where the post brought the
+      // app's own element (a thread page does), the runtime puts it back here (mountApps) and
+      // Reddit's code starts the app in it. The note — open it on Reddit itself — is what
+      // shows otherwise, or if the app doesn't start.
       const href = String(d.permalink || "").replace(/\/+$/, "") + "/#orr-native";
-      return {
-        type: "selftext",
-        html: selfTextBox(`<p>This post is an interactive Reddit app, which only runs on Reddit itself. ` +
-          `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open it on Reddit &#8599;</a></p>`),
-      };
+      const app = d.orr_app_surface;
+      const note = selfTextBox(`<p>${app && app.init ? "This interactive Reddit app didn't start here." : "This post is an interactive Reddit app."} ` +
+        `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">Open it on Reddit &#8599;</a></p>`, "orr-app-note");
+      if (app && app.init) {
+        return {
+          type: "selftext",
+          html: `<div class="expando-container orr-app" data-orr-app-init="${esc(app.init)}" data-orr-app-style="${esc(app.style || "")}"` +
+            (app.loader ? ` data-orr-app-loader="${esc(app.loader.name)}" data-orr-app-loader-src="${esc(app.loader.src)}" data-orr-app-loader-prefix="${esc(app.loader.prefix)}"` : "") +
+            `></div>` + note.replace('class="expando-container orr-app-note"', 'class="expando-container orr-app-note" hidden'),
+        };
+      }
+      return { type: "selftext", html: note };
     }
     if (d.is_self) {
       return d.selftext_html
@@ -2053,6 +2064,11 @@ a.orr-qa svg { width:11px; height:11px; vertical-align:-2px; }
 #orr-toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:2147483000; max-width:90vw;
   padding:8px 14px; border-radius:4px; background:#333; color:#fff; font:13px verdana,arial,sans-serif; box-shadow:0 2px 10px rgba(0,0,0,.3); }
 #orr-toast a { color:#8cf; font-weight:bold; margin-left:10px; cursor:pointer; }
+/* an interactive Reddit app put back in its post (mountApps). Reddit's sizing rule for it reads
+   --devvit2-surface-height, which Reddit's own stylesheet sets (not on the rebuilt page) */
+.expando-container.orr-app { max-width:720px; }
+.orr-app devvit2-surface { display:block; --devvit2-surface-height:var(--devvit2-surface-height-post-style, 512px); }
+.expando-container.orr-app-note[hidden] { display:none !important; }
 /* "n" searching a folded read branch for new replies */
 .thing.comment.orr-searching > .entry > .tagline:after { content:" \\2014  searching for new replies\\2026"; color:#888; font-style:italic; }
 #orr-hovercard { position:fixed; z-index:2147483000; max-width:320px; background:#fff; color:#000; border:1px solid #5f99cf;
@@ -4310,6 +4326,78 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     onScreenFns.set(el, fn);
     onScreenObserver.observe(el);
   }
+  // ---- interactive Reddit apps (Devvit) ----
+  // A post's app (see postExpandoContent): once its spot is shown and near the screen, put
+  // Reddit's own element back — <devvit2-custom-post><devvit2-surface init style> — after the
+  // faceplate-loader that loads Reddit's code for it (already loaded when the page was the
+  // app's own to begin with; a page reached in-page may not have it). Reddit's code starts the
+  // app there; if it hasn't taken the element in APP_START_MS, the "open it on Reddit" note
+  // shows instead. (Reddit's element definitions take the elements once they're in the page.)
+  const APP_START_MS = 15000;
+  // Reddit's app elements are styled with Reddit's design variables (--rem16,
+  // --color-neutral-background…: 600-odd, set on <html> by Reddit's own stylesheet), which the
+  // rebuild removes — the app's expanded view then had no background behind its title bar.
+  // They're read off the page just before that stylesheet goes (saveRedditTokens, from
+  // replaceBody) and given back inside .orr-app only, where they can't touch the old reddit
+  // page around it.
+  let redditTokens = "";
+  function saveRedditTokens() {
+    if (redditTokens) return;
+    try {
+      const cs = getComputedStyle(document.documentElement);
+      const decl = [];
+      for (let i = 0; i < cs.length; i++) {
+        const n = cs[i];
+        if (!n.startsWith("--") || n.startsWith("--orr")) continue;
+        const v = cs.getPropertyValue(n).trim();
+        if (v && !/[{};<]/.test(v)) decl.push(n + ":" + v);
+      }
+      if (decl.length > 100) redditTokens = ".orr-app{" + decl.join(";") + "}"; // (else Reddit's stylesheet wasn't in yet)
+    } catch (e) { /* no computed style: the app goes without */ }
+  }
+  function applyRedditTokens() {
+    if (!redditTokens || document.getElementById("orr-app-tokens")) return;
+    const st = document.createElement("style");
+    st.id = "orr-app-tokens"; // (an orr- id: kept by purgeNativeCss)
+    st.textContent = redditTokens;
+    (document.head || document.documentElement).appendChild(st);
+  }
+  function mountApps(scope) {
+    (scope || document).querySelectorAll(".orr-app[data-orr-app-init]:not([data-orr-app-mounted])").forEach((box) => {
+      box.setAttribute("data-orr-app-mounted", "");
+      whenOnScreen(box, () => mountApp(box));
+    });
+  }
+  function mountApp(box) {
+    applyRedditTokens();
+    const at = (n) => box.getAttribute(n) || "";
+    const name = at("data-orr-app-loader"), src = at("data-orr-app-loader-src");
+    const make = (tag, attrs) => {
+      const el = document.createElement(tag);
+      Object.keys(attrs).forEach((k) => { if (attrs[k]) el.setAttribute(k, attrs[k]); });
+      return el;
+    };
+    const needLoader = name && src && !Array.from(document.querySelectorAll("faceplate-loader")).some((l) => l.getAttribute("name") === name);
+    const loader = needLoader ? make("faceplate-loader", { name, src, loading: "eager", "data-prefix": at("data-orr-app-loader-prefix") }) : null;
+    const surface = make("devvit2-surface", { slot: "surface", "data-post-click-location": "devvit-surface", style: at("data-orr-app-style"), init: at("data-orr-app-init") });
+    const post = make("devvit2-custom-post", {});
+    post.appendChild(surface);
+    box.textContent = "";
+    if (loader) box.appendChild(loader);
+    box.appendChild(post);
+    const giveUp = () => {
+      if (!box.isConnected || (surface && surface.matches(":defined"))) return false;
+      const note = box.nextElementSibling;
+      if (note && note.classList.contains("orr-app-note")) note.hidden = false;
+      box.remove();
+      return true;
+    };
+    // Reddit's own code isn't on this page at all (the loader never comes alive: the page Reddit
+    // sent was its bot check, say): nothing will start the app, so don't keep the reader waiting
+    if (loader) setTimeout(() => { if (!loader.matches(":defined")) giveUp(); }, 4000);
+    setTimeout(giveUp, APP_START_MS);
+  }
+
   // A post's preview just opened: fill in what its listing left out.
   function previewOpened(thing) {
     const expando = thing && thing.querySelector(":scope > .entry > .expando");
@@ -4770,6 +4858,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   function enhanceComments(scope) {
     if (!document.querySelector(".commentarea")) return;
+    mountApps(scope || document); // (the post's app, if it is one)
     linkifyEmails(scope || document);
     applyLoginState(scope || document);
     markOP();
@@ -5106,6 +5195,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     schedulePinchBar(); // (a new body: redraw the pinch-zoom scrollbar if zoomed in)
   }
   function enhanceNewItems(scope) {
+    mountApps(scope || document);
     linkifyEmails(scope || document);
     applyLoginState(scope || document);
     markShownRead(scope || document); // (inbox pages only)
@@ -5499,8 +5589,26 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (th) { d.thumbnail = smallestSrc(th); d.orr_zoom = srcNear(th, 640); }
     }
 
-    // An interactive Devvit app post (games, polls, live threads…): nothing to rebuild
-    if (type === "customPost" || el.querySelector("devvit2-custom-post, devvit-blocks-renderer, shreddit-devvit-ui")) d.orr_app = true;
+    // An interactive Devvit app post (games, polls, maps, live threads…): Reddit's own app,
+    // which the runtime can put back (see postExpandoContent / mountApps) when the page sent
+    // its element: <devvit2-custom-post><devvit2-surface init="{…}"> — init is everything the
+    // app needs (where it lives, a signed session token) — and the faceplate-loader that loads
+    // Reddit's code for it.
+    if (type === "customPost" || el.querySelector("devvit2-custom-post, devvit-blocks-renderer, shreddit-devvit-ui")) {
+      d.orr_app = true;
+      const surface = el.querySelector("devvit2-custom-post > devvit2-surface[init]");
+      if (surface) {
+        const loader = el.querySelector("faceplate-loader[name^='Devvit2CustomPostFeature']") ||
+          (el.ownerDocument && el.ownerDocument.querySelector("faceplate-loader[name^='Devvit2CustomPostFeature']"));
+        const vars = ((surface.getAttribute("style") || "").match(/--devvit2-[\w-]+\s*:\s*[^;]+/g) || []).map((v) => v.trim()).join("; ");
+        d.orr_app_surface = {
+          init: surface.getAttribute("init") || "",
+          style: vars,
+          loader: loader && loader.getAttribute("name") && loader.getAttribute("src")
+            ? { name: loader.getAttribute("name"), src: loader.getAttribute("src"), prefix: loader.getAttribute("data-prefix") || "" } : null,
+        };
+      }
+    }
 
     const ownBody = el.querySelector(`[id="${fullname}-post-rtjson-content"]`);
     const body = ownBody || el.querySelector("shreddit-post-text-body [property='schema:articleBody']");
@@ -6280,6 +6388,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       dropLateBodies();
     }
     document.documentElement.classList.add("orr-rebuilt");
+    saveRedditTokens(); // (before Reddit's stylesheet goes: see mountApps)
     purgeNativeCss();
     try {
       document.title = title;

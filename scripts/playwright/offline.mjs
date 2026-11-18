@@ -416,6 +416,31 @@ check("…new Reddit's page instead → no old look", look.notOld === null);
 check("old sidebar: submit, title box with join + text + age, moderators", /sidebox submit submit-link/.test(look.side) && /class="titlebox"/.test(look.side) && /data-sr="t5_2qh16"/.test(look.side) && /a community for 18 years/.test(look.side) && /message the mods/.test(look.side) && !/<script|onclick|javascript:alert/i.test(look.side), look.side.slice(0, 300));
 const dates = await page.evaluate(() => [globalThis.ORR_REBUILD.isoToUtc("2026-10-14T19:20:16.991000+0000"), globalThis.ORR_REBUILD.isoToUtc("2026-10-14T10:28:29.199Z")]);
 check("isoToUtc", dates[0] === Date.UTC(2026, 9, 14, 19, 20, 16, 991) / 1000 && dates[1] === Date.UTC(2026, 9, 14, 10, 28, 29, 199) / 1000, JSON.stringify(dates));
+// An interactive app post (Devvit): the thread page's own app element is kept for the
+// runtime to put back (mountApps) — its init, its height variable, the loader for its code —
+// and a post without it gets the "open it on Reddit" note
+const app = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const html = `<shreddit-post id="t3_app1" post-type="customPost" permalink="/r/maps/comments/app1/a_map/" post-title="A map" author="u1" subreddit-name="maps" score="5" comment-count="2" created-timestamp="2026-11-17T22:50:37.664000+0000">
+    <div slot="post-media-container"><faceplate-loader name="Devvit2CustomPostFeature_X1" src="concat:A1,B2" loading="eager" data-prefix="en-US/"><script>SML.load(["A1"])</script></faceplate-loader>
+    <devvit2-custom-post><devvit2-surface data-post-click-location="devvit-surface" style="--devvit2-surface-height-post-style: 512px; color: red; --devvit2-surface-background-color-post-style: #00000000;" init="{&quot;entrypointUrl&quot;:&quot;https://maps-1-webview.devvit.net/a.html&quot;,&quot;postId&quot;:&quot;t3_app1&quot;,&quot;note&quot;:&quot;a &lt;b&gt; &amp; c&quot;}" slot="surface"></devvit2-surface></devvit2-custom-post></div>
+  </shreddit-post>`;
+  const d = R.postFromShreddit(R.parseHtmlDoc(html).querySelector("shreddit-post"));
+  const item = R.buildItem(d, { rank: "", expandText: true });
+  const box = new DOMParser().parseFromString(item, "text/html").querySelector(".orr-app");
+  const bare = R.buildItem(R.postFromShreddit(R.parseHtmlDoc(html.replace(/<devvit2-custom-post>[\s\S]*<\/devvit2-custom-post>/, "")).querySelector("shreddit-post")), { rank: "", expandText: true });
+  return {
+    app: d.orr_app, surface: d.orr_app_surface,
+    init: box && box.getAttribute("data-orr-app-init"), style: box && box.getAttribute("data-orr-app-style"), loader: box && box.getAttribute("data-orr-app-loader"),
+    hiddenNote: /class="expando-container orr-app-note" hidden/.test(item), noScript: !/SML\.load|<script/.test(item),
+    bareNote: /orr-app-note/.test(bare) && !/orr-app"/.test(bare) && /This post is an interactive Reddit app\./.test(bare),
+  };
+});
+check("app post: the app's element kept (init, height variable only, its code's loader)",
+  app.app === true && app.surface && JSON.parse(app.init).entrypointUrl === "https://maps-1-webview.devvit.net/a.html" && JSON.parse(app.init).note === "a <b> & c" &&
+  app.style === "--devvit2-surface-height-post-style: 512px; --devvit2-surface-background-color-post-style: #00000000" && app.loader === "Devvit2CustomPostFeature_X1",
+  JSON.stringify({ style: app.style, loader: app.loader, init: (app.init || "").slice(0, 80) }));
+check("…the note there but hidden, no script of Reddit's carried over; without the element: the note", app.hiddenNote && app.noScript && app.bareNote, JSON.stringify([app.hiddenNote, app.noScript, app.bareNote]));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");
 await browser.close();
 process.exit(fail ? 1 : 0);

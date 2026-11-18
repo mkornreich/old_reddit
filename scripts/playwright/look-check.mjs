@@ -164,8 +164,14 @@ await page.screenshot({ path: path.join(outDir, "askhistorians.png") });
 // poster — not only image posts), at a real size; hovering a link post's title doesn't
 await open("https://www.reddit.com/");
 const hoverThumb = async (sel) => {
-  // (a thumbnail whose picture loaded: Reddit's CDN answers 404 for the odd link preview — see 7b)
-  const id = await page.evaluate((sel) => { const t = Array.from(document.querySelectorAll(sel)).find((x) => { const im = x.querySelector(":scope > a.thumbnail img"); return im && im.complete && im.naturalWidth > 0; }); if (!t) return null; window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" }); return t.id; }, sel);
+  // (a thumbnail whose picture loaded: Reddit's CDN answers 404 for the odd link preview — see
+  // 7b — and its previews can take a few seconds: wait for one, up to 8 s)
+  let id = null;
+  for (let i = 0; i < 8 && !id; i++) {
+    if (i) await page.waitForTimeout(1000);
+    id = await page.evaluate((sel) => { const t = Array.from(document.querySelectorAll(sel)).find((x) => { const im = x.querySelector(":scope > a.thumbnail img"); return im && im.complete && im.naturalWidth > 0; }); if (!t) return null; window.scrollTo({ top: window.scrollY + t.getBoundingClientRect().top - 200, behavior: "instant" }); return t.id; }, sel);
+    if (!id && !(await page.evaluate((sel) => !!document.querySelector(sel), sel))) break; // (none of that kind here at all)
+  }
   if (!id) return null;
   await page.mouse.move(5, 5); await page.waitForTimeout(300);
   const b = await page.evaluate((id) => { const r = document.getElementById(id).querySelector(":scope > a.thumbnail").getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + Math.min(20, r.height / 2) }; }, id);
