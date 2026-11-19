@@ -229,9 +229,23 @@
     return u.protocol === "https:" && MEDIA_HOSTS.includes(u.hostname) && !u.username && !u.password ? u.href : null;
   }
 
+  // Reddit's quick browser check (a first visit, and now and then after) sends the browser
+  // on to the page again with its answer in the address — ?solution=…&js_challenge=1&
+  // jsc_token=…&jsc_orig_r= — and Reddit's page leaves it there, so a copied link carried
+  // it along. The address without them (path, the page's own query, hash), or null when
+  // there's nothing to take out.
+  const CHALLENGE_PARAMS = ["solution", "js_challenge", "jsc_token", "jsc_orig_r"];
+  function withoutChallenge(loc) {
+    if (!loc || !loc.searchParams || !loc.searchParams.has("js_challenge") || !loc.searchParams.has("jsc_token")) return null;
+    const q = new URLSearchParams(loc.search);
+    CHALLENGE_PARAMS.forEach((k) => q.delete(k));
+    const s = q.toString();
+    return loc.pathname + (s ? "?" + s : "") + (loc.hash || "");
+  }
+
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
     getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute, isWikiRoute,
-    isMessageRoute, mediaImageUrl,
+    isMessageRoute, mediaImageUrl, withoutChallenge,
   };
 })();

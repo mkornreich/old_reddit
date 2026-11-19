@@ -456,6 +456,35 @@ const media = await page.evaluate(() => {
 check("/media?url=: Reddit's picture hosts (https) only", media[0] === "https://i.redd.it/i6uvpzmjvk2i1.jpeg" &&
   media[1] === "https://preview.redd.it/a.jpeg?width=640&crop=smart&auto=webp&s=3ed0" && media[2] === "https://external-preview.redd.it/b.png" &&
   media.slice(3).every((x) => x === null), JSON.stringify(media));
+// Reddit's browser-check answer out of the address — the page's own query and hash stay
+const jsc = await page.evaluate(() => {
+  const w = (u) => globalThis.ORR.withoutChallenge(new URL(u));
+  const ch = "solution=038c4a3f&js_challenge=1&jsc_token=2824be10&jsc_orig_r=";
+  return [
+    w("https://www.reddit.com/r/GTA/comments/1y0ag5r/gta_6_map/?" + ch),
+    w("https://www.reddit.com/search/?q=gta+map&" + ch + "&type=link"),
+    w("https://www.reddit.com/r/GTA/top/?t=week&" + ch + "#siteTable"),
+    w("https://www.reddit.com/r/GTA/"), w("https://www.reddit.com/search/?q=solution&solution=x"),
+  ];
+});
+check("browser-check answer out of the address; the page's own query and hash kept", jsc[0] === "/r/GTA/comments/1y0ag5r/gta_6_map/" &&
+  jsc[1] === "/search/?q=gta+map&type=link" && jsc[2] === "/r/GTA/top/?t=week#siteTable" && jsc[3] === null && jsc[4] === null, JSON.stringify(jsc));
+// Inline event handlers out of fetched HTML before parsing (Chrome logs a CSP error for each),
+// tags only: quoted values kept whole, page text and other attributes untouched
+const inl = await page.evaluate(() => {
+  const d = globalThis.ORR_REBUILD.dropInlineHandlers;
+  const cases = [
+    [`<a href="#" onclick="return change_state(this, 'hide', hide_thing);">hide</a>`, `<a href="#">hide</a>`],
+    [`<a title="a > b" onclick="return x>1" class="c">t</a>`, `<a title="a > b" class="c">t</a>`],
+    [`<p>set online="yes" and onclick=1 &lt;a onclick="x"&gt;</p>`, null],
+    [`<a title="see onclick=x" data-y='z onload="q"'>t</a>`, null],
+    [`<img src=a.png onerror='x()' ONLOAD=y alt=z>`, `<img src=a.png alt=z>`],
+    [`<shreddit-post on-air="1" permalink="/r/a/">`, null],
+    [`<div\n  class="thing"\n  onclick="click_thing(this)"\n  data-fullname="t3_x">`, `<div\n  class="thing"\n  data-fullname="t3_x">`],
+  ];
+  return cases.map(([inp, want]) => { const got = d(inp); return { ok: got === (want === null ? inp : want), got }; });
+});
+check("inline event handlers dropped from fetched HTML (tags only; text, quoted values, other attributes kept)", inl.every((x) => x.ok), JSON.stringify(inl.filter((x) => !x.ok)));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");
 await browser.close();
 process.exit(fail ? 1 : 0);

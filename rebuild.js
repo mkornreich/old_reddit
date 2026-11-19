@@ -1631,7 +1631,7 @@
     userTabmenuHtml, buildUserComment, buildUserPage, buildUserSidebar,
     meIdentity, userbarLoggedIn, userbarLoggedOut, srBarHtml, searchFormHtml, sideSearchHtml, buildHeader,
     searchJsonUrl, searchHref, buildSearchPage, buildWikiPage,
-    parseHtmlDoc, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
+    parseHtmlDoc, dropInlineHandlers, cleanMd, isoToUtc, postFromShreddit, commentsFromHtml, htmlListingPath, profileCommentFromShreddit, htmlUserPath,
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
     commentBlock, linkifyEmails, canonicalThreadPath, searchPostsFromHtml, htmlSearchPath, postPeekParts, postPeekHtml,
@@ -1648,6 +1648,7 @@
   let active = false; // rebuild currently owns the page
   let wired = false;
   let mediaHref = null; // the picture page's own address (showMediaPage)
+  let ownAddressFix = false; // replacing the address ourselves (dropChallenge): not a navigation for Reddit's router
 
   // New Reddit's own router is still loaded under the rebuilt page and listens for
   // navigations (Navigation API): on every page we navigate to in-page it fetched that
@@ -1658,6 +1659,7 @@
   try {
     if (typeof navigation !== "undefined" && navigation && navigation.addEventListener) {
       navigation.addEventListener("navigate", (e) => {
+        if (ownAddressFix) { e.stopImmediatePropagation(); return; }
         // The picture page keeps its address: Reddit's page under it moves the address
         // to the post (history.replaceState) as it loads. (Links you click still go.)
         if (mediaHref && e.destination.sameDocument && !e.userInitiated && e.cancelable && e.destination.url !== mediaHref) {
@@ -2594,7 +2596,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function oembedQuoteText(html) {
     let doc;
-    try { doc = new DOMParser().parseFromString(String(html || ""), "text/html"); }
+    try { doc = parseInert(html); }
     catch (e) { return ""; }
     const el = doc.querySelector("blockquote p") || doc.querySelector("blockquote") || doc.body;
     return el ? el.textContent.replace(/\s+/g, " ").trim() : "";
@@ -5319,12 +5321,30 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     return !!res && res.status === 403 && !/json/i.test((res.headers && res.headers.get("content-type")) || "");
   }
 
+  // Fetched HTML without its inline event handlers (onclick="…" and the like). Old reddit's
+  // own pages — the r/a+b listing a subreddit's old sidebar comes from — carry dozens
+  // (onclick="click_thing(this)", "change_state(this, 'hide', hide_thing)", …), and Chrome
+  // checks every one against Reddit's Content-Security-Policy as it's parsed, even into an
+  // inert DOMParser document, logging two errors for each ("Executing inline event handler
+  // violates …": ~100 a page, 2026-11-19). They could never run; nothing here reads them.
+  // Tags only (quoted values kept whole), attribute by attribute: page text can't be touched.
+  const TAG_RE = /<[a-zA-Z](?:[^>"']|"[^"]*"|'[^']*')*>/g;
+  const ATTR_RE = /(\s+)([^\s"'>\/=]+)(\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>]+))?/g;
+  const HANDLER_RE = /\son[a-z]+\s*=/i;
+  function dropInlineHandlers(text) {
+    if (!HANDLER_RE.test(text)) return text;
+    return text.replace(TAG_RE, (tag) => (HANDLER_RE.test(tag) ? tag.replace(ATTR_RE, (m, sp, name) => (/^on[a-z]+$/i.test(name) ? "" : m)) : tag));
+  }
+  function parseInert(text) {
+    return new DOMParser().parseFromString(dropInlineHandlers(String(text || "")), "text/html");
+  }
+
   // Parse fetched HTML inertly (DOMParser runs no scripts and loads no images).
   // Reddit defers much of a page — including most comments — inside <template>s;
   // splice each template's content back in place so everything is in document
   // order with its real nesting.
   function parseHtmlDoc(text) {
-    const doc = new DOMParser().parseFromString(text, "text/html");
+    const doc = parseInert(text);
     for (let i = 0; i < 25; i++) {
       const ts = doc.querySelectorAll("template");
       if (!ts.length) break;
@@ -8718,6 +8738,19 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     window.addEventListener("load", keepMediaUrl, { once: true });
   }
 
+  // Reddit's browser check leaves its answer in the address (?solution=…&js_challenge=1&
+  // jsc_token=…&jsc_orig_r=; Reddit's own page keeps it too), so copying the address of a
+  // page that had been checked copied that along. Reddit's server has read it by now: on a
+  // page the add-on shows, the address goes back to the page's own. (Reddit's router, still
+  // running under the page, isn't told: it would fetch the page again.)
+  function dropChallenge() {
+    const clean = ORR.withoutChallenge(new URL(location.href));
+    if (!clean) return;
+    ownAddressFix = true;
+    try { history.replaceState(history.state, "", clean); } catch (e) { /* ignore */ }
+    ownAddressFix = false;
+  }
+
   async function start() {
     // "Watch on Reddit" escape hatch: a #orr-native link (see showVideoFallback)
     // asks the extension to stand down for this load so Reddit's own player — the
@@ -8781,6 +8814,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         rlNextAt = nowMsNow() + Math.min(rlGap, 5000); // brief hold on the first post-reload call
       }
     } catch (e) {}
+    if (isRebuiltRoute(new URL(location.href))) dropChallenge();
     const url = new URL(location.href);
     watchNativeNavigation();
     if (ORR.isAnswersRoute && ORR.isAnswersRoute(url)) {
