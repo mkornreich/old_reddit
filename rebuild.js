@@ -1647,6 +1647,7 @@
   const CACHE_TTL = 60000;
   let active = false; // rebuild currently owns the page
   let wired = false;
+  let mediaHref = null; // the picture page's own address (showMediaPage)
 
   // New Reddit's own router is still loaded under the rebuilt page and listens for
   // navigations (Navigation API): on every page we navigate to in-page it fetched that
@@ -1657,6 +1658,12 @@
   try {
     if (typeof navigation !== "undefined" && navigation && navigation.addEventListener) {
       navigation.addEventListener("navigate", (e) => {
+        // The picture page keeps its address: Reddit's page under it moves the address
+        // to the post (history.replaceState) as it loads. (Links you click still go.)
+        if (mediaHref && e.destination.sameDocument && !e.userInitiated && e.cancelable && e.destination.url !== mediaHref) {
+          e.preventDefault();
+          return;
+        }
         if (!active || e.hashChange || e.downloadRequest || e.navigationType === "reload") return;
         let dest;
         try { dest = new URL(e.destination.url); } catch (err) { return; }
@@ -8621,18 +8628,110 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     else document.addEventListener("DOMContentLoaded", build, { once: true });
   }
 
+  // ---- a Reddit picture opened as a page ----
+  // i.redd.it / preview.redd.it answer a page load of a picture (the lightbox's "open
+  // image ↗", an image post's title, the browser's "Open Image in New Tab") by sending the
+  // browser to www.reddit.com/media?url=<the picture>, and Reddit's page there then turns
+  // itself into the post: the picture never showed (2026-11-19, r/GTA's map). Old reddit
+  // opened the picture, so here the add-on shows just that, the way the browser shows one:
+  // centered on a dark page, fitted to the window, a click for full size and back. The
+  // address stays the /media one (Reddit's switch to the post is undone), so reloading,
+  // copying the address and Back all keep working.
+  const MEDIA_CSS =
+    "html.orr-media{height:100%;background:#222;}" +
+    "html.orr-media body{margin:0;min-height:100%;display:flex;background:#222;}" +
+    // (auto margins, not flex centering: a full-size picture can then scroll to every edge)
+    "#orr-media-img{display:block;margin:auto;max-width:100vw;max-height:100vh;cursor:zoom-in;}" +
+    "html.orr-media-fits #orr-media-img, video#orr-media-img{cursor:auto;}" +
+    "html.orr-media-full #orr-media-img{max-width:none;max-height:none;cursor:zoom-out;}" +
+    ".orr-media-error{margin:auto;color:#ccc;font:14px verdana,arial,sans-serif;}" +
+    "html.orr-rebuilt #credential_picker_container, html.orr-rebuilt #credential_picker_iframe{display:none !important;}";
+  function keepMediaUrl() {
+    if (mediaHref && location.href !== mediaHref) {
+      try { history.replaceState(history.state, "", mediaHref); } catch (e) { /* ignore */ }
+    }
+  }
+  function showMediaPage(src, href) {
+    active = true;
+    mediaHref = href;
+    const root = document.documentElement;
+    const u = new URL(src);
+    const video = /\.mp4$/i.test(u.pathname) || u.searchParams.get("format") === "mp4";
+    const media = document.createElement(video ? "video" : "img");
+    media.id = "orr-media-img";
+    if (video) {
+      media.controls = media.loop = media.muted = media.autoplay = true;
+      media.setAttribute("playsinline", "");
+    } else media.alt = "";
+    const fresh = document.createElement("body");
+    fresh.appendChild(media);
+    if (document.body) root.replaceChild(fresh, document.body);
+    else {
+      root.appendChild(fresh);
+      dropLateBodies();
+    }
+    root.classList.add("orr-rebuilt", "orr-media");
+    purgeNativeCss();
+    if (!document.getElementById("orr-media-css")) {
+      const st = document.createElement("style");
+      st.id = "orr-media-css";
+      st.textContent = MEDIA_CSS;
+      (document.head || root).appendChild(st);
+    }
+    let name = u.pathname.split("/").pop() || "image";
+    try { name = decodeURIComponent(name); } catch (e) { /* keep it as it is */ }
+    document.title = name;
+    // a picture that fits the window shows at its own size (no zoom to offer)
+    const fit = () => root.classList.toggle("orr-media-fits",
+      !video && media.naturalWidth <= window.innerWidth && media.naturalHeight <= window.innerHeight);
+    if (!video) {
+      media.addEventListener("load", () => {
+        document.title = `${name} (${media.naturalWidth} × ${media.naturalHeight})`;
+        fit();
+      });
+      window.addEventListener("resize", fit);
+      media.addEventListener("click", (e) => {
+        if (root.classList.contains("orr-media-fits")) return;
+        if (root.classList.contains("orr-media-full")) { root.classList.remove("orr-media-full"); return; }
+        // full size, with the spot you clicked staying under the pointer
+        const r = media.getBoundingClientRect();
+        const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+        root.classList.add("orr-media-full");
+        const f = media.getBoundingClientRect();
+        window.scrollTo(window.scrollX + f.left + fx * f.width - e.clientX, window.scrollY + f.top + fy * f.height - e.clientY);
+      });
+    }
+    // A picture that doesn't load says so — after a moment: the first page Reddit sends is
+    // often its quick browser check, which won't load outside pictures and moves on to the
+    // real page by itself.
+    media.addEventListener("error", () => setTimeout(() => {
+      if (!media.isConnected) return;
+      const p = document.createElement("p");
+      p.className = "orr-media-error";
+      p.textContent = "The picture couldn't be loaded.";
+      media.replaceWith(p);
+    }, 2500));
+    media.src = src;
+    unhideGuard();
+    keepMediaUrl();
+    document.addEventListener("DOMContentLoaded", keepMediaUrl, { once: true });
+    window.addEventListener("load", keepMediaUrl, { once: true });
+  }
+
   async function start() {
     // "Watch on Reddit" escape hatch: a #orr-native link (see showVideoFallback)
     // asks the extension to stand down for this load so Reddit's own player — the
     // only thing that can play a locked-down v.redd.it video — takes over.
     if (location.hash === "#orr-native") return;
+    // (read now, at document_start: Reddit's page moves its address to the post as it loads)
+    const mediaSrc = ORR.mediaImageUrl(new URL(location.href));
     // Hide the page SYNCHRONOUSLY at document_start (before the async prefs read),
     // on a route we're going to rebuild — otherwise new Reddit flashes through
     // during the storage reads. Every early-return below must unhide.
     let preSupported = false;
     try {
       const preUrl = new URL(location.href);
-      preSupported = isRebuiltRoute(preUrl);
+      preSupported = !!mediaSrc || isRebuiltRoute(preUrl);
       if (preSupported) hideGuard();
     } catch (e) { /* ignore */ }
     let prefs;
@@ -8643,6 +8742,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       return;
     }
     if (!prefs.enabled) { unhideGuard(); return; } // extension off → leave new Reddit alone
+    // (its address without the extras Reddit's browser check adds to it)
+    if (mediaSrc) { showMediaPage(mediaSrc, location.origin + "/media?url=" + encodeURIComponent(mediaSrc)); return; }
     infiniteOn = prefs.infiniteScroll !== false;
     nightModeOn = prefs.nightMode !== false;
     orrVideoMuted = prefs.videoMuted === true;

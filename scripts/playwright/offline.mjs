@@ -441,6 +441,21 @@ check("app post: the app's element kept (init, height variable only, its code's 
   app.style === "--devvit2-surface-height-post-style: 512px; --devvit2-surface-background-color-post-style: #00000000" && app.loader === "Devvit2CustomPostFeature_X1",
   JSON.stringify({ style: app.style, loader: app.loader, init: (app.init || "").slice(0, 80) }));
 check("…the note there but hidden, no script of Reddit's carried over; without the element: the note", app.hiddenNote && app.noScript && app.bareNote, JSON.stringify([app.hiddenNote, app.noScript, app.bareNote]));
+// /media?url=…: the picture the add-on shows there — only an https one on Reddit's picture hosts
+const media = await page.evaluate(() => {
+  const m = (u) => globalThis.ORR.mediaImageUrl(new URL(u));
+  const q = (u) => "https://www.reddit.com/media?url=" + encodeURIComponent(u);
+  return [
+    m(q("https://i.redd.it/i6uvpzmjvk2i1.jpeg")),
+    m(q("https://preview.redd.it/a.jpeg?width=640&crop=smart&auto=webp&s=3ed0")),
+    m("https://www.reddit.com/media?solution=1&js_challenge=1&jsc_token=2&jsc_orig_r=&url=" + encodeURIComponent("https://external-preview.redd.it/b.png")),
+    m(q("http://i.redd.it/a.jpeg")), m(q("javascript:alert(1)")), m(q("https://example.com/a.jpeg")), m(q("https://i.redd.it.example.com/a.jpeg")),
+    m(q("https://user:pw@i.redd.it/a.jpeg")), m("https://www.reddit.com/media"), m(q("https://i.redd.it/a.jpeg").replace("/media", "/r/pics/media")), m("https://www.reddit.com/media?url=not a url"),
+  ];
+});
+check("/media?url=: Reddit's picture hosts (https) only", media[0] === "https://i.redd.it/i6uvpzmjvk2i1.jpeg" &&
+  media[1] === "https://preview.redd.it/a.jpeg?width=640&crop=smart&auto=webp&s=3ed0" && media[2] === "https://external-preview.redd.it/b.png" &&
+  media.slice(3).every((x) => x === null), JSON.stringify(media));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");
 await browser.close();
 process.exit(fail ? 1 : 0);

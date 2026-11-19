@@ -217,9 +217,21 @@
     return null;
   }
 
+  // /media?url=<picture>: where Reddit's picture hosts send a browser that opens one of
+  // their pictures as a page (the lightbox's "open image", an image post's title, "Open
+  // Image in New Tab") — Reddit's page there then turns into the post. The picture asked
+  // for, when it's an https address on one of those hosts (nothing else is shown there).
+  const MEDIA_HOSTS = ["i.redd.it", "preview.redd.it", "external-preview.redd.it"];
+  function mediaImageUrl(loc) {
+    if (!loc || loc.pathname !== "/media" || !loc.searchParams) return null;
+    let u;
+    try { u = new URL(loc.searchParams.get("url") || ""); } catch (e) { return null; }
+    return u.protocol === "https:" && MEDIA_HOSTS.includes(u.hostname) && !u.username && !u.password ? u.href : null;
+  }
+
   globalThis.ORR = {
     api, DEFAULTS, SORTS_SUB, SORTS_FRONT, USER_SECTIONS,
     getPrefs, setPrefs, getData, isListingRoute, isCommentsRoute, isUserRoute, isSearchRoute, isAnswersRoute, isWikiRoute,
-    isMessageRoute,
+    isMessageRoute, mediaImageUrl,
   };
 })();
