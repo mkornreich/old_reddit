@@ -5389,6 +5389,15 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       // new Reddit marks spoilers with a <spoiler-text> element; old reddit's CSS hides .md-spoiler-text
       if (tag === "SPOILER-TEXT") { out += `<span class="md-spoiler-text">${cleanMd(n, opts)}</span>`; return; }
       if (tag === "SHREDDIT-PLAYER" || tag === "SHREDDIT-PLAYER-2") { out += inlinePlayerHtml(n); return; }
+      // A mod's announcement (AutoModerator's sticky): new Reddit folds it behind a
+      // "Moderator Announcement  Read More »" bar (its link goes to "#") with the text
+      // hidden under it. Old reddit just shows the text.
+      if (tag === "SHREDDIT-MOD-COMMENT") {
+        const text = n.querySelector("[id$='-post-rtjson-content']");
+        out += cleanMd(text || n, opts);
+        return;
+      }
+      if (tag === "FACEPLATE-TRACKER" && n.getAttribute("source") === "shreddit_read_mod_comment") return; // (that bar)
       if (opts && opts.headingsAsStrong && (tag === "H1" || tag === "H2")) tag = "STRONG";
       if (!MD_KEEP[tag]) { out += cleanMd(n, opts); return; } // unknown wrapper → keep its contents
       let attrs = "";
@@ -5662,7 +5671,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // rendition on Reddit's image CDN. "" if this player isn't one.
   function gifPlayerSrc(player) {
     const src = (player && player.getAttribute("src")) || "";
-    return (player.hasAttribute("gif") || /[?&]format=mp4\b/.test(src)) && /^https:\/\/(preview|external-preview|i)\.redd\.it\//.test(src) ? src : "";
+    // (cf.preview.redd.it: the same MP4 through another of Reddit's CDNs — Chromium got its
+    //  comment GIFs from there on 2026-11-20, and they were dropped, leaving an empty link)
+    return (player.hasAttribute("gif") || /[?&]format=mp4\b/.test(src)) && /^https:\/\/(?:cf\.)?(preview|external-preview|i)\.redd\.it\//.test(src) ? src : "";
   }
 
   // A subreddit page's "community highlight" cards (its stickies) → t3 data. A card

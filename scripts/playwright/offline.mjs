@@ -485,6 +485,45 @@ const inl = await page.evaluate(() => {
   return cases.map(([inp, want]) => { const got = d(inp); return { ok: got === (want === null ? inp : want), got }; });
 });
 check("inline event handlers dropped from fetched HTML (tags only; text, quoted values, other attributes kept)", inl.every((x) => x.ok), JSON.stringify(inl.filter((x) => !x.ok)));
+// A comment that is one picture shows ONE picture (2026-11-20, r/AlignmentChartFills 1y0tlcm's
+// top comment): Reddit's markup for an uploaded GIF (a link to i.redd.it around a player of its
+// MP4) and for a picture under text (a figure: link around an <img>), as the thread page sends them.
+const pics = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const html = `<shreddit-comment thingid="t1_gif" author="a" score="3938" content-type="image"><div class="md" id="t1_gif-comment-rtjson-content" slot="comment">
+    <shreddit-async-loader bundlename="shreddit_player_loader"><div id="t1_gif-post-rtjson-content" class="py-0" dir="auto"><figure class="rte-media"><div>
+    <a href="https://i.redd.it/rwadvr7dzo2i1.gif" rel="noopener ugc" target="_blank" class="w-fit max-w-full"><div class="isolate overflow-hidden" style="width: 194px; aspect-ratio: 194/240;">
+    <shreddit-async-loader bundlename="shreddit_player_loader"><shreddit-player src="https://preview.redd.it/rwadvr7dzo2i1.gif?width=403&amp;format=mp4&amp;s=5fd6" gif="" autoplay="" media-placement="comment">
+    <source src="https://preview.redd.it/rwadvr7dzo2i1.gif?width=403&amp;format=mp4&amp;s=5fd6"></shreddit-player></shreddit-async-loader></div></a></div></figure></div></shreddit-async-loader></div></shreddit-comment>
+    <shreddit-comment thingid="t1_img" author="b" score="1151" content-type="image"><div class="md" id="t1_img-comment-rtjson-content" slot="comment"><div id="t1_img-post-rtjson-content" dir="auto">
+    <p>Michael Carrol, UK.</p> <figure class="rte-media"><a href="https://preview.redd.it/x-v0-5mx1zgcurp2i1.jpeg?width=310&amp;format=pjpg&amp;s=d79a" rel="noopener ugc" target="_blank" class="w-fit">
+    <img src="https://preview.redd.it/x-v0-5mx1zgcurp2i1.jpeg?width=310&amp;format=pjpg&amp;s=d79a" alt="Comment Image" class="mb-0 max-w-[240px]" width="160" height="auto" loading="lazy"></a></figure></div></div></shreddit-comment>`;
+  // (the same GIF as Chromium was sent it: its MP4 through cf.preview.redd.it)
+  const cf = html.split("</shreddit-comment>")[0].replace(/t1_gif/g, "t1_gifcf").replace(/https:\/\/preview\.redd\.it\//g, "https://cf.preview.redd.it/") + "</shreddit-comment>";
+  const tree = R.commentsFromHtml(R.parseHtmlDoc(html + cf), "t3_x");
+  return tree.map((c) => { const d = document.createElement("div"); d.innerHTML = c.data.body_html; return { media: [...d.querySelectorAll("img, video, iframe")].map((m) => m.tagName + " " + m.getAttribute("src")), links: d.querySelectorAll("a[href]").length, text: d.textContent.replace(/\s+/g, " ").trim() }; });
+});
+check("a comment that is one GIF shows one picture (its MP4, linked to the GIF)", pics[0] && pics[0].media.length === 1 && /^VIDEO https:\/\/preview\.redd\.it\/rwadvr7dzo2i1\.gif\?width=403&format=mp4/.test(pics[0].media[0]) && pics[0].links === 1 && pics[0].text === "", JSON.stringify(pics[0]));
+check("…also when its MP4 comes from cf.preview.redd.it (not an empty link)", pics[2] && pics[2].media.length === 1 && /^VIDEO https:\/\/cf\.preview\.redd\.it\/rwadvr7dzo2i1\.gif\?width=403&format=mp4/.test(pics[2].media[0]) && pics[2].links === 1, JSON.stringify(pics[2]));
+check("a comment with text and a picture shows the text and one picture", pics[1] && pics[1].media.length === 1 && /^IMG /.test(pics[1].media[0]) && pics[1].text === "Michael Carrol, UK.", JSON.stringify(pics[1]));
+// A mod's announcement (AutoModerator's sticky) is just its text: not new Reddit's
+// "Moderator Announcement  Read More »" bar over it (with or without the text's own element)
+const modc = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const bar = `<faceplate-tracker source="shreddit_read_mod_comment" action="click" noun="button"><div class="py-0 xs:mx-xs">
+    Moderator Announcement <a rpl="" class="m-0 a no-underline" href="#">Read More »</a></div></faceplate-tracker>`;
+  const html = `<shreddit-comment thingid="t1_mod" author="AutoModerator" score="1" is-mod-distinguished=""><div class="md" id="t1_mod-comment-rtjson-content" slot="comment">
+    <shreddit-mod-comment>${bar}<span class="hidden"><div id="t1_mod-post-rtjson-content" class="py-0" dir="auto">
+    <p>Hello, Thank you for contributing.</p><ul><li><p>Please ensure that your chart is not <a href="https://www.reddit.com/r/x/comments/1n3ka17/">banned</a>.</p></li></ul>
+    <p><em>I am a bot.</em></p></div></span></shreddit-mod-comment></div></shreddit-comment>
+    <shreddit-comment thingid="t1_mod2" author="AutoModerator" score="1"><div class="md" id="t1_mod2-comment-rtjson-content" slot="comment">
+    <shreddit-mod-comment>${bar}<span class="hidden"><p>Plain note.</p></span></shreddit-mod-comment></div></shreddit-comment>`;
+  return R.commentsFromHtml(R.parseHtmlDoc(html), "t3_x").map((c) => c.data.body_html.replace(/\s+/g, " "));
+});
+check("a mod's announcement is just its text (no \"Moderator Announcement  Read More »\" bar)",
+  modc.length === 2 && modc.every((h) => !/Moderator Announcement|Read More|href="#"/.test(h)) &&
+  /^<div class="md"> ?<p>Hello, Thank you for contributing\.<\/p><ul><li><p>Please ensure that your chart is not <a href="https:\/\/www\.reddit\.com\/r\/x\/comments\/1n3ka17\/">banned<\/a>\.<\/p><\/li><\/ul> ?<p><em>I am a bot\.<\/em><\/p> ?<\/div>$/.test(modc[0]) &&
+  /<p>Plain note\.<\/p>/.test(modc[1]), JSON.stringify(modc));
 console.log(fail ? `\n${fail} FAILED` : "\nALL PASS");
 await browser.close();
 process.exit(fail ? 1 : 0);
