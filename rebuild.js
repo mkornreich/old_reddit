@@ -7391,6 +7391,34 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
 
   // Auto-load "load more comments" stubs when they scroll into view.
   let commentMoreObserver = null;
+  // …and the ones INSIDE a thread — more replies to a comment (issue #33). Old reddit shows
+  // a thread's replies outright, but logged out Reddit's thread page sends little beyond the
+  // top-level comments, so nearly every one ended in a "load more comments" to click. These
+  // load as they come near the screen, one at a time and ~1 s apart (a long thread has dozens:
+  // never a burst of requests). After Reddit rate-limits us, the rest wait for a click; nothing
+  // loads into a collapsed thread (its stubs aren't on screen, and handleMore refuses).
+  let replyMoreObserver = null;
+  const replyMoreQueue = [];
+  let replyMoreRun = 0; // the running queue's generation (0: none); teardownMores ends it
+  let replyMoreGen = 0;
+  function rateLimitedLately() { return !!rlLast429 && nowMsNow() - rlLast429 < RL_DECAY; }
+  async function runReplyMores() {
+    if (replyMoreRun) return;
+    const gen = (replyMoreRun = ++replyMoreGen);
+    try {
+      while (replyMoreQueue.length && replyMoreRun === gen) {
+        if (rateLimitedLately()) { replyMoreQueue.length = 0; break; } // (left for a click)
+        const el = replyMoreQueue.shift();
+        if (!el.isConnected || el.dataset.orrLoading) continue;
+        // collapsed while it waited: it loads once it's opened and near the screen again
+        if (el.closest(".thing.comment.collapsed")) { if (replyMoreObserver) replyMoreObserver.observe(el); continue; }
+        await handleMore(el, true);
+        if (replyMoreQueue.length) await sleep(MIN_GAP);
+      }
+    } finally {
+      if (replyMoreRun === gen) replyMoreRun = 0;
+    }
+  }
   function observeMores() {
     if (typeof IntersectionObserver === "undefined") return;
     if (!commentMoreObserver) {
@@ -7406,10 +7434,22 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         { rootMargin: "600px" }
       );
     }
+    if (!replyMoreObserver) {
+      replyMoreObserver = new IntersectionObserver(
+        (entries) => {
+          for (const en of entries) {
+            if (!en.isIntersecting) continue;
+            replyMoreObserver.unobserve(en.target);
+            if (replyMoreQueue.indexOf(en.target) < 0) replyMoreQueue.push(en.target);
+          }
+          runReplyMores();
+        },
+        { rootMargin: "800px 0px" } // (loaded before you scroll to them)
+      );
+    }
     document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed]), a.orr-more[data-partial]:not([data-orr-observed])").forEach((a) => {
-      if (a.closest(".child")) return; // nested "more" inside a thread → manual click only
       a.setAttribute("data-orr-observed", "1");
-      commentMoreObserver.observe(a);
+      (a.closest(".child") ? replyMoreObserver : commentMoreObserver).observe(a);
     });
   }
   function teardownMores() {
@@ -7417,6 +7457,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       commentMoreObserver.disconnect();
       commentMoreObserver = null;
     }
+    if (replyMoreObserver) {
+      replyMoreObserver.disconnect();
+      replyMoreObserver = null;
+    }
+    replyMoreQueue.length = 0;
+    replyMoreRun = 0;
     moreTimers.forEach((id) => { clearTimeout(id); clearInterval(id); });
     moreTimers.clear();
   }
