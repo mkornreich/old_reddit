@@ -2216,6 +2216,11 @@ html.orr-fixedthumbs .thing.link .thumbnail img { width:70px; height:70px; max-w
 .orr-loading { color:#888; font-style:italic; font-size:13px; }
 .orr-loading.orr-error { color:#c00; font-style:normal; font-weight:bold; }
 a.orr-more { color:#369; }
+/* The sidebar comes before the comments in the page, so while it's on screen the browser
+   anchored the scroll position to it (scroll anchoring), and it never moves: anything above
+   the comments that grew (a post's picture, an app post's box, a loaded reply) pushed what
+   you were reading down. Anchored to the comments instead, the browser keeps them in place. */
+html.orr-rebuilt .side { overflow-anchor:none; }
 .morecomments a.orr-more[data-orr-loading="1"] { color:#888; font-style:italic; }
 #sr-header-area .sr-list { padding-left:8px; }
 /* comment tools */
@@ -3764,7 +3769,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       if (b) b.classList.toggle("show", window.scrollY > 500);
       // a rival back-to-top often only appears once you scroll — sweep occasionally
       if (!rivalScrollTimer) rivalScrollTimer = setTimeout(() => { rivalScrollTimer = null; hideRivalBackToTop(); }, 400);
-    });
+      if (active) kickReplyMores(); // replies coming up below the screen load before you get there
+    }, { passive: true });
+    window.addEventListener("resize", () => { if (active) kickReplyMores(); }, { passive: true });
     // Track the gallery under the pointer so arrow keys can page through it.
     document.addEventListener("mouseover", (e) => {
       hoverGallery = (e.target.closest && e.target.closest(".orr-gallery")) || null;
@@ -4619,7 +4626,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       ex.setAttribute("aria-label", collapse ? "expand comment" : "collapse comment");
     }
     if (collapse) stopHiddenMedia(thing);
-    else resumeHiddenMedia(thing);
+    else { resumeHiddenMedia(thing); kickReplyMores(); } // (its "load more comments" are back on the page)
   }
   function collapseAllTop() {
     const tops = topComments();
@@ -7089,9 +7096,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const batch = allIds.slice(0, 100); // morechildren takes up to ~100 ids per call
     const rest = allIds.slice(100);
     const left = parseInt(el.getAttribute("data-count") || String(allIds.length), 10) || allIds.length;
+    if (!el.dataset.orrLabel) el.dataset.orrLabel = el.textContent;
     el.textContent = "loading more comments… (" + left + (left === 1 ? " reply" : " replies") + " left)";
-    let status = 0, retryAfter = 0, things = null;
-    try {
+    let status = 0, retryAfter = 0, things = heldMore.get(el) || null; // (fetched before, held: see holdMore)
+    if (!things) try {
       const q = new URLSearchParams({
         api_type: "json", link_id: linkId, children: batch.join(","), raw_json: "1", limit_children: "false",
       });
@@ -7110,6 +7118,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (things) {
       el.dataset.orrAttempt = "";
+      if (auto === AHEAD && holdMore(el, things)) return;
+      heldMore.delete(el);
       insertMoreThings(el, things, linkId, rest);
       return;
     }
@@ -7135,9 +7145,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (el.dataset.orrLoading || !isPartialPath(src)) return;
     el.dataset.orrLoading = "1";
     const linkId = el.getAttribute("data-link");
+    if (!el.dataset.orrLabel) el.dataset.orrLabel = el.textContent;
     el.textContent = "loading more comments…";
-    let status = 0, retryAfter = 0, roots = null;
-    try {
+    let status = 0, retryAfter = 0, roots = heldMore.get(el) || null; // (fetched before, held: see holdMore)
+    if (!roots) try {
       const body = new URLSearchParams();
       const cursor = el.getAttribute("data-cursor");
       if (cursor) body.set("cursor", cursor);
@@ -7158,6 +7169,8 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!el.isConnected) return; // navigated away
     if (roots) {
       el.dataset.orrAttempt = "";
+      if (auto === AHEAD && holdMore(el, roots)) return;
+      heldMore.delete(el);
       const wrap = el.parentElement; // .morecomments
       const fresh = roots.filter((c) => c.kind !== "t1" || !document.getElementById("thing_" + c.data.name));
       const tmp = document.createElement("div");
@@ -7394,30 +7407,62 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // …and the ones INSIDE a thread — more replies to a comment (issue #33). Old reddit shows
   // a thread's replies outright, but logged out Reddit's thread page sends little beyond the
   // top-level comments, so nearly every one ended in a "load more comments" to click. These
-  // load as they come near the screen, one at a time and ~1 s apart (a long thread has dozens:
-  // never a burst of requests). After Reddit rate-limits us, the rest wait for a click; nothing
-  // loads into a collapsed thread (its stubs aren't on screen, and handleMore refuses).
-  let replyMoreObserver = null;
-  const replyMoreQueue = [];
-  let replyMoreRun = 0; // the running queue's generation (0: none); teardownMores ends it
+  // load by themselves, one at a time and ~1 s apart (a long thread has dozens: never a burst
+  // of requests) — but only while they're BELOW the screen, ahead of you (issue #35): replies
+  // put in there move nothing you can see. Loaded wherever you were reading, they pushed the
+  // comments on screen down (by a screenful and more). One on screen or above it waits for a
+  // click, or until it's below the screen again; replies that arrive after you scrolled to
+  // their stub are held (holdMore) and go in then, or at once on a click. After Reddit
+  // rate-limits us, the rest wait for a click; nothing loads into a collapsed thread (its
+  // stubs have no box, and handleMore refuses).
+  const AHEAD = "ahead"; // handleMore's `auto` for these
+  const AHEAD_PX = 1200; // how far below the screen they load
+  const heldMore = new WeakMap(); // stub → replies fetched for it, waiting to go in
+  function belowScreen(el) {
+    const r = el.getBoundingClientRect();
+    return r.height > 0 && r.top >= window.innerHeight;
+  }
+  // Replies for a stub that's no longer below the screen: keep them, put the stub back.
+  function holdMore(el, data) {
+    if (belowScreen(el)) return false;
+    heldMore.set(el, data);
+    el.textContent = el.dataset.orrLabel || "load more comments";
+    el.dataset.orrLoading = "";
+    return true;
+  }
+  let replyMoreRun = 0; // the running loader's generation (0: none); teardownMores ends it
   let replyMoreGen = 0;
+  let replyMoreKick = 0; // a scroll's pending check
   function rateLimitedLately() { return !!rlLast429 && nowMsNow() - rlLast429 < RL_DECAY; }
+  // the stubs inside threads below the screen, within AHEAD_PX of it, nearest first
+  function replyStubsAhead() {
+    const h = window.innerHeight;
+    return Array.from(document.querySelectorAll(".commentarea .child a.orr-more[data-partial], .commentarea .child a.orr-more[data-children]"))
+      .filter((a) => !a.dataset.orrLoading && !a.dataset.orrNoAuto)
+      .map((a) => ({ a, r: a.getBoundingClientRect() }))
+      .filter((x) => x.r.height > 0 && x.r.top >= h && x.r.top < h + AHEAD_PX)
+      .sort((x, y) => x.r.top - y.r.top)
+      .map((x) => x.a);
+  }
   async function runReplyMores() {
-    if (replyMoreRun) return;
+    if (replyMoreRun || !active) return;
     const gen = (replyMoreRun = ++replyMoreGen);
     try {
-      while (replyMoreQueue.length && replyMoreRun === gen) {
-        if (rateLimitedLately()) { replyMoreQueue.length = 0; break; } // (left for a click)
-        const el = replyMoreQueue.shift();
-        if (!el.isConnected || el.dataset.orrLoading) continue;
-        // collapsed while it waited: it loads once it's opened and near the screen again
-        if (el.closest(".thing.comment.collapsed")) { if (replyMoreObserver) replyMoreObserver.observe(el); continue; }
-        await handleMore(el, true);
-        if (replyMoreQueue.length) await sleep(MIN_GAP);
+      while (replyMoreRun === gen && !rateLimitedLately()) { // (after a 429: left for a click)
+        const el = replyStubsAhead()[0];
+        if (!el) break;
+        await handleMore(el, AHEAD);
+        // didn't load and isn't retrying or held: a lasting failure — don't ask again by itself
+        if (el.isConnected && !el.dataset.orrLoading && !heldMore.has(el)) el.dataset.orrNoAuto = "1";
+        await sleep(MIN_GAP);
       }
     } finally {
       if (replyMoreRun === gen) replyMoreRun = 0;
     }
+  }
+  function kickReplyMores() {
+    if (replyMoreKick) return;
+    replyMoreKick = setTimeout(() => { replyMoreKick = 0; if (document.querySelector(".commentarea")) runReplyMores(); }, 250);
   }
   function observeMores() {
     if (typeof IntersectionObserver === "undefined") return;
@@ -7434,35 +7479,20 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         { rootMargin: "600px" }
       );
     }
-    if (!replyMoreObserver) {
-      replyMoreObserver = new IntersectionObserver(
-        (entries) => {
-          for (const en of entries) {
-            if (!en.isIntersecting) continue;
-            replyMoreObserver.unobserve(en.target);
-            if (replyMoreQueue.indexOf(en.target) < 0) replyMoreQueue.push(en.target);
-          }
-          runReplyMores();
-        },
-        { rootMargin: "800px 0px" } // (loaded before you scroll to them)
-      );
-    }
     document.querySelectorAll("a.orr-more[data-children]:not([data-orr-observed]), a.orr-more[data-partial]:not([data-orr-observed])").forEach((a) => {
+      if (a.closest(".child")) return; // (inside a thread: runReplyMores, by where it is)
       a.setAttribute("data-orr-observed", "1");
-      (a.closest(".child") ? replyMoreObserver : commentMoreObserver).observe(a);
+      commentMoreObserver.observe(a);
     });
+    kickReplyMores();
   }
   function teardownMores() {
     if (commentMoreObserver) {
       commentMoreObserver.disconnect();
       commentMoreObserver = null;
     }
-    if (replyMoreObserver) {
-      replyMoreObserver.disconnect();
-      replyMoreObserver = null;
-    }
-    replyMoreQueue.length = 0;
     replyMoreRun = 0;
+    if (replyMoreKick) { clearTimeout(replyMoreKick); replyMoreKick = 0; }
     moreTimers.forEach((id) => { clearTimeout(id); clearInterval(id); });
     moreTimers.clear();
   }
