@@ -20,6 +20,9 @@ What it does:
 - **Inline expandos** — click `[+]` to reveal a post's image / video / gallery /
   self-text; galleries have prev/next.
 - **Infinite scroll** *(on by default)* — RES "never-ending reddit".
+- **Infinite scroll for comments** *(on by default)* — a thread's "load more comments"
+  load by themselves just below the screen as you read, so nothing you're reading moves.
+  Turn it off in the popup or Options to click each one, as on old Reddit.
 - **Keyboard navigation** — `j`/`k` move, `o`/Enter open, `x` expand.
 - **Collapse comments** — `[–]` on any comment, or click the line along a comment's
   left side (it lights up under the pointer) to fold it with its replies — the comment
@@ -287,7 +290,8 @@ Click the toolbar button (or open the add-on's preferences in `about:addons`):
 
 - **Enable old Reddit** — master on/off.
 - **Night mode** — dark theme (off by default).
-- **Infinite scroll** — auto-load the next page (on by default).
+- **Infinite scroll** — auto-load the next page of posts (on by default).
+- **Infinite scroll for comments** — auto-load "load more comments" in a thread (on by default).
 - **Filters** *(Options page)* — hide posts by subreddit / user / domain / title keyword.
 
 Keyboard nav, comment collapse, hover cards, user tags, back-to-top and inline

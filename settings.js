@@ -11,7 +11,7 @@
 
   // element id -> pref key for every boolean toggle
   const TOGGLES = {
-    night: "nightMode", infinite: "infiniteScroll", redirect: "redirect",
+    night: "nightMode", infinite: "infiniteScroll", infiniteComments: "infiniteComments", redirect: "redirect",
     autoplay: "autoplayMedia", hideRead: "hideRead",
     autoCollapseBots: "autoCollapseBots", compact: "compactView", nightAuto: "nightAuto",
     highContrast: "highContrast", dyslexia: "dyslexiaFont", hoverPreview: "hoverPreview",

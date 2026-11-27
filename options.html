@@ -55,9 +55,18 @@
   <label class="orr-row">
     <span class="orr-row-text">
       <span class="orr-row-title">Infinite scroll</span>
-      <span class="orr-row-sub">RES "never-ending reddit" — auto-load pages as you scroll</span>
+      <span class="orr-row-sub">RES "never-ending reddit" — auto-load pages of posts as you scroll</span>
     </span>
     <input type="checkbox" id="infinite">
+    <span class="orr-switch" aria-hidden="true"></span>
+  </label>
+
+  <label class="orr-row">
+    <span class="orr-row-text">
+      <span class="orr-row-title">Infinite scroll for comments</span>
+      <span class="orr-row-sub">Load a thread's "load more comments" by themselves as you scroll, just ahead of where you're reading. Off: each one waits for a click, as on old Reddit</span>
+    </span>
+    <input type="checkbox" id="infiniteComments">
     <span class="orr-switch" aria-hidden="true"></span>
   </label>
 

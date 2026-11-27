@@ -7224,6 +7224,11 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       moreTimers.delete(to);
       if (!el.isConnected) return; // navigated away
       el.dataset.orrLoading = "";
+      if (auto && !infiniteCommentsOn) { // (switched off since: back to a link to click)
+        el.textContent = el.dataset.orrLabel || "load more comments";
+        el.dataset.orrAttempt = "";
+        return;
+      }
       handleMore(el, auto);
     }, ms);
     moreTimers.add(to);
@@ -7402,7 +7407,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!more && els.length) jumpComment(1, els); // wraps to the first, like before
   }
 
-  // Auto-load "load more comments" stubs when they scroll into view.
+  // Auto-load "load more comments" stubs when they scroll into view — unless "Infinite
+  // scroll for comments" is off (issue #35): then every one waits for a click, as on old
+  // reddit. (The "n" search and clicks load either way.)
+  let infiniteCommentsOn = true;
   let commentMoreObserver = null;
   // …and the ones INSIDE a thread — more replies to a comment (issue #33). Old reddit shows
   // a thread's replies outright, but logged out Reddit's thread page sends little beyond the
@@ -7445,10 +7453,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       .map((x) => x.a);
   }
   async function runReplyMores() {
-    if (replyMoreRun || !active) return;
+    if (replyMoreRun || !active || !infiniteCommentsOn) return;
     const gen = (replyMoreRun = ++replyMoreGen);
     try {
-      while (replyMoreRun === gen && !rateLimitedLately()) { // (after a 429: left for a click)
+      while (replyMoreRun === gen && infiniteCommentsOn && !rateLimitedLately()) { // (after a 429: left for a click)
         const el = replyStubsAhead()[0];
         if (!el) break;
         await handleMore(el, AHEAD);
@@ -7465,12 +7473,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     replyMoreKick = setTimeout(() => { replyMoreKick = 0; if (document.querySelector(".commentarea")) runReplyMores(); }, 250);
   }
   function observeMores() {
-    if (typeof IntersectionObserver === "undefined") return;
+    if (typeof IntersectionObserver === "undefined" || !infiniteCommentsOn) return;
     if (!commentMoreObserver) {
       commentMoreObserver = new IntersectionObserver(
         (entries) => {
           for (const en of entries) {
-            if (en.isIntersecting) {
+            if (en.isIntersecting && infiniteCommentsOn) {
               commentMoreObserver.unobserve(en.target);
               handleMore(en.target, true);
             }
@@ -7485,6 +7493,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       commentMoreObserver.observe(a);
     });
     kickReplyMores();
+  }
+  // "Infinite scroll for comments" turned off on an open thread: stop loading by
+  // themselves; what's already loading finishes. (observeMores starts them again.)
+  function stopAutoMores() {
+    if (commentMoreObserver) { commentMoreObserver.disconnect(); commentMoreObserver = null; }
+    document.querySelectorAll("a.orr-more[data-orr-observed]").forEach((a) => a.removeAttribute("data-orr-observed"));
+    replyMoreRun = 0;
+    if (replyMoreKick) { clearTimeout(replyMoreKick); replyMoreKick = 0; }
   }
   function teardownMores() {
     if (commentMoreObserver) {
@@ -8865,6 +8881,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     // (its address without the extras Reddit's browser check adds to it)
     if (mediaSrc) { showMediaPage(mediaSrc, location.origin + "/media?url=" + encodeURIComponent(mediaSrc)); return; }
     infiniteOn = prefs.infiniteScroll !== false;
+    infiniteCommentsOn = prefs.infiniteComments !== false;
     nightModeOn = prefs.nightMode !== false;
     orrVideoMuted = prefs.videoMuted === true;
     videoLoopOn = prefs.videoLoop === true;
@@ -8925,6 +8942,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     api.storage.onChanged.addListener((changes, area) => {
       // settings/filters live in sync, big blobs in local — react to either.
       if (changes.infiniteScroll) infiniteOn = changes.infiniteScroll.newValue !== false;
+      if (changes.infiniteComments) {
+        infiniteCommentsOn = changes.infiniteComments.newValue !== false;
+        if (active) { if (infiniteCommentsOn) observeMores(); else stopAutoMores(); }
+      }
       if (changes.videoMuted && active) {
         const m = changes.videoMuted.newValue === true;
         if (m !== orrVideoMuted) {
