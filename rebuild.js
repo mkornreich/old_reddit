@@ -2221,6 +2221,8 @@ a.orr-more { color:#369; }
    the comments that grew (a post's picture, an app post's box, a loaded reply) pushed what
    you were reading down. Anchored to the comments instead, the browser keeps them in place. */
 html.orr-rebuilt .side { overflow-anchor:none; }
+/* a thread's comments, laid out but unseen, while the replies on its first screen load (primeFirstScreen) */
+html.orr-rebuilt .commentarea.orr-priming > .nestedlisting { visibility:hidden; }
 .morecomments a.orr-more[data-orr-loading="1"] { color:#888; font-style:italic; }
 #sr-header-area .sr-list { padding-left:8px; }
 /* comment tools */
@@ -6829,7 +6831,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const render = () => {
       const body = buildCommentsBody(data, { sub: cr.sub, permalink: url.pathname, sort, me: meCached, singleComment: !!cr.commentId });
       active = true; // before replaceBody(): see loadListing's comment on why
+      const restoreY = pendingScrollRestore; // (afterRender scrolls there: a Back to this thread)
       replaceBody(body, (body.sub ? "r/" + body.sub : "reddit") + " — comments");
+      primeFirstScreen(restoreY); // before the page shows: it may hide the comments a moment
       unhideGuard();
       patchHeader();
       const realSub = body.sub || cr.sub;
@@ -7118,7 +7122,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     }
     if (things) {
       el.dataset.orrAttempt = "";
-      if (auto === AHEAD && holdMore(el, things)) return;
+      if (holdsLate(el, auto) && holdMore(el, things)) return;
       heldMore.delete(el);
       insertMoreThings(el, things, linkId, rest);
       return;
@@ -7169,7 +7173,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     if (!el.isConnected) return; // navigated away
     if (roots) {
       el.dataset.orrAttempt = "";
-      if (auto === AHEAD && holdMore(el, roots)) return;
+      if (holdsLate(el, auto) && holdMore(el, roots)) return;
       heldMore.delete(el);
       const wrap = el.parentElement; // .morecomments
       const fresh = roots.filter((c) => c.kind !== "t1" || !document.getElementById("thing_" + c.data.name));
@@ -7438,6 +7442,55 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     el.dataset.orrLoading = "";
     return true;
   }
+  // whether replies arriving for a stub may be held rather than put in: an auto-load's, except
+  // a first-screen load's while the comments are still hidden (primeFirstScreen)
+  function holdsLate(el, auto) {
+    return auto === AHEAD || (auto === PRIME && !el.closest(".orr-priming"));
+  }
+  // …and the ones on the screen where a thread opens (issue #33 again, 2026-11-27). Those
+  // never loaded by themselves — read down from there and they're never below the screen —
+  // so a text post's thread opened just as before: every top comment ending in "load more
+  // comments". Their replies are fetched together as the thread opens, with the comment tree
+  // hidden (the post shows at once), and put in before it shows, so nothing you can see moves
+  // (#35). The comments wait PRIME_WAIT at most; replies that come later are held (holdMore).
+  const PRIME = "prime"; // handleMore's `auto` for these
+  const PRIME_WAIT = 2000; // ms the comments may wait for them
+  const PRIME_MAX = 12; // requests at most (in rounds: replies put in can bring more stubs onto the screen)
+  // y: the top of the screen the thread opens at (afterRender's restore on Back; else scrollY)
+  async function primeFirstScreen(y) {
+    const area = document.querySelector(".commentarea");
+    const tree = area && area.querySelector(":scope > .nestedlisting");
+    if (!tree || !infiniteCommentsOn || rateLimitedLately()) return;
+    const top = y == null ? window.scrollY : y;
+    const bottom = top + window.innerHeight;
+    const tried = new Set();
+    const onScreen = () => Array.from(tree.querySelectorAll(".child a.orr-more[data-partial], .child a.orr-more[data-children]"))
+      .filter((a) => {
+        if (tried.has(a) || a.dataset.orrLoading || a.dataset.orrNoAuto) return false;
+        const r = a.getBoundingClientRect();
+        const at = r.top + window.scrollY;
+        return r.height > 0 && at >= top && at < bottom;
+      });
+    let stubs = onScreen(); // (measured before the page shows: the guard hides it, laid out)
+    if (!stubs.length) return;
+    const deadline = nowMsNow() + PRIME_WAIT;
+    let left = PRIME_MAX;
+    area.classList.add("orr-priming");
+    try {
+      while (stubs.length && left > 0 && nowMsNow() < deadline && !rateLimitedLately()) {
+        stubs = stubs.slice(0, left);
+        left -= stubs.length;
+        stubs.forEach((a) => tried.add(a));
+        const all = Promise.all(stubs.map((a) => Promise.resolve(handleMore(a, PRIME)).catch(() => {})));
+        await Promise.race([all, sleep(Math.max(0, deadline - nowMsNow()))]);
+        if (!tree.isConnected) return; // left the thread
+        stubs = onScreen();
+      }
+    } finally {
+      area.classList.remove("orr-priming");
+      kickReplyMores(); // now the ones below the screen, one at a time
+    }
+  }
   let replyMoreRun = 0; // the running loader's generation (0: none); teardownMores ends it
   let replyMoreGen = 0;
   let replyMoreKick = 0; // a scroll's pending check
@@ -7454,6 +7507,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   async function runReplyMores() {
     if (replyMoreRun || !active || !infiniteCommentsOn) return;
+    if (document.querySelector(".commentarea.orr-priming")) return; // (primeFirstScreen kicks it after)
     const gen = (replyMoreRun = ++replyMoreGen);
     try {
       while (replyMoreRun === gen && infiniteCommentsOn && !rateLimitedLately()) { // (after a 429: left for a click)

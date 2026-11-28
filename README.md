@@ -22,7 +22,8 @@ What it does:
 - **Infinite scroll** *(on by default)* — RES "never-ending reddit".
 - **Infinite scroll for comments** *(on by default)* — a thread's "load more comments"
   load by themselves just below the screen as you read, so nothing you're reading moves.
-  Turn it off in the popup or Options to click each one, as on old Reddit.
+  A thread opens with the replies on its first screen already in (the comments wait a
+  moment for them). Turn it off in the popup or Options to click each one, as on old Reddit.
 - **Keyboard navigation** — `j`/`k` move, `o`/Enter open, `x` expand.
 - **Collapse comments** — `[–]` on any comment, or click the line along a comment's
   left side (it lights up under the pointer) to fold it with its replies — the comment
