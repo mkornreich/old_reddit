@@ -5279,8 +5279,12 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   }
   function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+  // Our stylesheet, and the subreddit's look (subLookReady): everything a page needs before it shows.
   async function ensureCss() {
-    if (document.getElementById(CSS_ID)) return;
+    if (!document.getElementById(CSS_ID)) await loadOurCss();
+    await subLookReady();
+  }
+  async function loadOurCss() {
     let text = "";
     try {
       const res = await fetch(CSS_URL);
@@ -6537,8 +6541,16 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     const key = sub.toLowerCase();
     if (oldSubCache.has(key)) return oldSubCache.get(key);
     const p = (async () => {
-      const path = "/r/" + encodeURIComponent(sub) + "+" + encodeURIComponent(sub) + "/";
-      const res = await redditFetch(location.origin + path, { credentials: "include", headers: { Accept: "text/html" } });
+      const get = (name) => redditFetch(location.origin + "/r/" + encodeURIComponent(name) + "+" + encodeURIComponent(name) + "/",
+        { credentials: "include", headers: { Accept: "text/html" } });
+      let res = await get(sub);
+      // Not in the subreddit's own capitals (an address typed in lowercase): Reddit sends
+      // that to new Reddit's /r/<Name>/ — ask again with the name it gave.
+      const m = res.ok && res.redirected ? /^\/r\/([A-Za-z0-9_]+)\/?$/.exec(new URL(res.url).pathname) : null;
+      if (m && m[1] !== sub && m[1].toLowerCase() === key) {
+        try { if (res.body) res.body.cancel(); } catch (e) { /* not needed */ }
+        res = await get(m[1]);
+      }
       if (!res.ok) return null;
       // The sidebar, then the listing (its rows show the sub's thumbnail / flair settings):
       // stop at the listing's end — the footer isn't needed.
@@ -6558,6 +6570,9 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
       return oldSubFromHtml(text);
     })().catch(() => null);
     oldSubCache.set(key, p);
+    // (nothing usable — e.g. asked while Reddit's browser check was still running on a first
+    // visit (prefetchSubLook asks early): don't keep that, so the sidebar asks again)
+    p.then((v) => { if (!v && oldSubCache.get(key) === p) oldSubCache.delete(key); });
     if (oldSubCache.size > 60) oldSubCache.delete(oldSubCache.keys().next().value);
     return p;
   }
@@ -6644,20 +6659,74 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     try {
       Promise.resolve(api.storage.local.get("orrSubTheme:" + key)).then((r) => {
         const t = r && r["orrSubTheme:" + key];
+        if (t) storedLooks.add(key);
         if (t && !subTheme && subOfPath(location.pathname) === key) { subTheme = t; syncSubTheme(); }
       }).catch(() => {});
     } catch (e) { /* no storage: the look arrives with the sidebar */ }
+  }
+  function lookOf(old, css) {
+    return { key: old.name.toLowerCase(), name: old.name, css, header: old.header, thumbs: old.thumbs, flairLeft: old.flairLeft, flairClasses: old.flairClasses || {} };
+  }
+  const storedLooks = new Set(); // subs whose look is in storage already (read or written this page)
+  // A subreddit's look arriving after its page showed moved the whole page down (its header
+  // and stylesheet: ~115px on r/AskReddit, with nothing to anchor the scroll to at the top).
+  // So it's fetched as the page starts loading, alongside the page's own content — from
+  // storage after the first visit, else from old reddit's page for the subreddit (the same
+  // fetch the sidebar uses), its stylesheet and its header image — and put on before the page
+  // shows (subLookReady, from ensureCss). On a first visit it's usually in by then; the page
+  // waits SUB_LOOK_WAIT at most, and a look later than that goes on when it comes, as before.
+  const SUB_LOOK_WAIT = 700; // ms a page, its own content in, may wait for its subreddit's look
+  const subLooks = new Map(); // sub key → Promise<look | null>
+  function prefetchSubLook(pathname) {
+    const key = subOfPath(pathname);
+    if (!key || (subTheme && subTheme.key === key) || subLooks.has(key)) return;
+    const p = (async () => {
+      let t = null;
+      try {
+        const r = await api.storage.local.get("orrSubTheme:" + key);
+        t = (r && r["orrSubTheme:" + key]) || null;
+        if (t) storedLooks.add(key);
+      } catch (e) { /* no storage: from the network */ }
+      if (!t && !rateLimitedLately()) { // (after a 429, the page's own fetch goes first)
+        const old = await fetchOldSub((/^\/r\/([A-Za-z0-9_]+)/.exec(pathname) || [])[1] || key); // (its capitals as written)
+        if (old) t = lookOf(old, await fetchSubCss(old.css));
+      }
+      // its header picture, loaded before it goes on the page: shown at once, at its size
+      if (t && t.header && t.header.src) await preloadImage(t.header.src, 1500);
+      return t;
+    })().catch(() => null);
+    subLooks.set(key, p);
+    p.then((t) => { if (!t && subLooks.get(key) === p) subLooks.delete(key); }); // (none: ask again next time)
+    if (subLooks.size > 20) subLooks.delete(subLooks.keys().next().value);
+  }
+  function preloadImage(src, ms) {
+    return new Promise((resolve) => {
+      const im = new Image();
+      im.onload = im.onerror = () => resolve();
+      setTimeout(resolve, ms);
+      im.src = src;
+    });
+  }
+  async function subLookReady() {
+    const key = subOfPath(location.pathname);
+    const p = key && subLooks.get(key);
+    if (!p || (subTheme && subTheme.key === key)) return;
+    if (!subStyleOn || nightModeOn || document.documentElement.classList.contains("orr-contrast")) return; // (it wouldn't show)
+    const t = await Promise.race([p, sleep(SUB_LOOK_WAIT).then(() => null)]);
+    if (t && subOfPath(location.pathname) === key && !(subTheme && subTheme.key === key)) subTheme = t; // (refreshSubTheme puts it on)
   }
   // The subreddit's own page came back: apply its look and remember it for next time.
   async function applyOldSubLook(old) {
     const key = old.name.toLowerCase();
     const css = await fetchSubCss(old.css);
     if (subOfPath(location.pathname) !== key) return; // moved on meanwhile
-    const t = { key, name: old.name, css, header: old.header, thumbs: old.thumbs, flairLeft: old.flairLeft, flairClasses: old.flairClasses || {} };
+    const t = lookOf(old, css);
     const same = subTheme && JSON.stringify(subTheme) === JSON.stringify(t);
     subTheme = t;
     syncSubTheme();
-    if (same) return;
+    subLooks.set(key, Promise.resolve(t)); // (the latest, for a later page of it in this tab)
+    if (same && storedLooks.has(key)) return;
+    storedLooks.add(key);
     try {
       const r = await api.storage.local.get({ orrSubThemeIdx: [] });
       let idx = (r.orrSubThemeIdx || []).filter((k) => k !== key).concat(key);
@@ -7033,6 +7102,7 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
     teardownInfinite();
     teardownMores();
     if (autoplayObserver) { autoplayObserver.disconnect(); autoplayObserver = null; }
+    prefetchSubLook(url.pathname); // (alongside the page's own fetch: see subLookReady)
     // Leaving comments entirely (not just re-sorting) — a later return to the
     // same thread should count as a genuine fresh visit again.
     if (!ORR.isCommentsRoute(url)) lastCommentsPathname = null;
