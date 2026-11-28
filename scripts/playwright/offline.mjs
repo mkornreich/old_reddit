@@ -180,6 +180,37 @@ check("markdown preview never emits handlers / script URLs / unknown tags", li.u
 check("markdown preview: nested list", li.nested);
 ["upvoted", "downvoted", "unvoted", "savedHidden", "lockedNoReply", "linkNoEdit", "archivedPage", "topForm", "ownTabs", "sidebarJoin", "message", "msgPage", "commentBlock"]
   .forEach((k) => check("logged-in markup: " + k, li[k] === true));
+// A video uploaded into a comment (r/mit 1vbuvby, 2026-11-28): logged out, Reddit sends the
+// player with a <template slot="error"> beside it — its "Sorry, something went wrong when
+// loading this video.", a blurred poster and "View in app" came out under the working video.
+// Logged in, the comment is a link to reddit.com/link/<comment>/video/<id>/player.
+await page.route("https://v.redd.it/**", (r) => r.abort());
+const cvid = await page.evaluate(() => {
+  const R = globalThis.ORR_REBUILD;
+  const poster = "https://cf.preview.redd.it/388hingdengh1.jpg?vthumb=1&amp;s=x";
+  const doc = R.parseHtmlDoc('<div id="tree"><shreddit-comment thingid="t1_p0yzyvz" author="a" score="1" permalink="/r/mit/comments/1vbuvby/x/p0yzyvz/">' +
+    '<div slot="comment"><div id="t1_p0yzyvz-post-rtjson-content"><figure class="rte-media"><div class="rte-video-placeholder"><div>' +
+    '<shreddit-async-loader bundleName="shreddit_player_loader"><shreddit-player src="https://v.redd.it/link/1vbuvby/asset/388hingdengh1/HLSPlaylist.m3u8?f=sd&amp;v=1" poster="' + poster + '">' +
+    '<source src="https://v.redd.it/link/1vbuvby/asset/388hingdengh1/HLSPlaylist.m3u8" type="application/vnd.apple.mpegURL"><img alt="media poster" src="' + poster + '" slot="poster"></shreddit-player>' +
+    '<template slot="error"><div><img alt="Media error" src="' + poster + '"><p>Sorry, something went wrong when loading this video.</p>' +
+    '<a href="https://reddit.onelink.me/MRHZ?af_sub4=rmp_fail">View in app</a></div></template></shreddit-async-loader></div></div></figure></div></div>' +
+    '<template><shreddit-comment thingid="t1_b" author="b" score="2"><div slot="comment"><p>a reply</p></div></shreddit-comment></template>' +
+    "</shreddit-comment></div>");
+  const tree = R.commentsFromHtml(doc, "t3_1vbuvby");
+  const area = document.createElement("div");
+  area.className = "commentarea";
+  area.innerHTML = '<div class="md"><p><a href="https://reddit.com/link/p0yzyvz/video/388hingdengh1/player">https://reddit.com/link/p0yzyvz/video/388hingdengh1/player</a> ' +
+    '<a href="https://www.reddit.com/r/mit/comments/1vbuvby/x/">a thread</a></p></div>';
+  document.body.appendChild(area);
+  R.expandCommentMedia(document);
+  const marked = Array.from(area.querySelectorAll("a")).map((a) => a.dataset.orrMedia || "");
+  area.remove();
+  return { body: tree[0] && tree[0].data.body_html, reply: tree[0] && tree[0].data.replies.data.children.map((c) => c.data.body_html), marked };
+});
+console.log("\ncomment video:", JSON.stringify(cvid));
+check("a comment's video: just its link (played inline), not Reddit's error text, poster copy or app link",
+  /<a href="https:\/\/v\.redd\.it\/388hingdengh1">/.test(cvid.body) && !/went wrong|View in app|onelink|<img/i.test(cvid.body) && /a reply/.test(String(cvid.reply)), cvid.body);
+check("logged in, a comment's video link plays inline (other reddit links stay links)", JSON.stringify(cvid.marked) === JSON.stringify(["1", ""]), JSON.stringify(cvid.marked));
 // Email addresses: Reddit's own mailto: links survive cleanMd (they used to lose their href —
 // blue text that went nowhere), plain-text addresses get linked, the preview links them too.
 const mail = await page.evaluate(() => {
