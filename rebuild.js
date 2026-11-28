@@ -1635,7 +1635,7 @@
     packagedMp4, stickiesFromHtml, railFromHtml, buildRailSidebar, buildAgeGate, userHoverFromHtml, subHoverFromHtml, parseCount,
     voteState, midcolHtml, actionButtonsHtml, editorHtml, mdPreview, buildMessage, buildMessagesPage, messageTabmenuHtml, messagePostPath,
     commentBlock, linkifyEmails, canonicalThreadPath, searchPostsFromHtml, htmlSearchPath, postPeekParts, postPeekHtml,
-    postFromOldThing, oldListingPath,
+    postFromOldThing, oldListingPath, expandCommentMedia,
   };
 
   // ---------- runtime driver -------------------------------------------
@@ -4809,7 +4809,10 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
         a.insertAdjacentElement("afterend", wrap);
         continue;
       }
-      const vm = /^https?:\/\/v\.redd\.it\/([A-Za-z0-9]+)/i.exec(href);
+      // (logged in, a video uploaded into a comment is a link to its player page:
+      //  https://reddit.com/link/<comment id>/video/<video id>/player)
+      const vm = /^https?:\/\/v\.redd\.it\/([A-Za-z0-9]+)/i.exec(href) ||
+        /^https?:\/\/(?:www\.)?reddit\.com\/link\/[A-Za-z0-9]+\/video\/([A-Za-z0-9]+)\/player\/?$/i.exec(href);
       if (vm) { a.dataset.orrMedia = "1"; buildVredditInto(a, "https://v.redd.it/" + vm[1]); }
     }
   }
@@ -5356,9 +5359,14 @@ html.orr-night #orr-skeleton .orr-sk-line { background:linear-gradient(90deg,#2a
   // Reddit defers much of a page — including most comments — inside <template>s;
   // splice each template's content back in place so everything is in document
   // order with its real nesting.
+  // Except a template for an error state (slot="error"): what Reddit shows only when its
+  // own player fails. A video in a comment carries one next to the player ("Sorry,
+  // something went wrong when loading this video.", a blurred copy of the poster and a
+  // "View in app" link), and it came out under the working video as text and a picture.
   function parseHtmlDoc(text) {
     const doc = parseInert(text);
     for (let i = 0; i < 25; i++) {
+      doc.querySelectorAll("template[slot='error']").forEach((t) => t.remove());
       const ts = doc.querySelectorAll("template");
       if (!ts.length) break;
       ts.forEach((t) => t.replaceWith(t.content));
