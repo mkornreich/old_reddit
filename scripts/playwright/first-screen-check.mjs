@@ -7,8 +7,9 @@
 //  - when the comments appear, no "load more comments" inside a thread is on the screen;
 //  - they appear at most ~2.5 s after the post does, after at most 12 requests;
 //  - from then on, sitting still for 8 s, no comment on the screen moves.
-// It opens the thread once before measuring, so the subreddit's style is already stored
-// (COLD=1: measure the first visit; see below).
+// It opens the thread once before measuring, like a returning visit (the subreddit's style is
+// stored then). COLD=1 measures a first visit to the subreddit (give a thread URL): its style
+// must be on before the page shows, or it moves everything (v3.17.30; see below).
 // A page that isn't rebuilt (Reddit's CAPTCHA or block page) is reported as not tested.
 //   node first-screen-check.mjs <ext-dir> <out-dir> [<thread url> | /r/<sub>/]   (exits non-zero on failure)
 import "./hidden-display.mjs"; // keep browser windows off the desktop (Wayland)
@@ -70,16 +71,18 @@ if (/^\/r\/[^/]+\/?$/.test(url)) { // a subreddit: its hot page's post with the 
   if (!url) { console.log("NOT TESTED: no thread found on that subreddit's page"); await ctx.close(); process.exit(0); }
 }
 console.log("thread:", url);
-// The subreddit's own style (its header and stylesheet) comes with the sidebar on a first
-// visit, and moves the whole page down when it arrives (AskReddit: ~115px) — an older,
-// separate jump; later visits take it from storage at once. So the thread is opened once
-// first, like someone coming back to a subreddit. COLD=1 skips that (and shows that jump).
-if (process.env.COLD !== "1") {
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
-  await page.waitForSelector("html.orr-rebuilt .side .titlebox, html.orr-rebuilt .side .md", { timeout: 20000 }).catch(() => {});
-  await page.waitForTimeout(4000);
-  await page.goto("about:blank");
-}
+// By default the thread is opened once first, like someone coming back to a subreddit (its
+// style is stored then). COLD=1 measures a first visit to the subreddit instead: Reddit's
+// front page first (a fresh profile's first page gets Reddit's browser check), then the
+// thread. Until v3.17.30 a subreddit's style (its header and stylesheet) came with the
+// sidebar after the page showed, on a first visit, and moved the whole page down when it
+// arrived (r/AskReddit: ~115px); COLD=1 caught that.
+const COLD = process.env.COLD === "1";
+if (COLD && argUrl && !/\/comments\//.test(argUrl)) console.log("  (COLD=1 with a subreddit: its page was just opened, so this isn't a first visit — give a thread)");
+await page.goto(COLD ? "https://www.reddit.com/" : url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+await page.waitForSelector(COLD ? "html.orr-rebuilt #siteTable .thing.link" : "html.orr-rebuilt .side .titlebox, html.orr-rebuilt .side .md", { timeout: 30000 }).catch(() => {});
+await page.waitForTimeout(COLD ? 2000 : 4000);
+await page.goto("about:blank");
 let reqs = 0;
 page.on("request", (r) => { if (/\/svc\/shreddit\/more-comments\/|\/api\/morechildren/.test(r.url())) reqs++; });
 await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
