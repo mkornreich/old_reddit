@@ -5,8 +5,10 @@
 // had to click; old reddit shows the replies outright. Firefox (temporary add-on) or
 // Chromium, logged out, one thread:
 //  - where the comments begin, with no scrolling, the stubs just below the screen load by
-//    themselves (the comment count grows), one request at a time, ~1 s apart; the ones on
-//    screen stay links, and a click loads one;
+//    themselves (the comment count grows, or they came in with the first screen's, fetched
+//    together before the comments showed: v3.17.29); the ones on screen stay links, and a
+//    click loads one;
+//  - after the comments show, auto-loads go one request at a time, ~1 s apart;
 //  - a collapsed comment's stubs don't load (scrolled past); expanded again, they do;
 //  - scrolling down, the stubs further down load before they come on screen;
 //  - after a reload, "collapse all" right away: nothing more loads; a comment opened again
@@ -96,6 +98,16 @@ const clickStubOf = (id) => page.evaluate((id) => {
 
 await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
 const rebuilt = await page.waitForSelector("html.orr-rebuilt .commentarea .thing.comment", { timeout: 40000 }).then(() => true).catch(() => false);
+// (the comments show once the replies on the first screen are in: those are fetched together,
+// before this — v3.17.29, first-screen-check.mjs — so the pacing below counts only later ones)
+const shownAt = Date.now();
+// requests started in [from, to): one at a time, and ~1 s apart
+const paced = (from, to) => {
+  const list = reqs.filter((r) => r.start >= from && r.start < to).sort((a, b) => a.start - b.start);
+  const overlap = list.some((r, i) => i && r.start < (list[i - 1].end || Infinity));
+  const gaps = list.slice(1).map((r, i) => r.start - (list[i].end || list[i].start));
+  return { n: list.length, ok: !overlap && gaps.every((g) => g >= 700), gaps };
+};
 if (!rebuilt) {
   console.log(`NOT TESTED ${url}: not rebuilt (Reddit's CAPTCHA or block page?)`);
 } else {
@@ -105,13 +117,11 @@ if (!rebuilt) {
   const first = await state();
   await page.waitForTimeout(20000);
   const after = await state();
-  console.log(`  at first: ${JSON.stringify({ ...first, onScreen: first.onScreen.length })}; after 20 s: ${JSON.stringify({ ...after, onScreen: after.onScreen.length })}; reply requests: ${reqs.length}`);
-  ok(reqs.length > 0 && after.comments > first.comments, `with no scrolling, replies below the screen load by themselves (${first.comments} → ${after.comments} comments, ${reqs.length} requests)`);
+  const early = reqs.filter((r) => r.start < shownAt).length;
+  console.log(`  at first: ${JSON.stringify({ ...first, onScreen: first.onScreen.length })}; after 20 s: ${JSON.stringify({ ...after, onScreen: after.onScreen.length })}; reply requests: ${reqs.length} (${early} before the comments showed)`);
+  ok(reqs.length > 0 && (after.comments > first.comments || early > 0), `with no scrolling, replies below the screen load by themselves (${first.comments} → ${after.comments} comments, ${reqs.length} requests, ${early} of them before the comments showed)`);
   ok(after.ahead === 0, `no "load more comments" left inside threads just below the screen (${after.ahead})`);
-  const sorted = [...reqs].sort((a, b) => a.start - b.start);
-  const overlap = sorted.some((r, i) => i && r.start < (sorted[i - 1].end || Infinity));
-  const gaps = sorted.slice(1).map((r, i) => r.start - (sorted[i].end || sorted[i].start));
-  ok(!overlap && gaps.every((g) => g >= 700), `one request at a time, ~1 s apart (gaps ${gaps.slice(0, 8).join(", ")} ms)`);
+  const p1 = paced(shownAt, Date.now());
   // One that hasn't loaded, brought to the middle of the screen: it stays a link (loading it
   // there would push down what you're reading) — and a click loads it.
   const mid = await page.evaluate((sel) => {
@@ -162,11 +172,15 @@ if (!rebuilt) {
 
   // Scroll down through the thread: the stubs further down load before they come on screen.
   const before = await state();
+  const scrollFrom = Date.now();
   for (let i = 0; i < 12; i++) { await page.mouse.wheel(0, 700); await page.waitForTimeout(1800); }
   await page.waitForTimeout(6000);
   const end = await state();
   console.log(`  scrolled down: ${before.comments} → ${end.comments} comments`);
   ok(end.comments > before.comments && end.ahead === 0, `scrolling down, replies further down load before they come on screen (${before.comments} → ${end.comments} comments; ${end.ahead} stub(s) left just below the screen)`);
+  // (sitting at the top, then scrolling down: no clicks in either)
+  const p2 = paced(scrollFrom, Date.now());
+  ok(p1.ok && p2.ok && p1.n + p2.n >= 2, `after the comments show, one request at a time, ~1 s apart (${p1.n + p2.n} requests; gaps ${p1.gaps.concat(p2.gaps).slice(0, 10).join(", ")} ms)`);
   await page.screenshot({ path: path.join(outDir, "thread.png") });
 
   // "collapse all" right away, while replies wait to load: nothing more loads; a comment
